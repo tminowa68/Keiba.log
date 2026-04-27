@@ -9,7 +9,7 @@ from functools import wraps
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here' # セッション用の秘密鍵
 DB_NAME = 'users.db'
-horse_data = '2026_horse_data.xlsx'
+horse_data = 'horse_data.xlsx'
 
 # --- データベース初期化 ---
 def add_new_user(username, password):
@@ -175,7 +175,8 @@ def load_all_horse_results():
     year_masters = {}
 
     for f_path in entry_files:
-        m = re.search(r'^(\d{4})_entry_(.+)\.xlsx$', os.path.basename(f_path))
+        file_name = os.path.basename(f_path)
+        m = re.search(r'^(\d{4})_entry_(.+)\.xlsx$', file_name)
         if not m: continue
         year = m.group(1)
 
@@ -257,8 +258,8 @@ def sort_and_resize_table(ws, sort_col_index=0, date_format_col=None):
             ws.cell(row=ws.max_row, column=date_format_col).number_format = 'yyyy/m/d'
 
 def get_schedule_data(target_year):
-    """race_dataのスケジュールを読み込み、日付・会場マップを一括生成する"""
-    race_data_file = os.path.join(str(target_year), f"{target_year}_race_data.xlsx")
+    race_data_file = os.path.join(str(target_year), f'{target_year}_race_data.xlsx')
+    
     available_dates, venue_data_map, date_map, venue_map = [], {}, {}, {}
     if not os.path.exists(race_data_file):
         return available_dates, venue_data_map, date_map, venue_map
@@ -541,6 +542,8 @@ def edit_horse(name):
 def race_list():
     req_date = request.args.get('date')
     target_year = req_date[:4] if req_date else str(datetime.now().year)
+
+    race_data_path = os.path.join(target_year, f"{target_year}_race_data.xlsx")
     
     available_dates, venue_data_map, _, _ = get_schedule_data(target_year)
     
@@ -572,9 +575,9 @@ def race_list():
     search_text = "開催情報が見つかりません"
 
     venue_info = current_day_venues.get(venue)
-    # --- 修正箇所 ---
-    if venue_info and os.path.exists(f"{target_year}_race_data.xlsx"):
-        wb = openpyxl.load_workbook(f"{target_year}_race_data.xlsx", data_only=True, read_only=True)
+    if venue_info and os.path.exists(race_data_path):
+        wb = openpyxl.load_workbook(race_data_path, data_only=True, read_only=True)
+        
         target_sheet_name = f"{venue_info['id']}_{venue}"
         if target_sheet_name in wb.sheetnames:
             search_text = f"{venue_info['id']}回{venue}{venue_info['day']}日"
@@ -595,7 +598,13 @@ def race_list():
                         'time': ''
                     }
 
-    return render_template('race_list.html', date=date, venue=venue, day_races=day_races, available_venues=list(current_day_venues.keys()), available_dates=available_dates, display_dates=display_dates, search_text=search_text)
+    return render_template('race_list.html',
+                           date=date, venue=venue,
+                           day_races=day_races,
+                           available_venues=list(current_day_venues.keys()),
+                           available_dates=available_dates,
+                           display_dates=display_dates,
+                           search_text=search_text)
 
 @app.route('/edit_race')
 def race_detail():
@@ -699,7 +708,7 @@ def race_detail():
 @login_required
 def save_entry():
     data = request.json
-    target_year = data.get('date', datetime.now().strftime('%Y-%m-%d'))[:4]
+    target_year = data.get('date')[:4]
     race_num, horse_name, entry_type, sheet_name = int(data.get('race_num')), data.get('horse_name'), data.get('entry_type'), data.get('sheet_name')
     horse_num, horse_rank = data.get('horse_num'), data.get('horse_rank')
 
