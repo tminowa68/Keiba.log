@@ -28,13 +28,6 @@
         <tr>
             <td class="dam" rowspan="2">
                 母： {{ horse[4] if horse[4] else '不明' }}
-                <div style="color: red; font-size: 12px;">
-                    <div style="color: red; font-size: 12px;">
-                    DEBUG: 
-                    ログイン状態: {{ session.get('login') }} / 
-                    Line3: [{{ dam_info.line3 }}] / 
-                    Line4: [{{ dam_info.line4 }}]
-                </div>
                 {% if session.get('login') and (dam_info.line3 == '不明' or dam_info.line4 == '不明') %}
                     <br><a href="/add_parent?type=Dam&name={{ horse[4] or '' }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a>
                 {% endif %}
