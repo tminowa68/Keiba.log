@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}競走馬データベース{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+<header class="main-header">
+    <div class="header-inner">
+        <h1>keiba.log <span class="sub-title">System Management</span></h1>
+    </div>
+    <nav class="navbar">
+        <a href="/" class="{% if request.path == '/' or request.path.startswith('/horse/') %}active{% endif %}">競走馬検索</a>
+        <a href="/races" class="{% if request.path == '/races' or request.path == '/edit_race' %}active{% endif %}">レース情報</a>
+        <a href="/add_horse_page" class="{% if request.path == '/add_horse_page' or request.path == '/add_parent' %}active{% endif %}">データ登録</a>
+        {% if session.get('logged_in') %}
+        <a href="/logout">ログアウト</a>
+        {% else %}
+        <a href="/login" class="{% if request.path == '/login' %}active{% endif %}">管理者ログイン</a>
+        {% endif %}
+    </nav>
+</header>
+
+<main class="container">
+    {% block content %}
+    {% endblock %}
+</main>
+
+<footer class="main-footer">
+    <div class="footer-links">
+        <a href="https://www.jra.go.jp/" target="_blank" rel="noopener noreferrer" class="jra-link">
+            <img src="images/logo_jra.svg" alt="JRA 日本中央競馬会 公式サイトへ">
+        </a>
+    </div>
+    <p class="copyright">&copy; 2026 keiba.log All Rights Reserved.</p>
+</footer>
+</body>
+</html>

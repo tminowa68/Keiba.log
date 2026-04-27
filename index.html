@@ -1,0 +1,290 @@
+{% extends "layout.html" %}
+{% block content %}
+<section>
+    <div class="select-stables">
+        <p>厩舎絞り込み：
+            <button type="button" class="btn-reset" onclick="resetFilter()">リセット</button>
+        </p>
+        <div class="kana-buttons">
+            {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
+            <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+            {% endfor %}
+            <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+        </div>
+        <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
+        </div>
+        <select name="stable" id="reg_stable_select" onchange="renderAgeTables()" required>
+            <option value="">厩舎を選択してください</option>
+        </select>
+    </div>
+
+    <div id="tables_area">
+        <table id="horseTable">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">馬名</th>
+                    <th onclick="sortTable(1)">性別</th>
+                    <th onclick="sortTable(2)">馬齢</th>
+                    <th onclick="sortTable(3)">父</th>
+                    <th onclick="sortTable(4)">厩舎</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for horse in results %}
+                <tr>
+                    <td class="col-name"><a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a></td>
+                    <td class="col-gender">{{ horse[1] }}</td>
+                    <td class="col-age">
+                        {% if horse[2] %}
+                            {{ current_year - horse[2].year }}歳
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="col-sire">{{ horse[3] }}</td>
+                    <td>{{ horse[5] }}・{{ horse[6] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<script>
+// Flaskから渡された全馬データをJSオブジェクトとして保持
+const allHorsesData = [
+    {% for horse in results %}
+    {
+        name: "{{ horse[0] }}",
+        gender: "{{ horse[1] }}",
+        age: {% if horse[2] %}{{ current_year - horse[2].year }}{% else %}null{% endif %},
+        sire: "{{ horse[3] }}",
+        stable: "{{ horse[5] }}・{{ horse[6] }}"
+    },
+    {% endfor %}
+];
+
+const allStables = {{ stables | tojson | safe }};
+
+const rowMap = {
+    'あ': ['あ', 'い', 'う', 'え', 'お'],
+    'か': ['か', 'き', 'く', 'け', 'こ', 'が', 'ぎ', 'ぐ', 'げ', 'ご'],
+    'さ': ['さ', 'し', 'す', 'せ', 'そ', 'ざ', 'じ', 'ず', 'ぜ', 'ぞ'],
+    'た': ['た', 'ち', 'つ', 'て', 'と', 'だ', 'ぢ', 'づ', 'で', 'ど'],
+    'な': ['な', 'に', 'ぬ', 'ね', 'の'],
+    'は': ['は', 'ひ', 'ふ', 'へ', 'ほ', 'ば', 'び', 'ぶ', 'べ', 'ぼ', 'ぱ', 'ぴ', 'ぷ', 'ぺ', 'ぽ'],
+    'ま': ['ま', 'み', 'む', 'め', 'も'],
+    'や': ['や', 'ゆ', 'よ'],
+    'ら': ['ら', 'り', 'る', 'れ', 'ろ'],
+    'わ': ['わ', 'を', 'ん']
+};
+
+// 五十音ボタンやセレクトボックスの状態を完全に初期化する
+function resetFilter() {
+    // 1. セレクトボックスの要素を取得
+    const select = document.getElementById('reg_stable_select');
+    
+    // 2. 五十音ボタンを「全」の状態に戻し、プルダウンの選択肢を全厩舎に更新する
+    // 第3引数には「全」ボタンの要素を渡します
+    const allKanaBtn = document.querySelector('.reg-kana:last-child');
+    
+    // updateStableDropdownを呼び出すが、内部のfilterHorseTableと競合しないよう
+    // 手動で値をクリアした後に、リスト描画関数を呼び出します
+    updateStableDropdown('reg', '', allKanaBtn);
+
+    // 3. セレクトボックスの選択状態を確実に空にする
+    select.value = ""; 
+
+    // 4. 馬のリストを全件表示（初期状態）で再描画する
+    renderAgeTables();
+}
+
+function updateStableDropdown(type, char, btn, isSubChar = false) {
+    if (!isSubChar) {
+        document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    } else {
+        document.querySelectorAll('.sub-kana-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    }
+
+    const select = document.getElementById('reg_stable_select');
+    const subContainer = document.getElementById('sub_kana_container');
+    if (!select) return;
+
+    if (!isSubChar) {
+        subContainer.innerHTML = '';
+        if (char && rowMap[char]) {
+            createSubButtons(char);
+            subContainer.style.display = 'block';
+        } else {
+            subContainer.style.display = 'none';
+        }
+    }
+
+    const regex = isSubChar ? new RegExp('^' + char) : getRowRegex(char);
+
+    // セレクトボックスの選択肢を再構築（初期値を必ず入れる）
+    select.innerHTML = '<option value="">厩舎を選択してください</option>';
+
+    const filtered = allStables
+        .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
+
+    filtered.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.display_name;
+        opt.textContent = s.display_name;
+        select.appendChild(opt);
+    });
+
+    // ここで filterHorseTable() が呼ばれますが、
+    // resetFilterから呼ばれた場合は直後に renderAgeTables() で上書きされます
+    filterHorseTable();
+}
+
+function createSubButtons(rowChar) {
+    const subContainer = document.getElementById('sub_kana_container');
+    const charsInRow = rowMap[rowChar];
+    
+    // 「全」ボタンの作成
+    const allBtn = document.createElement('span');
+    allBtn.className = 'kana-btn sub-kana-btn active';
+    allBtn.textContent = '全';
+    allBtn.onclick = function() {
+        updateStableDropdown('reg', rowChar, this, false);
+    };
+    subContainer.appendChild(allBtn);
+
+    // 登録がある文字だけボタンを作成
+    charsInRow.forEach(c => {
+        const hasData = allStables.some(s => s.kana && s.kana.startsWith(c));
+        if (hasData) {
+            const btn = document.createElement('span');
+            btn.className = 'kana-btn sub-kana-btn';
+            btn.textContent = c;
+            btn.onclick = function() {
+                updateStableDropdown('reg', c, this, true);
+            };
+            subContainer.appendChild(btn);
+        }
+    });
+}
+
+function getRowRegex(char) {
+    const kanaMap = {
+        'あ': /^[あ-お]/, 'か': /^[か-こが-ご]/, 'さ': /^[さ-そざ-ぞ]/,
+        'た': /^[た-とだ-ど]/, 'な': /^[な-の]/, 'は': /^[は-ほば-ぼぱ-ぽ]/,
+        'ま': /^[ま-も]/, 'や': /^[や-よ]/, 'ら': /^[ら-ろ]/, 'わ': /^[わをん]/
+    };
+    return kanaMap[char] || /.*/;
+}
+
+function filterHorseTable() {
+    const selectedStable = document.getElementById('reg_stable_select').value;
+    const table = document.getElementById('horseTable');
+    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+    for (let i = 0; i < rows.length; i++) {
+        // 6列目（インデックス5）の「厩舎」セルを取得
+        const stableCell = rows[i].getElementsByTagName('td')[4];
+        if (stableCell) {
+            const stableText = stableCell.textContent || stableCell.innerText;
+            
+            // 未選択（空文字）の場合は全表示、選択されている場合は一致するものだけ表示
+            if (selectedStable === "" || stableText.trim() === selectedStable.trim()) {
+                rows[i].style.display = "";
+            } else {
+                rows[i].style.display = "none";
+            }
+        }
+    }
+}
+
+function resetFilter() {
+    location.reload();
+}
+
+// 年齢別にテーブルを分けるメインロジック
+function renderAgeTables() {
+    const selectedStable = document.getElementById('reg_stable_select').value;
+    const container = document.getElementById('tables_area');
+    
+    // 厩舎が未選択（またはリセット時）は元の全件表示テーブルを表示
+    if (!selectedStable) {
+        container.innerHTML = `
+            <table id="horseTable">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable(0)">馬名</th>
+                        <th onclick="sortTable(1)">性別</th>
+                        <th onclick="sortTable(2)">馬齢</th>
+                        <th onclick="sortTable(3)">父</th>
+                        <th onclick="sortTable(4)">厩舎</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${allHorsesData.map(h => `
+                        <tr>
+                            <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
+                            <td class="col-gender">${h.gender}</td>
+                            <td class="col-age">${h.age || '-'}</td>
+                            <td class="col-sire">${h.sire}</td>
+                            <td>${h.stable}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+        return;
+    }
+
+    // 選択された厩舎の馬をフィルタリング
+    const filtered = allHorsesData.filter(h => h.stable === selectedStable);
+    
+    // 年齢グループ分け
+    const groups = {
+        '2歳': filtered.filter(h => h.age === 2),
+        '3歳': filtered.filter(h => h.age === 3),
+        '4歳': filtered.filter(h => h.age === 4),
+        '5歳以上': filtered.filter(h => h.age >= 5)
+    };
+
+    let html = '<div class="age-tables-container">';
+    
+    Object.keys(groups).forEach(label => {
+        html += `
+            <div class="age-group-section">
+                <h3>${label}</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="col-name">馬名</th>
+                            <th class="col-gender">性別</th>
+                            ${label === '5歳以上' ? '<th class="col-age">馬齢</th>' : ''}
+                            <th class="col-sire">父</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${groups[label].map(h => `
+                            <tr>
+                                <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
+                                <td class="col-gender">${h.gender}</td>
+                                ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
+                                <td class="col-sire">${h.sire}</td>
+                            </tr>
+                        `).join('')}
+                        ${groups[label].length === 0 ? '<tr><td colspan="4" style="text-align:center; color:#999;">なし</td></tr>' : ''}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+window.onload = function() {
+    updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
+};
+</script>
+{% endblock %}

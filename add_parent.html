@@ -1,0 +1,52 @@
+{% extends "layout.html" %}
+{% block title %}血統登録{% endblock %}
+{% block content %}
+<h2>親馬の登録</h2>
+<section>
+<form action="/add_parent" method="POST" autocomplete="off">
+    <input type="hidden" name="p_name" value="{{ p_name }}">
+    <input type="hidden" name="origin" value="{{ origin }}">
+    
+    <div style="margin-bottom: 15px;">
+        <label>登録種別：</label>
+        <strong>{{ '父 (Sire)' if p_type == 'Sire' else '母 (Dam)' }}</strong>
+        <input type="hidden" name="p_type" value="{{ p_type }}">
+    </div>
+
+    <div style="margin-bottom: 15px;">
+        <label>馬名：</label>
+        <strong>{{ p_name }}</strong>
+        <input type="hidden" name="p_name" value="{{ p_name }}">
+    </div>
+
+    <div style="margin-bottom: 15px;">
+        <label>生年月日：</label>
+        <input type="number" name="year" value="data.year" style="width:70px; padding:8px;">年
+        <select name="month" style="padding:8px;">
+            <option value="" {% if not data.month %}selected{% endif %}></option>
+            {% for m in range(1, 7) %}
+            <option value="{{ m }}" {% if m == data.month %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+        </select> 月
+        <select name="day" style="padding:8px;">
+            <option value="" {% if not data.day %}selected{% endif %}></option>
+            {% for d in range(1, 32) %}
+            <option value="{{ d }}" {% if d == data.day %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select> 日
+    </div>
+
+    <div style="margin-bottom:15px;">
+            <label>血統：</label><br>
+            <input type="text" name="sire" value="{{ data.sire }}" placeholder="父" style="width:210px; padding:8px;">
+            ×
+            <input type="text" name="dam" value="{{ data.dam }}" placeholder="母" style="width:210px; padding:8px;">
+        </div>
+
+    <div style="margin-top: 20px;">
+        <button type="submit" class="btn-save">登録する</button>
+        <a href="{{ url_for('horse_detail', name=origin) if origin else '/' }}" class="btn-cancel">キャンセル</a>
+    </div>
+</form>
+</section>
+{% endblock %}

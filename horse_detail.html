@@ -1,0 +1,179 @@
+{% extends "layout.html" %}
+{% block title %}{{ horse[0] }} - 詳細{% endblock %}
+{% block content %}
+<h1>馬名：{{ horse[0] }}</h1>
+<div class="entry-tabs mt-20">
+    <div class="tab-btn active" onclick="switchHorseTab('profile')">プロフィール</div>
+    <div class="tab-btn" onclick="switchHorseTab('races')">出走レース</div>
+</div>
+
+<section id="profile" class="entry-section active">
+    <p><strong>性別・馬齢：</strong> {{ horse[1] }}・{{ current_year - horse[2].year }}歳</p>
+    <p><strong>生年月日：</strong> {{ horse[2].year }}年{{ horse[2].month }}月{{ horse[2].day }}日</p>
+    <p><strong>厩舎：</strong> {{ horse[5] }}・{{ horse[6] }}</p>
+    <p><strong>血統：</strong></p>
+    <table class="pedigree-table">
+        <tr>
+            <td class="sire" rowspan="2">
+                父： {{ horse[3] if horse[3] else '不明' }}
+                {% if session.get('login') and (sire_info.line1 == '不明' or sire_info.line2 == '不明') %}
+                    <br><a href="/add_parent?type=Sire&name={{ horse[3] or '' }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a>
+                {% endif %}
+            </td>
+            <td class="sire">{{ sire_info.line1 }}</td>
+        </tr>
+        <tr>
+            <td class="dam">{{ sire_info.line2 }}</td>
+        </tr>
+        <tr>
+            <td class="dam" rowspan="2">
+                母： {{ horse[4] if horse[4] else '不明' }}
+                <div style="color: red; font-size: 12px;">
+                    <div style="color: red; font-size: 12px;">
+                    DEBUG: 
+                    ログイン状態: {{ session.get('login') }} / 
+                    Line3: [{{ dam_info.line3 }}] / 
+                    Line4: [{{ dam_info.line4 }}]
+                </div>
+                {% if session.get('login') and (dam_info.line3 == '不明' or dam_info.line4 == '不明') %}
+                    <br><a href="/add_parent?type=Dam&name={{ horse[4] or '' }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a>
+                {% endif %}
+            </td>
+            <td class="sire">{{ dam_info.line3 }}</td>
+        </tr>
+        <tr>
+            <td class="dam">{{ dam_info.line4 }}</td>
+        </tr>
+    </table>
+    {% if session.get('logged_in') %}
+    <hr>
+    <a href="/edit_horse/{{ horse[0] }}" class="btn-edit">情報を編集する</a>
+    {% endif %}
+</section>
+
+<section id="races" class="entry-section">
+    <div class="horse-status-container">
+        <div>現在のクラス： <span id="current-class" class="status-highlight">計算中...</span></div>
+        <div>合計収得賞金： <span id="total-prize">0</span> 万円</div>
+    </div>
+    <hr>
+    <div class="race-history-header">
+        <h3 class="m-0">出走レース一覧</h3>
+        {% if session.get('logged_in') %}
+        <a href="/races" class="btn-add btn-link">レースを登録する</a>
+        {% endif %}
+    </div>
+    
+    <table class="entry-table">
+        <thead>
+            <tr>
+                <th>年月日</th>
+                <th>場所</th>
+                <th>レース<br>番号</th>
+                <th>レース名</th>
+                <th>出走条件</th>
+                <th>コース</th>
+                <th>着順</th>
+                <th>加算収得賞金<br>（万円）</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in horse_races %}
+            <tr class="race-history-row">
+                <td>{{ r.date_label }}</td>
+                <td>{{ r.venue }}</td>
+                <td class="text-center">{{ r.num }}R</td>
+                <td class="r-name">{{ r.name if r.name else '-' }}</td>
+                <td class="r-condition">{{ r.condition if r.condition else '-' }}</td>
+                <td>{{ r.course if r.course else '-' }}</td>
+                <td class="r-rank text-center-bold">{{ r.rank if r.rank else '-' }}着</td>
+                <td class="r-added-prize prize-text"></td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8" class="empty-row-message">登録されたレースはありません。</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<div class="back-link-container">
+    <a href="/">一覧に戻る</a>
+</div>
+
+<script>
+function switchHorseTab(tabId) {
+    document.querySelectorAll('.entry-section').forEach(s => s.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(tabId).style.display = 'block';
+    event.currentTarget.classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    let totalPrize = 0;
+    const rows = document.querySelectorAll('.race-history-row');
+    const hasRaced = rows.length > 0;
+
+    rows.forEach(row => {
+        const raceName = row.querySelector('.r-name').textContent.trim();
+        const condition = row.querySelector('.r-condition').textContent.trim();
+        const rankRaw = row.querySelector('.r-rank').textContent.trim();
+        
+        const rankMatch = rankRaw.match(/\d+/);
+        const rank = rankMatch ? parseInt(rankMatch[0]) : null;
+
+        if (rank !== null) {
+            const added = calculateAddedPrize(rank, condition, raceName);
+            if (added > 0) {
+                row.querySelector('.r-added-prize').textContent = '+' + added;
+                totalPrize += added;
+            }
+        }
+    });
+
+    const horseBirthYear = {{ horse[2].year }};
+    const currentYear = {{ current_year }};
+    const currentMonth = new Date().getMonth() + 1;
+    const horseAge = currentYear - horseBirthYear;
+
+    document.getElementById('total-prize').textContent = totalPrize;
+    document.getElementById('current-class').textContent = judgeClass(totalPrize, hasRaced, horseAge, currentMonth);
+});
+
+function calculateAddedPrize(rank, condition, raceName) {
+    if (condition.includes('重賞') && (condition.includes('2歳') || raceName.includes('2歳'))) {
+        if (!raceName.includes('G1') && !raceName.includes('G2')) {
+            if (rank === 1) return 1600;
+            if (rank === 2) return 600;
+        }
+    }
+    if (rank !== 1) return 0;
+    if (condition.includes('オープン')) {
+        const isListed = raceName.includes('L') || raceName.includes('リステッド');
+        if (condition.includes('2歳')) return isListed ? 800 : 600;
+        if (condition.includes('3歳')) return isListed ? 1200 : 1000;
+        return isListed ? 1400 : 1200;
+    }
+    if (condition.includes('3勝') || condition.includes('1600万')) return 900;
+    if (condition.includes('2勝') || condition.includes('1000万')) return 600;
+    if (condition.includes('1勝') || condition.includes('500万')) return 500;
+    if (condition.includes('未勝利') || condition.includes('新馬')) return 400;
+    return 0;
+}
+
+function judgeClass(prize, hasRaced, age, month) {
+    if (prize === 0) return hasRaced ? "未勝利" : "新馬";
+    
+    if (age === 2 || (age === 3 && month <= 5)) {
+        if (prize <= 500) return "1勝クラス";
+        return "オープン";
+    } else {
+        if (prize <= 500) return "1勝クラス";
+        if (prize <= 1000) return "2勝クラス";
+        if (prize <= 1600) return "3勝クラス";
+        return "オープン";
+    }
+}
+</script>
+{% endblock %}

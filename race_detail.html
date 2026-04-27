@@ -1,0 +1,535 @@
+{% extends "layout.html" %}
+{% block title %}レース編集{% endblock %}
+{% block content %}
+<div class="edit-container">
+    {% if race %}
+    <section class="race-header-card">
+        <h1>{{ race.name if race.name else '' }}</h1>
+        <div class="race-info-main">
+            {{ date }} ／ {{ venue }} ／ {{ race.num }}
+        </div>
+        <div class="race-info-sub">
+            <span><strong>発走時刻:</strong> {{ race.time }}</span>
+            <span><strong>出走条件:</strong> {{ race.condition }}</span>
+            <span><strong>コース:</strong> {{ race.course }}</span>
+        </div>
+    </section>
+
+    {% set has_final = entered_horses | selectattr('status', 'equalto', '確定') | list | length > 0 %}
+    {% set has_special = entered_horses | selectattr('status', 'equalto', '特別') | list | length > 0 %}
+    {% set default_tab = 'final' if has_final else ('special' if has_special else 'estimated') %}
+
+    <div class="entry-tabs">
+        <div class="tab-btn" id="tab_estimated" onclick="switchTab('estimated')">想定</div>
+        {% if race.name %}
+            <div class="tab-btn" id="tab_special" onclick="switchTab('special')">特別登録</div>
+        {% endif %}
+        <div class="tab-btn" id="tab_final" onclick="switchTab('final')">確定出馬表</div>
+    </div>
+
+    <section id="estimated" class="entry-section">
+        <div class="filter-container">
+            <select id="class-filter" onchange="filterHorses()">
+                <option value="全クラス">全クラス</option>
+                <option value="新馬">新馬</option>
+                <option value="未勝利">未勝利</option>
+                <option value="1勝クラス">1勝クラス</option>
+                <option value="2勝クラス">2勝クラス</option>
+                <option value="3勝クラス">3勝クラス</option>
+                <option value="オープン">オープン</option>
+            </select>
+        </div>
+        <div class="entry-form-box">
+            <select id="select_estimated">
+                <option value="">馬を選択してください</option>
+                {% for h in available_horses %}
+                <option value="{{ h.name }}" data-age="{{ h.age }}" data-class="{{ h.class }}">
+                    {{ h.name }} ({{ h.gender }}, {{ h.age }}歳, {{ h.class }}, {{ h.stable }})
+                </option>
+                {% endfor %}
+            </select>
+            <button class="btn-add" onclick="registerSingle('estimated')">エントリー</button>
+        </div>
+        
+        <h3>出走想定</h3>
+        <table class="entry-table" id="table_estimated">
+            <thead>
+                <tr>
+                    <th>馬名</th>
+                    <th>性別</th>
+                    <th>馬齢</th>
+                    <th>厩舎</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    {% if race.name %}
+    <section id="special" class="entry-section">
+        <div class="entry-form-box">
+            <div class="mb-8">
+                <button type="button" class="update-btn btn-secondary" onclick="selectAll(...)">全てにチェックを入れる</button>
+            </div>
+            <div id="checkboxes_special" class="checkbox-list"></div>
+            <button class="btn-add" onclick="registerSelected('special')">特別登録へ追加</button>
+        </div>
+
+        <h3>特別登録</h3>
+        <table class="entry-table" id="table_special">
+            <thead>
+                <tr>
+                    <th>馬名</th>
+                    <th>性別</th>
+                    <th>馬齢</th>
+                    <th>厩舎</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+    {% endif %}
+
+    <section id="final" class="entry-section">
+        <div class="entry-form-box">
+            <div class="mb-8">
+                <button type="button" class="update-btn btn-secondary" onclick="selectAll(...)">全てにチェックを入れる</button>
+            </div>
+            <div id="checkboxes_final" class="checkbox-list"></div>
+            <button class="btn-add" onclick="registerSelected('final')">出馬表を確定</button>
+        </div>
+        
+        <h3>確定出馬表 <span id="final-count" class="final-count-text"></span></h3>
+        <table class="entry-table" id="table_final">
+            <thead>
+                <tr>
+                    <th>着順</th>
+                    <th>馬番</th>
+                    <th>馬名</th>
+                    <th>性別</th>
+                    <th>馬齢</th>
+                    <th>厩舎</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    <div class="back-link-container">
+        <a href="/races?date={{ date }}&venue={{ venue }}">← レース一覧に戻る</a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+let masterHorseOptions = [];
+const enteredHorses = {{ entered_horses | tojson }};
+const allHorsesInfo = {{ all_horses | tojson }};
+const hasRaceName = {% if race.name %}true{% else %}false{% endif %};
+
+document.addEventListener('DOMContentLoaded', function() {
+    const horseSelect = document.getElementById('select_estimated');
+    // 初期状態の全オプションを配列に保存
+    masterHorseOptions = Array.from(horseSelect.querySelectorAll('option')).map(opt => ({
+        value: opt.value,
+        text: opt.textContent,
+        age: opt.dataset.age,
+        className: opt.dataset.class // dataset.class
+    }));
+
+    // タブ初期化
+    let activeTab = localStorage.getItem('currentTab_{{ race.num }}') || '{{ default_tab }}';
+    if (!document.getElementById(`tab_${activeTab}`)) activeTab = 'estimated';
+    switchTab(activeTab);
+
+    // テーブル描画
+    renderTables();
+    renderChecklists();
+
+    // レース条件から初期フィルターを設定
+    const raceCondition = "{{ race.condition }}";
+    const filterSelect = document.getElementById('class-filter');
+    const classes = ["オープン", "3勝クラス", "2勝クラス", "1勝クラス", "未勝利", "新馬"];
+    for (let c of classes) {
+        if (raceCondition.includes(c)) {
+            filterSelect.value = c;
+            break;
+        }
+    }
+
+    filterHorses();
+});
+
+function filterHorses() {
+    const selectedClass = document.getElementById('class-filter').value;
+    const horseSelect = document.getElementById('select_estimated');
+    
+    // レース条件（年齢）の解析
+    const condition = "{{ race.condition }}";
+    const ageMatch = condition.match(/(\d+)歳/);
+    const targetAge = ageMatch ? parseInt(ageMatch[1]) : null;
+    const isOver = condition.includes("以上");
+
+    // セレクトボックスを一度クリアして、条件に合うものだけ追加し直す
+    horseSelect.innerHTML = '';
+
+    masterHorseOptions.forEach(optData => {
+        // 「選択してください」は常に表示
+        if (optData.value === "") {
+            addOption(horseSelect, optData);
+            return;
+        }
+
+        let isVisible = true;
+
+        // 1. クラスチェック
+        if (selectedClass !== "全クラス" && optData.className !== selectedClass) {
+            isVisible = false;
+        }
+
+        // 2. 年齢チェック（クラスチェックを通った場合のみ）
+        if (isVisible && targetAge !== null) {
+            const horseAge = parseInt(optData.age);
+            if (!isNaN(horseAge)) {
+                const ageOk = isOver ? (horseAge >= targetAge) : (horseAge === targetAge);
+                if (!ageOk) isVisible = false;
+            }
+        }
+
+        if (isVisible) {
+            addOption(horseSelect, optData);
+        }
+    });
+
+    horseSelect.value = "";
+}
+
+function addOption(select, data) {
+    const opt = document.createElement('option');
+    opt.value = data.value;
+    opt.textContent = data.text;
+    opt.dataset.age = data.age;
+    opt.dataset.class = data.className;
+    select.appendChild(opt);
+}
+
+function switchTab(tabId) {
+    document.querySelectorAll('.entry-section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    
+    document.getElementById(tabId).classList.add('active');
+    document.getElementById(`tab_${tabId}`).classList.add('active');
+    localStorage.setItem('currentTab_{{ race.num }}', tabId);
+}
+
+// テーブルの描画
+function renderTables() {
+    const allHorsesInfo = [
+        {% for h in available_horses %}
+        {
+            name: "{{ h.name }}",
+            gender: "{{ h.gender }}",
+            age: "{{ h.age }}",
+            stable: "{{ h.stable }}"
+        },
+        {% endfor %}
+    ];
+    const tbodyEst = document.querySelector('#table_estimated tbody');
+    const tbodySpc = document.querySelector('#table_special tbody');
+    const tbodyFin = document.querySelector('#table_final tbody');
+
+    // 描画をクリア（再描画時の重複防止）
+    if (tbodyEst) tbodyEst.innerHTML = '';
+    if (tbodySpc) tbodySpc.innerHTML = '';
+    if (tbodyFin) tbodyFin.innerHTML = '';
+
+    // --- 確定タブ用のソート済み配列を作成 ---
+    const sortedFinalHorses = enteredHorses
+        .filter(h => h.status === '確定')
+        .sort((a, b) => {
+            // 1. 着順で比較 (未入力は末尾へ)
+            const rankA = a.rank ? parseInt(a.rank) : 999;
+            const rankB = b.rank ? parseInt(b.rank) : 999;
+            if (rankA !== rankB) return rankA - rankB;
+
+            // 2. 着順が同じなら馬番で比較 (未入力は末尾へ)
+            const numA = a.num ? parseInt(a.num) : 999;
+            const numB = b.num ? parseInt(b.num) : 999;
+            return numA - numB;
+        });
+
+    // 頭数をタイトル横に表示する処理
+    const countDisplay = document.getElementById('final-count');
+    if (countDisplay) {
+        countDisplay.textContent = `（${sortedFinalHorses.length}頭）`;
+    }
+
+    // --- 全体のループ ---
+    enteredHorses.forEach(horse => {
+        const master = allHorsesInfo.find(h => h.name === horse.name) || {};
+        const gender = master.gender || "-";
+        const age = master.age !== undefined ? master.age : "-";
+        const stable = master.stable || "-";
+        
+        const basicHtml = `
+            <td class="col-name"><a href="/horse/${horse.name}">${horse.name}</a></td>
+            <td class="col-gender">${gender}</td>
+            <td>${age}歳</td>
+            <td>${stable}</td>
+        `;
+
+        // 想定：ステータスに関わらず全員表示
+        if (tbodyEst && ['想定', '特別', '確定'].includes(horse.status)) {
+            tbodyEst.insertAdjacentHTML('beforeend', `<tr>${basicHtml}</tr>`);
+        }
+        // 特別：特別と確定を表示
+        if (tbodySpc && ['特別', '確定'].includes(horse.status)) {
+            tbodySpc.insertAdjacentHTML('beforeend', `<tr>${basicHtml}</tr>`);
+        }
+    });
+
+    // --- 確定：ソート済みの配列を使って描画 ---
+    if (tbodyFin) {
+        const totalCount = sortedFinalHorses.length;
+        sortedFinalHorses.forEach(horse => {
+            const master = allHorsesInfo.find(h => h.name === horse.name) || {};
+            const gender = master.gender || "-";
+            const age = master.age !== undefined ? master.age : "-";
+            const stable = master.stable || "-";
+            const colorInfo = getWakuColor(horse.num, totalCount);
+            const basicHtml = `
+                <td class="col-name"><a href="/horse/${horse.name}">${horse.name}</a></td>
+                <td class="col-gender">${gender}</td>
+                <td>${age}歳</td>
+                <td>${stable}</td>
+            `;
+            const rank = horse.rank || "";
+            const num = horse.num || "";
+            const finalRow = `
+                <tr>
+                    <td class="text-center"><input type="number" id="rank_${horse.name}" class="input-number" value="${rank}"></td>
+                    <td class="text-center" style="background-color: ${colorInfo.bg}; color: ${colorInfo.text}; font-weight: bold;">
+                        <input type="number" id="num_${horse.name}" class="input-number transparent-input" value="${num}">
+                    </td>
+                    ${basicHtml}
+                    <td class="text-center"><button class="update-btn" onclick="updateFinalInfo('${horse.name}')">更新</button></td>
+                </tr>
+            `;
+            tbodyFin.insertAdjacentHTML('beforeend', finalRow);
+        });
+    }
+}
+
+// チェックボックスリストの描画
+function renderChecklists() {
+    // 特別登録用の候補 (想定にいて、特別・確定にいない)
+    if (hasRaceName) {
+        const specialCandidates = enteredHorses.filter(h => h.status === '想定');
+        buildChecklist('checkboxes_special', specialCandidates);
+    }
+
+    // 確定出馬表用の候補 (特別(レース名がなければ想定)にいて、確定にいない)
+    const sourceStatus = hasRaceName ? '特別' : '想定';
+    const finalCandidates = enteredHorses.filter(h => h.status === sourceStatus);
+    buildChecklist('checkboxes_final', finalCandidates);
+}
+
+function buildChecklist(containerId, candidates) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    
+    if (candidates.length === 0) {
+        container.innerHTML = '<span style="color:#888;">登録可能な候補がいません。</span>';
+        return;
+    }
+
+    candidates.forEach(h => {
+        const label = document.createElement('label');
+        label.innerHTML = `<input type="checkbox" value="${h.name}"> ${h.name}`;
+        container.appendChild(label);
+    });
+}
+
+// 単一登録（想定タブ用）
+async function registerSingle(type) {
+    const select = document.getElementById(`select_${type}`);
+    const horseName = select.value;
+    if (!horseName) return alert('馬を選択してください');
+
+    await postEntry({ horse_name: horseName, entry_type: type });
+    location.reload();
+}
+
+// 複数登録（特別・確定タブのチェックボックス用）
+async function registerSelected(type) {
+    const container = document.getElementById(`checkboxes_${type}`);
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
+    if (checkboxes.length === 0) return alert('馬を選択してください');
+
+    // ボタンを無効化して連打を防ぐ
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerText = "登録中...";
+
+    try {
+        // for...of を使うことで、await が1つずつ完了するのを待ちます
+        for (const cb of checkboxes) {
+            const payload = {
+                venue: "{{ venue }}",
+                sheet_name: "{{ search_text }}",
+                race_num: "{{ race.num }}".replace(/[^0-9]/g, ""),
+                horse_name: cb.value,
+                entry_type: type
+            };
+
+            const res = await fetch('/save_entry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) throw new Error(`${cb.value}の登録に失敗しました`);
+        }
+        location.reload();
+    } catch (e) {
+        alert('エラーが発生しました: ' + e.message);
+        location.reload();
+    }
+}
+
+// 着順・馬番の更新（確定タブ用）
+async function updateFinalInfo(horseName) {
+    const rank = document.getElementById(`rank_${horseName}`).value;
+    const num = document.getElementById(`num_${horseName}`).value;
+    
+    await postEntry({
+        horse_name: horseName,
+        horse_num: num,
+        horse_rank: rank,
+        entry_type: 'final'
+    });
+    alert(`${horseName} の情報を更新しました`);
+    location.reload();
+}
+
+// API通信の共通処理
+async function postEntry(extraData) {
+    const payload = {
+        date: "{{ date }}",
+        venue: "{{ venue }}",
+        sheet_name: "{{ search_text }}",
+        race_num: "{{ race.num }}".replace(/[^0-9]/g, ""),
+        ...extraData
+    };
+
+    try {
+        const res = await fetch('/save_entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('通信エラー');
+        
+        // 成功時の処理（必要に応じて追加）
+        console.log('保存成功');
+    } catch (e) {
+        console.error(e);
+        alert('サーバーの保存に失敗しました');
+    }
+}
+
+function selectAll(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = true;
+    });
+}
+
+function getWakuColor(num, total) {
+    if (!num || isNaN(num)) return "transparent";
+    const n = parseInt(num);
+    
+    // 枠色のカラーコード定義
+    const colors = {
+        1: "#ffffff", // 白
+        2: "#333333", // 黒 (文字白)
+        3: "#ff3333", // 赤
+        4: "#3366ff", // 青 (文字白)
+        5: "#ffff33", // 黄
+        6: "#228b22", // 緑 (文字白)
+        7: "#ff8c00", // オレンジ
+        8: "#ffc0cb"  // ピンク
+    };
+
+    // 枠の判定ロジック
+    let waku = 0;
+    if (total <= 8) {
+        waku = n;
+    } else {
+        // 9頭以上の場合は、8枠から順に頭数が増える
+        // 17, 18頭の場合はピンク(8枠)とオレンジ(7枠)が3頭ずつになるルールを包含
+        if (n <= total - 8) {
+            // 基本は1枠1頭
+            waku = Math.ceil(n / 1); // 簡略化していますが、実際は外から2頭ずつになります
+        }
+        // JRA公式の割り振り計算（外から埋める方式）
+        waku = Math.max(1, 8 - Math.floor((total - n) / (total > 16 ? 3 : 2)));
+        
+        // より正確なJRA方式の簡易計算:
+        const extra = total - 8;
+        if (n <= total - (extra * 2)) {
+            waku = n;
+        } else {
+            // ここはJRAの枠割表に基づいた計算が必要ですが、
+            // 一般的な「外から増やしていく」簡易ロジック
+            waku = Math.ceil((n - (total - 8 * 2)) / 2); 
+        }
+    }
+    
+    // 正確な枠割り計算（JRA方式：18頭まで対応）
+    const getJraWaku = (n, total) => {
+        if (n <= 0) return 0;
+        let w = [0,1,2,3,4,5,6,7,8]; // 各枠の最大馬番を保持
+        for (let i = 1; i <= 8; i++) w[i] = i; 
+        let currentTotal = 8;
+        let targetWaku = 8;
+        while (currentTotal < total) {
+            w[targetWaku]++;
+            currentTotal++;
+            targetWaku--;
+            if (targetWaku < (total > 16 ? 1 : 1)) {
+                targetWaku = 8;
+            }
+        }
+        // 馬番nがどの枠に属するか判定
+        let cumulative = 0;
+        let assignedWaku = 1;
+        let horseCountPerWaku = Array(9).fill(1);
+        let remain = total - 8;
+        for(let j=8; j>=1 && remain>0; j--) {
+            horseCountPerWaku[j]++;
+            remain--;
+            if(j==1 && remain>0) j=9; // 17,18頭目用
+        }
+        
+        let currentPos = 0;
+        for(let k=1; k<=8; k++) {
+            currentPos += horseCountPerWaku[k];
+            if(n <= currentPos) return k;
+        }
+        return 8;
+    };
+
+    const finalWaku = getJraWaku(n, total);
+    return {
+        bg: colors[finalWaku] || "transparent",
+        text: [2, 4, 6].includes(finalWaku) ? "#fff" : "#000" // 黒青緑は文字を白くする
+    };
+}
+</script>
+{% endblock %}

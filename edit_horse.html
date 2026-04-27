@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ horse[0] }} - 編集</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+<h1>馬情報の編集: {{ horse[0] }}</h1>
+
+<section>
+    <form method="POST" action="/update_horse" onsubmit="return splitStableValue(document.getElementById('reg_stable_select'))">
+        <input type="hidden" name="old_name" value="{{ horse[0] }}">
+        <div style="margin-bottom:15px;">
+        <label>馬名：</label><br>
+        <input type="text" name="name" placeholder="馬名" value="{{ horse[0] }}" required style="width: 210px; padding:8px; margin-top:5px;">
+    </div>
+
+    <div style="margin-bottom:15px;">
+        <label>性別：</label>
+        <select name="gender">
+            <option value="牡" {% if horse[1] == '牡' %}selected{% endif %}>牡</option>
+            <option value="牝" {% if horse[1] == '牝' %}selected{% endif %}>牝</option>
+            <option value="せん" {% if horse[1] == 'せん' %}selected{% endif %}>せん</option>
+        </select>
+        &nbsp;&nbsp;
+        <label>生年月日：</label>
+        <input type="number" name="year" value="{{ horse[2].year }}" required style="width:50px; padding:8px;">年
+        <select name="month" required style="padding:8px;">
+            {% for m in range(1, 7) %}
+            <option value="{{ m }}" {% if m == horse[2].month %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+        </select> 月
+        <select name="day" required style="padding:8px;">
+            {% for d in range(1, 32) %}
+            <option value="{{ d }}" {% if d == horse[2].day %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select> 日
+    </div>
+
+    <div style="margin-bottom:15px;">
+        <label>血統：</label><br>
+        父：<input type="text" name="sire" placeholder="父" value="{{ horse[3] }}" style="width:210px; padding:8px;">
+        ×
+        母：<input type="text" name="dam" placeholder="母" value="{{ horse[4] }}" style="width:210px; padding:8px;">
+    </div>
+
+    <p>厩舎選択：</p>
+    <div class="kana-buttons">
+        {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
+        <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+        {% endfor %}
+        <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+    </div>
+    <select id="reg_stable_select" name="stable" style="width: 230px; padding:8px;" required>
+        <option value="{{ horse[6] }}・{{ horse[7] }}" selected>{{ horse[6] }}・{{ horse[7] }}</option>
+    </select>
+
+    <input type="hidden" id="location" name="location">
+    <input type="hidden" id="stable_name" name="stable_name">
+
+    <div style="margin-top:20px;">
+        <button type="submit" style="background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">更新を保存</button>
+        <a href="/horse/{{ horse[0] }}" style="margin-left:10px;">キャンセル</a>
+    </div>
+    </form>
+</section>
+
+<script>
+const stablesData = {{ stables | tojson | safe }};
+const currentStable = "{{ horse[6] }}・{{ horse[7] }}";
+
+function updateStableDropdown(type, char, btn) {
+    document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    const select = document.getElementById('reg_stable_select');
+    select.innerHTML = '<option value="" disabled>厩舎を選択してください</option>';
+
+    const kanaMap = {
+        'あ': /^[あ-お]/, 'か': /^[か-こが-ご]/, 'さ': /^[さ-そざ-ぞ]/,
+        'た': /^[た-とだ-ど]/, 'な': /^[な-の]/, 'は': /^[は-ほば-ぼぱ-ぽ]/,
+        'ま': /^[ま-も]/, 'や': /^[や-よ]/, 'ら': /^[ら-ろ]/, 'わ': /^[わをん]/
+    };
+
+    stablesData.forEach(s => {
+        if (!char || (s.kana && kanaMap[char].test(s.kana))) {
+            const opt = document.createElement('option');
+            opt.value = s.display_name;
+            opt.textContent = s.display_name;
+            if(s.display_name === currentStable) opt.selected = true;
+            select.appendChild(opt);
+        }
+    });
+}
+
+window.onload = function() {
+    updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
+};
+
+function splitStableValue(selectElement) {
+    const fullValue = selectElement.value;
+    if (fullValue && fullValue.includes('・')) {
+        const parts = fullValue.split('・');
+        document.getElementById('location').value = parts[0];
+        document.getElementById('stable_name').value = parts[1];
+        return true; // 送信実行
+    } else {
+        alert("厩舎を選択してください");
+        return false; // 送信中止
+    }
+}
+</script>
+</body>
+</html>

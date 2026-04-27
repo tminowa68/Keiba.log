@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>レース情報</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+{% extends "layout.html" %}
+{% block content %}
+<section>
+<div style="margin-bottom: 20px;">
+    <div style="margin-bottom: 12px;">
+        {% for d in display_dates %}
+            <a class="date" href="/races?date={{ d.value }}"
+                style="{% if date == d.value %} background-color: #007bff; color: white; {% else %} background-color: white; color: #007bff; {% endif %}">
+                {{ d.label }}
+            </a>
+        {% endfor %}
+        
+        日付を選択：
+        <form method="GET" action="/races" style="display: inline-block;">
+            <input type="date" name="date" value="{{ date }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
+        </form>
+        <a style="margin-left: 5px;" href="/races">今週の開催へ</a>
+    </div>
+
+    <div>
+        {% for v in available_venues %}
+            <a href="/races?date={{ date }}&venue={{ v }}" 
+               style="display: inline-block; padding: 6px 16px; margin-right: 8px; text-decoration: none; border: 1px solid #28a745; border-radius: 4px; font-weight: bold;
+               {% if venue == v %}background-color: #28a745; color: white;{% else %}background-color: white; color: #28a745;{% endif %}">
+                {{ v }}
+            </a>
+        {% endfor %}
+        <h1>{{ search_text }}</h1>
+    </div>
+    <hr>
+    <div class="race-tables">
+    {% macro race_table(title, start, end) %}
+    <div style="min-width: 400px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0px; margin-bottom: 10px; font-size: 1.2em; color: #333;">{{ title }}</h3>
+        <table class="race-table">
+            <thead>
+                <tr>
+                    <th class="col-time">発走<br>時刻</th>
+                    <th class="col-num">レース<br>番号</th>
+                    <th class="col-details">レース名<br>出走条件</th>
+                    <th class="col-course">コース</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for i in range(start, end + 1) %}
+                    {% set race = day_races.get(i) %}
+                    {% if race and (race.name or race.condition) %}
+                    <tr>
+                        <td class="col-time">{{ race.time }}</td>
+                        <td class="col-num">
+                            <a href="/edit_race?date={{ date }}&venue={{ venue }}&num={{ i }}">
+                            {{ race.num | replace('レース', '') }}R
+                            </a>
+                        </td>
+                        <td class="col-details">
+                        <div>
+                            {% if race.name %}
+                                <span class="race-name">{{ race.name }}</span><br>
+                                {% if race.condition %}
+                                    <div class="race-condition">{{ race.condition }}</div>
+                                {% endif %}
+                            {% else %}
+                                {% if race.condition %}
+                                    <div class="race-condition" style="font-size: 1.1em; line-height: 2.4;">
+                                        {{ race.condition }}
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                        </td>
+                        <td class="col-course">{{ race.course }}</td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endmacro %}
+    {{ race_table('前半（1〜6レース）', 1, 6) }}
+    {{ race_table('後半（7〜12レース）', 7, 12) }}
+    </div>
+</div>
+</section>
+{% endblock %}
+</body>
+</html>
