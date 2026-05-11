@@ -96,23 +96,40 @@ input, select {
 /* フッターのスタイル */
 .main-footer {
     margin-top: 40px;
-    padding: 20px;
+    padding: 30px 20px;
     background-color: #333;
     color: white;
     text-align: center;
     border-top: 4px solid #4CAF50;
 }
 
-.jra-link {
-    display: inline-block;
-    color: #007232; /* JRAカラー風の緑 */
-    padding: 10px 20px;
-    font-weight: bold;
+.footer-links {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
 }
 
-.jra-link:hover {
-    background-color: #e0e0e0;
-    color: #004d22;
+.jra-link {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 80px;
+    height: 80px;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s;
+    text-decoration: none;
+}
+
+.jra-link img {
+    max-width: 230%;
+    max-height: 230%;
+    object-fit: contain;
+    display: block;
 }
 
 .copyright {
