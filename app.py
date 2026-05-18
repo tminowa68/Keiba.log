@@ -1,5 +1,6 @@
 import sqlite3
 import re, os, glob
+import json
 from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -19,7 +20,15 @@ SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets', 
     'https://www.googleapis.com/auth/drive'
     ]
-CREDS = Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+creds_env = os.environ.get('GOOGLE_CREDENTIALS')
+if creds_env:
+    # Render環境（環境変数から読み込み）
+    creds_dict = json.loads(creds_env)
+    CREDS = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+else:
+    # ローカル開発環境（ファイルが存在すればファイルから読み込み）
+    CREDS = Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+
 gc = gspread.authorize(CREDS)
 
 # --- データベース初期化 ---
