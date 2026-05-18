@@ -20,6 +20,7 @@ table {
     width: auto;
     border-collapse: collapse;
     margin-top: 10px;
+    white-space: nowrap;
 }
 th, td {
     border: 1px solid #ddd;
