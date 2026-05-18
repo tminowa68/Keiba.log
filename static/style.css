@@ -39,6 +39,9 @@ input, select {
     border: 1px solid #ccc;
     border-radius: 4px;
 }
+.female-text {
+    color: red;
+}
 
 /* --- UIユーティリティ・配置 --- */
 .mt-20 { margin-top: 20px; }
@@ -270,6 +273,57 @@ td.col-num{
 }
 .select-stables p {
     margin-top: 0px;
+}
+/* --- 五十音ボタンのレスポンシブ対応 --- */
+.kana-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.kana-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+#sub_kana_container {
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+/* --- 年齢別テーブルの折り返し対応 --- */
+.age-tables-container {
+    display: flex;
+    gap: 15px;
+    align-items: flex-start;
+    flex-wrap: wrap; /* overflow-x: auto; から変更して折り返すように設定 */
+    padding-bottom: 10px;
+}
+
+/* --- ページネーション用スタイル --- */
+.pagination {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 15px;
+}
+.page-btn {
+    padding: 6px 12px;
+    border: 1px solid #007bff;
+    background: white;
+    color: #007bff;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+.page-btn.active {
+    background: #007bff;
+    color: white;
+    font-weight: bold;
+}
+.page-btn:hover:not(.active) {
+    background: #e9ecef;
 }
 .kana-btn {
     cursor: pointer;
