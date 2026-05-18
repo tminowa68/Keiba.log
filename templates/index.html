@@ -3,37 +3,58 @@
 <section>
     <div class="select-stables">
         <p>厩舎絞り込み：
+            <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
+            <span class="kana-btn area-btn" onclick="updateAreaFilter('美浦', this)">美浦</span>
+            <span class="kana-btn area-btn" onclick="updateAreaFilter('栗東', this)">栗東</span>
             <button type="button" class="btn-reset" onclick="resetFilter()">リセット</button>
         </p>
         <div class="kana-buttons">
-            {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
-            <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
-            {% endfor %}
-            <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+            <div class="kana-group">
+                {% for char in ['あ','か','さ','た','な'] %}
+                <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+                {% endfor %}
+            </div>
+            <div class="kana-group">
+                {% for char in ['は','ま','や','ら','わ'] %}
+                <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+                {% endfor %}
+                <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+            </div>
         </div>
         <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
         </div>
-        <select name="stable" id="reg_stable_select" onchange="renderAgeTables()" required>
+        <select name="stable" id="reg_stable_select" onchange="onStableChange()"  style="margin-top: 10px;" required>
             <option value="">厩舎を選択してください</option>
         </select>
+
+        <p id="stable_basic_info" style="display: none; margin-top: 5px; padding-left: 10px;">
+            <span id="stable_age"></span>歳・<span id="stable_years"></span>年目
+        </p>
     </div>
 
     <div id="tables_area">
+        <p id="stable_status_info" style="display: none; margin-bottom: 5px; font-weight: bold;">
+            所属頭数：<span id="total_horses"></span>頭、 
+            入厩頭数 / 馬房数：<span id="active_horses"></span> / <span id="stable_capacity"></span>
+        </p>
+        
         <table id="horseTable">
             <thead>
                 <tr>
-                    <th onclick="sortTable(0)">馬名</th>
-                    <th onclick="sortTable(1)">性別</th>
-                    <th onclick="sortTable(2)">馬齢</th>
-                    <th onclick="sortTable(3)">父</th>
-                    <th onclick="sortTable(4)">厩舎</th>
+                    <th>状態</th>
+                    <th>馬名</th>
+                    <th>性別</th>
+                    <th>馬齢</th>
+                    <th>父</th>
+                    <th>厩舎</th>
                 </tr>
             </thead>
             <tbody>
                 {% for horse in results %}
                 <tr>
+                    <td class="col-status">{{ horse[7] if horse|length > 7 else '在厩' }}</td>
                     <td class="col-name"><a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a></td>
-                    <td class="col-gender">{{ horse[1] }}</td>
+                    <td class="col-gender {% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</td>
                     <td class="col-age">
                         {% if horse[2] %}
                             {{ current_year - horse[2].year }}歳
@@ -49,7 +70,6 @@
 </section>
 
 <script>
-// Flaskから渡された全馬データをJSオブジェクトとして保持
 const allHorsesData = [
     {% for horse in results %}
     {
@@ -57,7 +77,9 @@ const allHorsesData = [
         gender: "{{ horse[1] }}",
         age: {% if horse[2] %}{{ current_year - horse[2].year }}{% else %}null{% endif %},
         sire: "{{ horse[3] }}",
-        stable: "{{ horse[5] }}・{{ horse[6] }}"
+        stable: "{{ horse[5] }}・{{ horse[6] }}",
+        // 状態データを追加 (無い場合は仮に'在厩'とする)
+        status: "{{ horse[7] if horse|length > 7 else '在厩' }}"
     },
     {% endfor %}
 ];
@@ -77,23 +99,36 @@ const rowMap = {
     'わ': ['わ', 'を', 'ん']
 };
 
-// 五十音ボタンやセレクトボックスの状態を完全に初期化する
+// ページネーション用の変数
+let currentPage = 1;
+const itemsPerPage = 20;
+
+function goToPage(page) {
+    currentPage = page;
+    renderAgeTables();
+}
+
+let currentArea = '全';
+let currentKana = '';
+
+function updateAreaFilter(area, btn) {
+    document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentArea = area;
+    
+    // 現在の五十音選択状態を維持してドロップダウンを更新
+    const activeKanaBtn = document.querySelector('.kana-group .reg-kana.active');
+    updateStableDropdown('reg', currentKana, activeKanaBtn);
+}
+
 function resetFilter() {
-    // 1. セレクトボックスの要素を取得
+    currentPage = 1; // リセット時は1ページ目に戻す
     const select = document.getElementById('reg_stable_select');
+    // 「全」ボタンの要素を取得してリセット
+    const allKanaBtn = document.querySelector('.kana-group:last-child .reg-kana:last-child');
     
-    // 2. 五十音ボタンを「全」の状態に戻し、プルダウンの選択肢を全厩舎に更新する
-    // 第3引数には「全」ボタンの要素を渡します
-    const allKanaBtn = document.querySelector('.reg-kana:last-child');
-    
-    // updateStableDropdownを呼び出すが、内部のfilterHorseTableと競合しないよう
-    // 手動で値をクリアした後に、リスト描画関数を呼び出します
     updateStableDropdown('reg', '', allKanaBtn);
-
-    // 3. セレクトボックスの選択状態を確実に空にする
     select.value = ""; 
-
-    // 4. 馬のリストを全件表示（初期状態）で再描画する
     renderAgeTables();
 }
 
@@ -114,7 +149,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         subContainer.innerHTML = '';
         if (char && rowMap[char]) {
             createSubButtons(char);
-            subContainer.style.display = 'block';
+            subContainer.style.display = 'flex'; // blockからflexに変更してサブボタンも折り返し対応
         } else {
             subContainer.style.display = 'none';
         }
@@ -122,10 +157,10 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
 
     const regex = isSubChar ? new RegExp('^' + char) : getRowRegex(char);
 
-    // セレクトボックスの選択肢を再構築（初期値を必ず入れる）
     select.innerHTML = '<option value="">厩舎を選択してください</option>';
 
     const filtered = allStables
+        .filter(s => currentArea === '全' || s.area === currentArea)
         .filter(s => !char || (s.kana && regex.test(s.kana)))
         .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
 
@@ -136,16 +171,76 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         select.appendChild(opt);
     });
 
-    // ここで filterHorseTable() が呼ばれますが、
-    // resetFilterから呼ばれた場合は直後に renderAgeTables() で上書きされます
-    filterHorseTable();
+    currentPage = 1;
+    onStableChange();
+}
+
+// 満年齢計算関数
+function calculateAge(birthDateStr) {
+    if (!birthDateStr) return '-';
+    const birthDate = new Date(birthDateStr);
+    if (isNaN(birthDate.getTime())) return '-';
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+    }
+    return age;
+}
+
+// 厩舎選択時に情報を更新するメイン関数
+function onStableChange() {
+    const selectedStable = document.getElementById('reg_stable_select').value;
+    
+    // 表示用コンテナ要素
+    const basicInfo = document.getElementById('stable_basic_info');
+    const statusInfo = document.getElementById('stable_status_info');
+    
+    if (!selectedStable) {
+        if (basicInfo) basicInfo.style.display = 'none';
+        if (statusInfo) statusInfo.style.display = 'none';
+        renderAgeTables(); // 選択解除時もテーブル更新
+        return;
+    }
+    
+    const stableInfo = allStables.find(s => s.display_name === selectedStable);
+    if (stableInfo) {
+        const currentYear = new Date().getFullYear();
+        
+        // 1. 年齢と何年目かの計算・反映
+        const age = calculateAge(stableInfo.birth_date);
+        const years = stableInfo.license_year ? (currentYear - parseInt(stableInfo.license_year)) : '-';
+        
+        const elAge = document.getElementById('stable_age');
+        const elYears = document.getElementById('stable_years');
+        if (elAge) elAge.textContent = age;
+        if (elYears) elYears.textContent = years;
+        if (basicInfo) basicInfo.style.display = 'block';
+
+        // 2. 所属頭数などの計算・反映
+        const filteredHorses = allHorsesData.filter(h => h.stable === selectedStable);
+        const totalHorses = filteredHorses.length;
+        const activeHorses = filteredHorses.filter(h => h.status !== '放牧').length;
+        
+        const elTotal = document.getElementById('total_horses');
+        const elActive = document.getElementById('active_horses');
+        const elCapacity = document.getElementById('stable_capacity');
+        
+        if (elTotal) elTotal.textContent = totalHorses;
+        if (elActive) elActive.textContent = activeHorses;
+        if (elCapacity) elCapacity.textContent = stableInfo.capacity || '-';
+        if (statusInfo) statusInfo.style.display = 'block';
+    }
+    
+    // 最後に必ずテーブルを更新する
+    renderAgeTables();
 }
 
 function createSubButtons(rowChar) {
     const subContainer = document.getElementById('sub_kana_container');
     const charsInRow = rowMap[rowChar];
     
-    // 「全」ボタンの作成
     const allBtn = document.createElement('span');
     allBtn.className = 'kana-btn sub-kana-btn active';
     allBtn.textContent = '全';
@@ -154,7 +249,6 @@ function createSubButtons(rowChar) {
     };
     subContainer.appendChild(allBtn);
 
-    // 登録がある文字だけボタンを作成
     charsInRow.forEach(c => {
         const hasData = allStables.some(s => s.kana && s.kana.startsWith(c));
         if (hasData) {
@@ -178,69 +272,68 @@ function getRowRegex(char) {
     return kanaMap[char] || /.*/;
 }
 
-function filterHorseTable() {
-    const selectedStable = document.getElementById('reg_stable_select').value;
-    const table = document.getElementById('horseTable');
-    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
-
-    for (let i = 0; i < rows.length; i++) {
-        // 6列目（インデックス5）の「厩舎」セルを取得
-        const stableCell = rows[i].getElementsByTagName('td')[4];
-        if (stableCell) {
-            const stableText = stableCell.textContent || stableCell.innerText;
-            
-            // 未選択（空文字）の場合は全表示、選択されている場合は一致するものだけ表示
-            if (selectedStable === "" || stableText.trim() === selectedStable.trim()) {
-                rows[i].style.display = "";
-            } else {
-                rows[i].style.display = "none";
-            }
-        }
-    }
-}
-
-function resetFilter() {
-    location.reload();
-}
-
-// 年齢別にテーブルを分けるメインロジック
 function renderAgeTables() {
     const selectedStable = document.getElementById('reg_stable_select').value;
     const container = document.getElementById('tables_area');
     
-    // 厩舎が未選択（またはリセット時）は元の全件表示テーブルを表示
+    // 厩舎が未選択の場合はページネーション付きの全件表示
     if (!selectedStable) {
+        const totalItems = allHorsesData.length;
+        const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+        
+        if (currentPage < 1) currentPage = 1;
+        if (currentPage > totalPages) currentPage = totalPages;
+        
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const paginatedData = allHorsesData.slice(startIndex, startIndex + itemsPerPage);
+
+        // ページネーションボタンの生成
+        let paginationHtml = '';
+        if (totalPages > 1) {
+            paginationHtml = '<div class="pagination">';
+            for (let i = 1; i <= totalPages; i++) {
+                paginationHtml += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            }
+            paginationHtml += '</div>';
+        }
+
         container.innerHTML = `
             <table id="horseTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0)">馬名</th>
-                        <th onclick="sortTable(1)">性別</th>
-                        <th onclick="sortTable(2)">馬齢</th>
-                        <th onclick="sortTable(3)">父</th>
-                        <th onclick="sortTable(4)">厩舎</th>
+                        <th>状態</th>
+                        <th>馬名</th>
+                        <th>性別</th>
+                        <th>馬齢</th>
+                        <th>父</th>
+                        <th>厩舎</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${allHorsesData.map(h => `
+                    ${paginatedData.map(h => {
+                        const genderClass = h.gender === '牝' ? 'female-text' : '';
+                        
+                        return `
                         <tr>
+                            <td>${h.status}</td>
                             <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
-                            <td class="col-gender">${h.gender}</td>
-                            <td class="col-age">${h.age || '-'}</td>
+                            <td class="col-gender ${genderClass}">${h.gender}</td>
+                            <td class="col-age">${h.age || '-'}歳</td>
                             <td class="col-sire">${h.sire}</td>
                             <td>${h.stable}</td>
                         </tr>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </tbody>
             </table>
+            ${paginationHtml}
         `;
         return;
     }
 
-    // 選択された厩舎の馬をフィルタリング
+    // 選択された厩舎の馬をフィルタリング（年齢別テーブル）
     const filtered = allHorsesData.filter(h => h.stable === selectedStable);
     
-    // 年齢グループ分け
     const groups = {
         '2歳': filtered.filter(h => h.age === 2),
         '3歳': filtered.filter(h => h.age === 3),
@@ -249,7 +342,6 @@ function renderAgeTables() {
     };
 
     let html = '<div class="age-tables-container">';
-    
     Object.keys(groups).forEach(label => {
         html += `
             <div class="age-group-section">
@@ -257,22 +349,28 @@ function renderAgeTables() {
                 <table>
                     <thead>
                         <tr>
+                            <th>状態</th>
                             <th class="col-name">馬名</th>
                             <th class="col-gender">性別</th>
-                            ${label === '5歳以上' ? '<th class="col-age">馬齢</th>' : ''}
+                            ${label === '5歳以上' ? `<th class="col-age">馬齢</th>` : ''}
                             <th class="col-sire">父</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${groups[label].map(h => `
+                        ${groups[label].map(h => {
+                            const genderClass = h.gender === '牝' ? 'female-text' : '';
+                            
+                            return `
                             <tr>
+                                <td>${h.status}</td>
                                 <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
-                                <td class="col-gender">${h.gender}</td>
+                                <td class="col-gender ${genderClass}">${h.gender}</td>
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
                                 <td class="col-sire">${h.sire}</td>
                             </tr>
-                        `).join('')}
-                        ${groups[label].length === 0 ? '<tr><td colspan="4" style="text-align:center; color:#999;">なし</td></tr>' : ''}
+                            `;
+                        }).join('')}
+                        ${groups[label].length === 0 ? '<tr><td colspan="5" style="text-align:center; color:#999;">なし</td></tr>' : ''}
                     </tbody>
                 </table>
             </div>
@@ -284,7 +382,7 @@ function renderAgeTables() {
 }
 
 window.onload = function() {
-    updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
+    updateStableDropdown('reg', '', document.querySelector('.kana-group:last-child .reg-kana.active'));
 };
 </script>
 {% endblock %}

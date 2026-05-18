@@ -1,19 +1,11 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>レース情報</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-
-<body>
 {% extends "layout.html" %}
+{% block title %}レース情報 - keiba.log{% endblock %}
 {% block content %}
 <section>
 <div style="margin-bottom: 20px;">
     <div style="margin-bottom: 12px;">
         {% for d in display_dates %}
-            <a class="date" href="/races?date={{ d.value }}"
+            <a class="date" href="/races?date={{ d.value }}&venue={{ venue }}"
                 style="{% if date == d.value %} background-color: #007bff; color: white; {% else %} background-color: white; color: #007bff; {% endif %}">
                 {{ d.label }}
             </a>
@@ -21,7 +13,8 @@
         
         日付を選択：
         <form method="GET" action="/races" style="display: inline-block;">
-            <input type="date" name="date" value="{{ date }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            <input type="hidden" name="venue" value="{{ venue }}">
             <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
         </form>
         <a style="margin-left: 5px;" href="/races">今週の開催へ</a>
@@ -49,6 +42,7 @@
                     <th class="col-num">レース<br>番号</th>
                     <th class="col-details">レース名<br>出走条件</th>
                     <th class="col-course">コース</th>
+                    <th class="col-note">備考</th>
                 </tr>
             </thead>
             <tbody>
@@ -63,22 +57,29 @@
                             </a>
                         </td>
                         <td class="col-details">
-                        <div>
-                            {% if race.name %}
-                                <span class="race-name">{{ race.name }}</span><br>
-                                {% if race.condition %}
-                                    <div class="race-condition">{{ race.condition }}</div>
+                            <div>
+                                {% if race.name %}
+                                    <span class="race-name">{{ race.name }}</span><br>
+                                    {% if race.condition %}
+                                        <div class="race-condition">{{ race.condition }}</div>
+                                    {% endif %}
+                                {% else %}
+                                    {% if race.condition %}
+                                        <div class="race-condition" style="font-size: 1.1em; line-height: 2.4;">
+                                            {{ race.condition }}
+                                        </div>
+                                    {% endif %}
                                 {% endif %}
-                            {% else %}
-                                {% if race.condition %}
-                                    <div class="race-condition" style="font-size: 1.1em; line-height: 2.4;">
-                                        {{ race.condition }}
-                                    </div>
-                                {% endif %}
-                            {% endif %}
-                        </div>
+                            </div>
                         </td>
                         <td class="col-course">{{ race.course }}</td>
+                        <td class="col-note" style="text-align: center; font-weight: bold;">
+                            {% if race.note == '牡・牝' %}
+                                牡・<span class="female-text">牝</span>
+                            {% elif race.note == '牝' %}
+                                <span class="female-text">牝</span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endif %}
                 {% endfor %}
@@ -92,5 +93,3 @@
 </div>
 </section>
 {% endblock %}
-</body>
-</html>

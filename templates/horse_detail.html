@@ -8,8 +8,24 @@
 </div>
 
 <section id="profile" class="entry-section active">
-    <p><strong>性別・馬齢：</strong> {{ horse[1] }}・{{ current_year - horse[2].year }}歳</p>
-    <p><strong>生年月日：</strong> {{ horse[2].year }}年{{ horse[2].month }}月{{ horse[2].day }}日</p>
+    <p>
+        <strong>性別・馬齢：</strong> 
+        <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
+        {% if horse[2] is string %}
+            {{ current_year - horse[2][:4]|int }}歳
+        {% else %}
+            {{ current_year - horse[2].year }}歳
+        {% endif %}
+    </p>
+    <p>
+    <strong>生年月日：</strong>
+    {% if horse[2] is string %}
+        {% set d = horse[2].replace('-', '/').split('/') %}
+        {{ d[0] }}年 {{ d[1] }}月 {{ d[2] }}日
+    {% else %}
+        {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
+    {% endif %}
+</p>
     <p><strong>厩舎：</strong> {{ horse[5] }}・{{ horse[6] }}</p>
     <p><strong>血統：</strong></p>
     <table class="pedigree-table">
