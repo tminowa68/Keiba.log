@@ -290,11 +290,39 @@ function renderAgeTables() {
         // ページネーションボタンの生成
         let paginationHtml = '';
         if (totalPages > 1) {
-            paginationHtml = '<div class="pagination">';
-            for (let i = 1; i <= totalPages; i++) {
-                paginationHtml += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            // 10ページごとにまとめるための計算
+            const maxPageButtons = 10;
+            const currentGroup = Math.ceil(currentPage / maxPageButtons);
+            const startPage = (currentGroup - 1) * maxPageButtons + 1;
+            const endPage = Math.min(startPage + maxPageButtons - 1, totalPages);
+
+            let controlsHtml = '';
+
+            // 「前の10ページ」ボタン
+            if (startPage > 1) {
+                controlsHtml += `<button class="page-btn" onclick="goToPage(${startPage - 1})">前の10ページ</button>`;
             }
-            paginationHtml += '</div>';
+
+            // ページ番号ボタン
+            for (let i = startPage; i <= endPage; i++) {
+                controlsHtml += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            }
+
+            // 「次の10ページ」ボタン
+            if (endPage < totalPages) {
+                controlsHtml += `<button class="page-btn" onclick="goToPage(${endPage + 1})">次の10ページ</button>`;
+            }
+
+            // Flexboxを使用して、中央にボタン、右端に全ページ数を配置
+            paginationHtml = `
+            <div class="pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+                <div style="flex: 1;"></div> <div style="display: flex; gap: 5px; justify-content: center; flex: 2;">
+                    ${controlsHtml}
+                </div>
+                <div style="flex: 1; text-align: right; color: #555; font-weight: bold;">
+                    （全${totalPages}ページ）
+                </div>
+            </div>`;
         }
 
         container.innerHTML = `
