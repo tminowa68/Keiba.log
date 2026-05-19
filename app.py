@@ -386,6 +386,82 @@ def get_race_info_from_sheet(ws_race_data, search_text, target_r_num=None):
         }
     return races_info
 
+def extract_year(date_str):
+    """ '2000/1/1', '2000-01-01', '2000' などの文字列から西暦を抽出 """
+    if not date_str: 
+        return None
+    date_str = str(date_str).strip()
+    
+    # スラッシュやハイフン区切りの形式
+    match = re.search(r'^(\d{4})[/-]', date_str)
+    if match:
+        return int(match.group(1))
+    
+    # 西暦のみの形式
+    match = re.search(r'^(\d{4})', date_str)
+    if match:
+        return int(match.group(1))
+        
+    return None
+
+def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
+    # スプレッドシートから全データを取得
+    try:
+        wb = gc.open('Horse_Data')
+        sire_data = wb.worksheet('Sire').get_all_records()
+        dam_data = wb.worksheet('Dam').get_all_records()
+    except Exception as e:
+        print(f"Spreadsheet fetch error: {e}")
+        sire_data = []
+        dam_data = []
+
+    sire_dict = {str(r.get('馬名', '')).strip(): r for r in sire_data}
+    dam_dict = {str(r.get('馬名', '')).strip(): r for r in dam_data}
+
+    pedigree = {}
+
+    def traverse(node_index, h_name, child_birth_year, is_sire):
+        if node_index >= 64:  # 5代前(インデックス32~63)まで取得
+            return
+        
+        h_name = str(h_name).strip() if h_name else ''
+        if not h_name or h_name == '不明':
+            pedigree[node_index] = None
+            return
+
+        # 該当の親馬のレコードを検索
+        record = sire_dict.get(h_name) if is_sire else dam_dict.get(h_name)
+        
+        b_year = None
+        sire_of_h = ''
+        dam_of_h = ''
+        
+        if record:
+            b_year = extract_year(record.get('生年月日', ''))
+            sire_of_h = record.get('父', '')
+            dam_of_h = record.get('母', '')
+            
+        # 仔が出生した時の馬齢を計算
+        age_when_born = None
+        if b_year is not None and child_birth_year is not None:
+            age_when_born = child_birth_year - b_year
+
+        pedigree[node_index] = {
+            'name': h_name,
+            'birth_year': b_year,
+            'age_when_born': age_when_born
+        }
+
+        # さらに親を探索（子は現在の馬の生年を渡す）
+        traverse(node_index * 2, sire_of_h, b_year, True)
+        traverse(node_index * 2 + 1, dam_of_h, b_year, False)
+
+    # 1代前（父=インデックス2、母=インデックス3）から探索開始
+    traverse(2, sire_name, base_birth_year, True)
+    traverse(3, dam_name, base_birth_year, False)
+
+    return pedigree
+
 # ==============================================================================
 # ルーティング (Controllers)
 # ==============================================================================
@@ -678,13 +754,25 @@ def horse_detail(name):
                 horse[2] = datetime.strptime(horse[2], '%Y-%m-%d')
             except ValueError:
                 pass
+    
+    # 対象馬の生年月日から西暦を取得
+    base_birth_year = None
+    if isinstance(horse[2], str):
+        base_birth_year = extract_year(horse[2])
+    elif isinstance(horse[2], dict) and 'year' in horse[2]:
+        base_birth_year = int(horse[2]['year'])
+    
+    # 5代血統データの構築 (horse[3]が父、horse[4]が母の想定)
+    pedigree_data = get_5gen_pedigree(horse[3], horse[4], base_birth_year, gc)
 
     return render_template('horse_detail.html', 
                            horse=horse, 
-                           horse_races=horse_races, 
+                           horse_races=horse_races,
                            sire_info=sire_info, 
                            dam_info=dam_info, 
-                           current_year=datetime.now().year)
+                           current_year=datetime.now().year,
+                           pedigree=pedigree_data
+                           )
 
 @app.route('/edit_horse/<name>')
 @login_required
