@@ -575,17 +575,40 @@ td.col-num{
 }
 
 /* --- horse_detail 用スタイル --- */
+/* --- 5代血統表用スタイル --- */
 .pedigree-table {
     border-collapse: collapse;
+    border: 3px solid #333; /* 表の一番外の枠を太枠にする */
+    font-size: 0.85em;
+    background-color: white;
+}
+
+.pedigree-table td.pedigree-cell {
     border: 1px solid #ccc;
+    padding: 6px;
+    vertical-align: middle;
+    text-align: center;
+    width: 20%; /* 5列を均等幅に */
 }
-.pedigree-table td {
-    border: 1px solid #ccc;
+
+/* 親登録リンクのデザイン */
+.pedigree-cell .add-parent-link {
+    font-size: 0.85em;
+    color: #4CAF50;
+    text-decoration: none;
+    border: 1px solid #4CAF50;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+    background: #fff;
+    margin-top: 2px;
 }
-.add-parent-link {
-    font-size: 0.8em;
-    color: #4CAF50 !important;
+
+.pedigree-cell .add-parent-link:hover {
+    background: #4CAF50;
+    color: white;
 }
+
 .btn-edit {
     display: inline-block;
     background: #2196F3;
