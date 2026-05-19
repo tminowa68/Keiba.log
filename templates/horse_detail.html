@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}{{ horse[0] }} - 詳細{% endblock %}
+{% block title %}{{ horse[0] }} - keiba.log{% endblock %}
 {% block content %}
 <h1>馬名：{{ horse[0] }}</h1>
 <div class="entry-tabs mt-20">
@@ -8,6 +8,10 @@
 </div>
 
 <section id="profile" class="entry-section active">
+    {% if session.get('logged_in') %}
+    <hr>
+    <a href="/edit_horse/{{ horse[0] }}" class="btn-edit">情報を編集する</a>
+    {% endif %}
     <p>
         <strong>性別・馬齢：</strong> 
         <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
@@ -25,39 +29,60 @@
     {% else %}
         {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
     {% endif %}
-</p>
+    </p>
     <p><strong>厩舎：</strong> {{ horse[5] }}・{{ horse[6] }}</p>
-    <p><strong>血統：</strong></p>
-    <table class="pedigree-table">
-        <tr>
-            <td class="sire" rowspan="2">
-                父： {{ horse[3] if horse[3] else '不明' }}
-                {% if session.get('login') and (sire_info.line1 == '不明' or sire_info.line2 == '不明') %}
-                    <br><a href="/add_parent?type=Sire&name={{ horse[3] or '' }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a>
+
+    {% macro render_cell(node_id, gen) %}
+        {% set node = pedigree.get(node_id) %}
+        {% set rowspan = 32 // (2 ** gen) %}
+        {% set bg_color = '#eef5ff' if node_id % 2 == 0 else '#fff0f0' %}
+        
+        <td class="pedigree-cell" rowspan="{{ rowspan }}" style="background-color: {{ bg_color }}; text-align: center; vertical-align: middle; border: 1px solid #ccc; padding: 6px;" 
+            {% if node %}data-name="{{ node.name }}" data-gen="{{ gen }}"{% endif %}>
+            {% if node %}
+                <div class="horse-name">{{ node.name }}</div>
+                {% if node.birth_year %}
+                    <div style="font-size: 0.8em; color: #666;">
+                        {{ node.birth_year }}年
+                        {% if node.age_when_born != None %}
+                            ({{ node.age_when_born }}歳)
+                        {% endif %}
+                    </div>
                 {% endif %}
-            </td>
-            <td class="sire">{{ sire_info.line1 }}</td>
-        </tr>
-        <tr>
-            <td class="dam">{{ sire_info.line2 }}</td>
-        </tr>
-        <tr>
-            <td class="dam" rowspan="2">
-                母： {{ horse[4] if horse[4] else '不明' }}
-                {% if session.get('login') and (dam_info.line3 == '不明' or dam_info.line4 == '不明') %}
-                    <br><a href="/add_parent?type=Dam&name={{ horse[4] or '' }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a>
+                
+                {% if gen < 5 %}
+                    {% set sire_node = pedigree.get(node_id * 2) %}
+                    {% set dam_node = pedigree.get(node_id * 2 + 1) %}
+                    <div style="margin-top: 5px; font-size: 0.85em;">
+                    {% if session.get('login') and (not sire_node or not dam_node) %}
+                        <a href="/add_parent?p_name={{ node.name }}&p_type=Sire&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a><br>
+                    {% endif %}
+                    </div>
                 {% endif %}
-            </td>
-            <td class="sire">{{ dam_info.line3 }}</td>
-        </tr>
-        <tr>
-            <td class="dam">{{ dam_info.line4 }}</td>
-        </tr>
+            {% else %}
+                <span style="color:#ccc;">不明</span>
+            {% endif %}
+        </td>
+    {% endmacro %}
+
+    <p><strong>血統表（5代）</strong></p>
+    <table class="pedigree-table" style="width: 100%; border-collapse: collapse; border: 3px solid #333; background-color: white; table-layout: fixed;">
+        <tbody>
+            {% for r in range(32) %}
+            <tr>
+                {% if r % 16 == 0 %} {{ render_cell(2 + (r // 16), 1) }} {% endif %}
+                {% if r % 8 == 0 %}  {{ render_cell(4 + (r // 8), 2) }} {% endif %}
+                {% if r % 4 == 0 %}  {{ render_cell(8 + (r // 4), 3) }} {% endif %}
+                {% if r % 2 == 0 %}  {{ render_cell(16 + (r // 2), 4) }} {% endif %}
+                {{ render_cell(32 + r, 5) }}
+            </tr>
+            {% endfor %}
+        </tbody>
     </table>
-    {% if session.get('logged_in') %}
-    <hr>
-    <a href="/edit_horse/{{ horse[0] }}" class="btn-edit">情報を編集する</a>
-    {% endif %}
+    <p style="font-size: 0.9em; color: #555; margin-top: 5px;">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
+
+    <div id="inbreed-results" style="margin-top: 20px; padding: 15px; background: #fff; border: 1px solid #ddd; border-radius: 5px; display: none;">
+    </div>
 </section>
 
 <section id="races" class="entry-section">
@@ -184,5 +209,57 @@ function judgeClass(prize, hasRaced, age, month) {
         return "オープン";
     }
 }
+
+document.addEventListener("DOMContentLoaded", function() {
+    const cells = document.querySelectorAll('.pedigree-cell[data-name]');
+    const counts = {};
+    
+    // 描画されたテーブルから各馬の出現世代を記録
+    cells.forEach(cell => {
+        const name = cell.getAttribute('data-name');
+        if(!name || name === '不明') return;
+        const gen = parseInt(cell.getAttribute('data-gen'), 10);
+        
+        if (!counts[name]) counts[name] = [];
+        counts[name].push({gen: gen, cell: cell});
+    });
+
+    const inbreeds = [];
+    for (const [name, occurrences] of Object.entries(counts)) {
+        // 同じ馬が2回以上出現していればインブリード成立
+        if (occurrences.length > 1) {
+            let totalPct = 0;
+            let genStrings = [];
+            
+            occurrences.forEach(occ => {
+                // インブリードの計算: 100 / (2^世代数)
+                totalPct += 100 / Math.pow(2, occ.gen);
+                genStrings.push(occ.gen);
+                
+                // 該当する血統表内の馬名を赤文字・太字に変更
+                const nameDiv = occ.cell.querySelector('.horse-name');
+                if (nameDiv) {
+                    nameDiv.style.color = '#E53935';
+                    nameDiv.style.fontWeight = 'bold';
+                }
+            });
+            
+            // 計算結果のフォーマット処理 (例: 25.00 -> 25)
+            let formattedPct = Number.isInteger(totalPct) ? totalPct : parseFloat(totalPct.toFixed(3));
+            
+            // 世代を昇順にソート (例: 4, 3, 4 -> 3 × 4 × 4)
+            genStrings.sort((a, b) => a - b);
+            
+            inbreeds.push(`<div style="margin-bottom: 5px;"><span style="color:#E53935; font-weight:bold;">${name}</span>：${formattedPct}% = ${genStrings.join(' × ')}</div>`);
+        }
+    }
+
+    // 計算結果の出力
+    const inbreedContainer = document.getElementById('inbreed-results');
+    if (inbreeds.length > 0) {
+        inbreedContainer.style.display = 'block';
+        inbreedContainer.innerHTML = '<h3 style="margin-top:0; font-size:1.1em;">5代前までに発生したインブリード</h3>' + inbreeds.join('');
+    }
+});
 </script>
 {% endblock %}
