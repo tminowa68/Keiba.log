@@ -599,7 +599,14 @@ def add_parent():
                 ws.append_row(["馬名", "生年月日", "父", "母"])
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-            birth_date_str = f"{y}/{m}/{d}" if y and m and d else ""
+            
+            birth_date_str = f"{y}/{m}/{d}" 
+            if y and m and d:
+                birth_date_str = f"{y}/{m}/{d}"
+            elif y:
+                birth_date_str = str(y)
+            else:
+                birth_date_str = ""
 
             data = ws.get_all_values()
             found_idx = None
@@ -609,16 +616,22 @@ def add_parent():
                     break
             
             if found_idx:
-                ws.update(f'B{found_idx}:D{found_idx}', [[birth_date_str, request.form.get('sire'), request.form.get('dam')]])
+                ws.update(f'B{found_idx}:D{found_idx}', 
+                          [[birth_date_str, 
+                            request.form.get('sire'), 
+                            request.form.get('dam')]])
             else:
-                ws.append_row([p_name, birth_date_str, request.form.get('sire'), request.form.get('dam')])
+                ws.append_row([p_name, 
+                               birth_date_str, 
+                               request.form.get('sire'), 
+                               request.form.get('dam')])
             
             sort_and_resize_table(ws, sort_col_index=0)
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
         return redirect(f"/horse/{origin}") if origin else redirect('/')
 
-    p_type, p_name = request.args.get('type', 'Sire'), request.args.get('name', '')
+    p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
     existing_data = {"year": "", "month": "", "day": "", "sire": "", "dam": ""}
     try:
         sh = gc.open(horse_data)
@@ -633,7 +646,11 @@ def add_parent():
             if len(row) > 2: existing_data["sire"] = row[2]
             if len(row) > 3: existing_data["dam"] = row[3]
     except: pass
-    return render_template('add_parent.html', p_type=p_type, p_name=p_name, origin=request.args.get('origin', ''), data=existing_data)
+    return render_template('add_parent.html', 
+                           p_type=p_type, 
+                           p_name=p_name, 
+                           origin=request.args.get('origin', ''), 
+                           data=existing_data)
 
 @app.route('/update_horse', methods=['POST'])
 @login_required
