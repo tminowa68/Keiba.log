@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
-{% block title %}血統登録{% endblock %}
+{% block title %}血統登録 - keiba.log{% endblock %}
 {% block content %}
-<h2>親馬の登録</h2>
+<h2>血統の登録</h2>
 <section>
 <form action="/add_parent" method="POST" autocomplete="off">
     <input type="hidden" name="p_name" value="{{ p_name }}">
@@ -21,19 +21,29 @@
 
     <div style="margin-bottom: 15px;">
         <label>生年月日：</label>
-        <input type="number" name="year" value="data.year" style="width:70px; padding:8px;">年
-        <select name="month" style="padding:8px;">
-            <option value="" {% if not data.month %}selected{% endif %}></option>
-            {% for m in range(1, 7) %}
-            <option value="{{ m }}" {% if m == data.month %}selected{% endif %}>{{ m }}</option>
+        <input type="number" name="year" value="{{ data.year if data else '' }}" style="width:70px; padding:8px;">年
+        
+        {% set m_val = data.month|int if data and data.month else 0 %}
+        {% set is_sh = m_val >= 7 %}
+        
+        <select name="month" id="parent_month" style="padding:8px;">
+            <option value="" {% if not m_val %}selected{% endif %}></option>
+            {% set start_m = 7 if is_sh else 1 %}
+            {% set end_m = 12 if is_sh else 6 %}
+            {% for m in range(start_m, end_m + 1) %}
+            <option value="{{ m }}" {% if m == m_val %}selected{% endif %}>{{ m }}</option>
             {% endfor %}
         </select> 月
         <select name="day" style="padding:8px;">
-            <option value="" {% if not data.day %}selected{% endif %}></option>
+            <option value="" {% if not data or not data.day %}selected{% endif %}></option>
             {% for d in range(1, 32) %}
-            <option value="{{ d }}" {% if d == data.day %}selected{% endif %}>{{ d }}</option>
+            <option value="{{ d }}" {% if data and d == data.day|int %}selected{% endif %}>{{ d }}</option>
             {% endfor %}
         </select> 日
+        <br>
+        <label style="font-size: 0.9em; display: inline-block; margin-top: 5px; cursor: pointer;">
+            <input type="checkbox" onchange="updateMonthOptions('parent_month', this, true)" {% if is_sh %}checked{% endif %}> 南半球産
+        </label>
     </div>
 
     <div style="margin-bottom:15px;">
@@ -50,3 +60,27 @@
 </form>
 </section>
 {% endblock %}
+<script>
+function updateMonthOptions(selectId, checkbox, hasEmptyOption) {
+    const select = document.getElementById(selectId);
+    const currentValue = select.value;
+    select.innerHTML = '';
+    
+    if (hasEmptyOption) {
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        select.appendChild(emptyOpt);
+    }
+    
+    const start = checkbox.checked ? 7 : 1;
+    const end = checkbox.checked ? 12 : 6;
+    
+    for (let i = start; i <= end; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i;
+        select.appendChild(opt);
+    }
+    select.value = currentValue;
+}
+</script>

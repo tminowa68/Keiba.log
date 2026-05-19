@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}データ登録{% endblock %}
+{% block title %}データ登録 - keiba.log{% endblock %}
 {% block content %}
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
     {% with messages = get_flashed_messages() %}
@@ -10,7 +10,7 @@
         {% endif %}
     {% endwith %}
     <form method="POST" action="/add_horse" autocomplete="off">
-        <h2>競走馬を登録</h2>
+        <h2>競走馬の登録</h2>
         <div style="margin-bottom:15px;">
             <label>馬名：</label>
             <input type="text" name="name" placeholder="馬名" required style="width: 140px; padding:8px; margin-top:5px;">
@@ -27,7 +27,7 @@
         <div style="margin-bottom:15px;">
             <label>生年月日：</label>
             <input type="number" name="year" value="{{ default_year }}" required style="width:50px; padding:8px;">年
-            <select type="number" name="month" value=1 required style="padding:8px;">
+            <select name="month" id="horse_month" required style="padding:8px;">
                 {% for m in range(1, 7) %}
                 <option value="{{ m }}">{{ m }}</option>
                 {% endfor %}
@@ -37,6 +37,10 @@
                 <option value="{{ d }}">{{ d }}</option>
                 {% endfor %}
             </select> 日
+            <br>
+            <label style="font-size: 0.9em; display: inline-block; margin-top: 5px; cursor: pointer;">
+                <input type="checkbox" onchange="updateMonthOptions('horse_month', this, false)"> 南半球産
+            </label>
         </div>
 
         <div style="margin-bottom:15px;">
@@ -78,7 +82,7 @@
 
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
     <form method="POST" action="/add_stable" autocomplete="off">
-        <h2>厩舎を登録</h2>
+        <h2>厩舎の登録</h2>
         <div style="margin-bottom: 15px;">
             <label>厩舎名：</label>
             <input type="text" name="stable_name" placeholder="厩舎名" required>
@@ -275,5 +279,32 @@ function updateGenderColor(selectElement) {
             updateGenderColor(genderSelect);
         }
     });
+
+function updateMonthOptions(selectId, checkbox, hasEmptyOption) {
+    const select = document.getElementById(selectId);
+    const currentValue = select.value;
+    select.innerHTML = ''; // 一旦選択肢をクリア
+    
+    // 親馬登録画面など、空の選択肢が必要な場合の処理
+    if (hasEmptyOption) {
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        select.appendChild(emptyOpt);
+    }
+    
+    // チェックが入っていれば7〜12、入っていなければ1〜6
+    const start = checkbox.checked ? 7 : 1;
+    const end = checkbox.checked ? 12 : 6;
+    
+    for (let i = start; i <= end; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i;
+        select.appendChild(opt);
+    }
+    
+    // 可能であれば以前の選択値を復元（範囲外に切り替わった場合はリセット）
+    select.value = currentValue;
+}
 </script>
 {% endblock %}
