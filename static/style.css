@@ -588,7 +588,7 @@ td.col-num{
     padding: 6px;
     vertical-align: middle;
     text-align: center;
-    width: 20%; /* 5列を均等幅に */
+    width: 210px;
 }
 
 /* 親登録リンクのデザイン */
