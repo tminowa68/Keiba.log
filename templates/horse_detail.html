@@ -55,7 +55,8 @@
                     {% set dam_node = pedigree.get(node_id * 2 + 1) %}
                     <div style="margin-top: 5px; font-size: 0.85em;">
                     {% if session.get('login') and (not sire_node or not dam_node) %}
-                        <a href="/add_parent?p_name={{ node.name }}&p_type=Sire&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a><br>
+                        {% set parent_type = 'Sire' if node_id % 2 == 0 else 'Dam' %}
+                        <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a><br>
                     {% endif %}
                     </div>
                 {% endif %}

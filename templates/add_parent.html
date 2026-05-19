@@ -21,7 +21,7 @@
 
     <div style="margin-bottom: 15px;">
         <label>生年月日：</label>
-        <input type="number" name="year" value="{{ data.year if data else '' }}" style="width:70px; padding:8px;">年
+        <input type="number" name="year" value="{{ data.year if data else '' }}" oninput="if(value.length > 4) value = value.slice(0, 4);" style="width:50px; padding:8px;" required>年
         
         {% set m_val = data.month|int if data and data.month else 0 %}
         {% set is_sh = m_val >= 7 %}
