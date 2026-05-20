@@ -278,15 +278,32 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     // 3. インブリードの判定と親の除外処理
-    let ignoredIndices = new Set(); 
     let inbreedsResult = [];
+    let confirmedInbreedOccurrences = []; // すでにインブリードとして確定した馬のインデックス
 
-    // 出現位置が浅い（インデックスが小さい＝対象馬に近い）順に処理
+    // 出現位置が浅い（対象馬に近い）順に処理
     groups.sort((a, b) => Math.min(...a.occurrences) - Math.min(...b.occurrences));
 
+    // 【新機能】インデックス計算だけで「祖先かどうか」を完璧に判定する関数
+    // ancestorIdx（調べたい親）を2で割り続け、descendantIdx（子）に一致すれば祖先とみなす
+    function isAncestor(ancestorIdx, descendantIdx) {
+        let current = ancestorIdx;
+        while (current > descendantIdx) {
+            current = Math.floor(current / 2);
+        }
+        return current === descendantIdx;
+    }
+
     for (let group of groups) {
-        // すでに子孫のインブリードとして処理された血（親）を除外
-        let validOccurrences = group.occurrences.filter(idx => !ignoredIndices.has(idx));
+        // すでに確定したインブリードの「祖先」にあたる出現位置を除外
+        let validOccurrences = group.occurrences.filter(idx => {
+            for (let confirmedIdx of confirmedInbreedOccurrences) {
+                if (isAncestor(idx, confirmedIdx)) {
+                    return false; // 祖先にあたるため除外
+                }
+            }
+            return true; // 独立した血なので残す
+        });
 
         if (validOccurrences.length > 1) {
             let totalPct = 0;
@@ -298,24 +315,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 totalPct += 100 / Math.pow(2, node.gen);
                 genStrings.push(node.gen);
                 cells.push(node.cell);
-
-                // 対象馬の親（先祖）を再帰的に「無視リスト」に追加
-                let addAncestorsToIgnore = (currentIndex) => {
-                    let sireIdx = currentIndex * 2;
-                    let damIdx = currentIndex * 2 + 1;
-                    if (sireIdx <= 63 && nodes[sireIdx]) {
-                        ignoredIndices.add(sireIdx);
-                        addAncestorsToIgnore(sireIdx);
-                    }
-                    if (damIdx <= 63 && nodes[damIdx]) {
-                        ignoredIndices.add(damIdx);
-                        addAncestorsToIgnore(damIdx);
-                    }
-                };
-                addAncestorsToIgnore(idx);
             });
 
-            // 表示の整形
+            // この馬の有効な出現位置を「確定済みインブリード」としてリストに追加
+            // （以降のループで、この馬の親が登場したら除外されるようになる）
+            confirmedInbreedOccurrences.push(...validOccurrences);
+
             let formattedPct = Number.isInteger(totalPct) ? totalPct : parseFloat(totalPct.toFixed(3));
             genStrings.sort((a, b) => a - b);
             let displayNames = Array.from(group.names).join('、');
@@ -339,7 +344,6 @@ document.addEventListener("DOMContentLoaded", function() {
         inbreedsResult.forEach(inbreed => {
             inbreedsHTML.push(`<div style="margin-bottom: 5px;"><span style="color:#E53935; font-weight:bold;">${inbreed.displayNames}</span>：${inbreed.pct}% = ${inbreed.genString}</div>`);
             
-            // 血統表側の文字色を赤にする
             inbreed.cells.forEach(cell => {
                 const nameDiv = cell.querySelector('.horse-name');
                 if (nameDiv) {
@@ -349,7 +353,7 @@ document.addEventListener("DOMContentLoaded", function() {
             });
         });
         
-        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したインブリード</strong>' + inbreedsHTML.join('');
+        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">クロス（インブリード）：</strong>' + inbreedsHTML.join('');
         resultDiv.style.display = 'block';
     }
 });
