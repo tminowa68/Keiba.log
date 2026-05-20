@@ -649,3 +649,10 @@ td.col-num{
     padding: 20px;
     color: #888;
 }
+
+/* モバイル端末向けのスタイル */
+@media screen and (max-width: 767px) {
+    input, select, textarea, button {
+        font-size: 16px;
+    }
+}
