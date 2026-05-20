@@ -41,9 +41,13 @@
             {% endfor %}
         </select> 日
         <br>
-        <label style="font-size: 0.9em; display: inline-block; margin-top: 5px; cursor: pointer;">
-            <input type="checkbox" onchange="updateMonthOptions('parent_month', this, true)" {% if is_sh %}checked{% endif %}> 南半球産
-        </label>
+        <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+            <label>産地：</label>
+            <select name="birthplace_region" id="parent_region_select" style="padding:6px;">
+            </select>
+            <select name="birthplace_detail" id="parent_detail_select" style="padding:6px; display: none;">
+            </select>
+        </div>
     </div>
 
     <div style="margin-bottom:15px;">
@@ -61,27 +65,121 @@
 </section>
 
 <script>
-function updateMonthOptions(selectId, checkbox, hasEmptyOption) {
-    const select = document.getElementById(selectId);
+// 【産地データ定義】ここを編集することでいつでも選択肢を追加・変更できます
+const locationData = {
+    "北海道": [
+        "白老町", "苫小牧市", "千歳市", "安平町", "むかわ町", 
+        "平取町", "日高町", "新冠町", "新ひだか町", "浦河町", 
+        "様似町", "えりも町", "帯広市", "士幌町"
+    ],
+    "青森県": [],
+    "熊本県": [],
+    "海外": [
+        "アメリカ", "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", 
+        "オーストラリア", "ニュージーランド", "アルゼンチン", "ブラジル"
+    ]
+};
+
+// 【南半球産リスト】ここに指定された地域が選ばれた時、7〜12月表示に切り替わります
+const southernHemisphereDetails = ["オーストラリア", "ニュージーランド", "アルゼンチン", "ブラジル"];
+
+function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
+    const regionSelect = document.getElementById('parent_region_select');
+    const detailSelect = document.getElementById('parent_detail_select');
+    if (!regionSelect || !detailSelect) return;
+
+    // Jinja2テンプレートから既存データを受け取る（なければ空文字）
+    const initialRegion = "{{ data.birthplace_region if data and data.birthplace_region else '' }}";
+    const initialDetail = "{{ data.birthplace_detail if data and data.birthplace_detail else '' }}";
+    const isSH = {{ 'true' if is_sh else 'false' }};
+
+    // 産地（第1階層）の選択肢を生成
+    regionSelect.innerHTML = '';
+    for (const region in locationData) {
+        const opt = document.createElement('option');
+        opt.value = region;
+        opt.textContent = region;
+        regionSelect.appendChild(opt);
+    }
+
+    // 産地変更時の連動処理
+    regionSelect.addEventListener('change', function() {
+        const selectedRegion = this.value;
+        const details = locationData[selectedRegion] || [];
+
+        detailSelect.innerHTML = '';
+
+        if (details.length > 0) {
+            details.forEach(detail => {
+                const opt = document.createElement('option');
+                opt.value = detail;
+                opt.textContent = detail;
+                detailSelect.appendChild(opt);
+            });
+            detailSelect.style.display = 'inline-block';
+        } else {
+            detailSelect.style.display = 'none';
+        }
+
+        updateMonthByLocation(monthSelectId, detailSelect.value, hasEmptyOption);
+    });
+
+    // 詳細地域変更時の処理
+    detailSelect.addEventListener('change', function() {
+        updateMonthByLocation(monthSelectId, this.value, hasEmptyOption);
+    });
+
+    // 初期データのマッピング処理
+    if (initialRegion && locationData[initialRegion]) {
+        regionSelect.value = initialRegion;
+        regionSelect.dispatchEvent(new Event('change'));
+        if (initialDetail && locationData[initialRegion].includes(initialDetail)) {
+            detailSelect.value = initialDetail;
+            detailSelect.dispatchEvent(new Event('change'));
+        }
+    } else if (isSH) {
+        // 産地データはないが月データから南半球（7〜12月）と判定できる場合の初期表示
+        regionSelect.value = "海外";
+        regionSelect.dispatchEvent(new Event('change'));
+        detailSelect.value = "オーストラリア";
+        detailSelect.dispatchEvent(new Event('change'));
+    } else {
+        regionSelect.dispatchEvent(new Event('change'));
+    }
+}
+
+function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
+    const select = document.getElementById(monthSelectId);
+    if (!select) return;
+    
     const currentValue = select.value;
     select.innerHTML = '';
-    
+
     if (hasEmptyOption) {
         const emptyOpt = document.createElement('option');
         emptyOpt.value = '';
         select.appendChild(emptyOpt);
     }
-    
-    const start = checkbox.checked ? 7 : 1;
-    const end = checkbox.checked ? 12 : 6;
-    
+
+    const isSouthern = southernHemisphereDetails.includes(detailValue);
+    const start = isSouthern ? 7 : 1;
+    const end = isSouthern ? 12 : 6;
+
     for (let i = start; i <= end; i++) {
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = i;
         select.appendChild(opt);
     }
-    select.value = currentValue;
+
+    if (currentValue && [...select.options].some(o => o.value === currentValue)) {
+        select.value = currentValue;
+    }
 }
+
+// ページ読み込み完了時に処理を実行
+window.addEventListener('DOMContentLoaded', function() {
+    initParentBirthplaceFields('parent_month', true);
+});
 </script>
 {% endblock %}

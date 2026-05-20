@@ -26,21 +26,25 @@
 
         <div style="margin-bottom:15px;">
             <label>生年月日：</label>
-            <input type="number" name="year" value="{{ default_year }}" required style="width:50px; padding:8px;">年
-            <select name="month" id="horse_month" required style="padding:8px;">
+            <input type="number" name="year" value="{{ default_year }}" style="width:50px; padding:8px;" required>年
+            <select name="month" id="horse_month" style="padding:8px;" required>
                 {% for m in range(1, 7) %}
                 <option value="{{ m }}">{{ m }}</option>
                 {% endfor %}
             </select> 月
-            <select name="day" required style="padding:8px;">
+            <select name="day" style="padding:8px;" required>
                 {% for d in range(1, 32) %}
                 <option value="{{ d }}">{{ d }}</option>
                 {% endfor %}
             </select> 日
             <br>
-            <label style="font-size: 0.9em; display: inline-block; margin-top: 5px; cursor: pointer;">
-                <input type="checkbox" onchange="updateMonthOptions('horse_month', this, false)"> 南半球産
-            </label>
+            <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+                <label>産地：</label>
+                <select name="birthplace_region" id="region_select" style="padding:6px;">
+                </select>
+                <select name="birthplace_detail" id="detail_select" style="padding:6px; display: none;">
+                </select>
+            </div>
         </div>
 
         <div style="margin-bottom:15px;">
@@ -201,7 +205,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         select.appendChild(opt);
     });
 
-    onStableChange();
+    // onStableChange();
 }
 
 function createSubButtons(rowChar) {
@@ -241,12 +245,12 @@ function getRowRegex(char) {
     return kanaMap[char] || /.*/;
 }
 
-window.onload = function() {
-    updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
-    {% if get_flashed_messages() %}
-        if (typeof toggleStableForm === "function") toggleStableForm();
-    {% endif %}
-};
+// window.onload = function() {
+//     updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
+//     {% if get_flashed_messages() %}
+//         if (typeof toggleStableForm === "function") toggleStableForm();
+//     {% endif %}
+// };
 
 function splitStableValue(selectElement) {
     const fullValue = selectElement.value;
@@ -280,31 +284,123 @@ function updateGenderColor(selectElement) {
         }
     });
 
-function updateMonthOptions(selectId, checkbox, hasEmptyOption) {
-    const select = document.getElementById(selectId);
-    const currentValue = select.value;
-    select.innerHTML = ''; // 一旦選択肢をクリア
+// 【産地データ定義】ここを編集することでいつでも選択肢を追加・変更できます
+const locationData = {
+    "北海道": ["白老町", "苫小牧市", "千歳市", "安平町", "むかわ町", "平取町", "日高町", "新冠町", "新ひだか町", "浦河町", "様似町", "えりも町", "帯広市", "士幌町"],
+    "青森県": [],
+    "熊本県": [],
+    "海外": ["アメリカ", "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", "オーストラリア", "ニュージーランド", "アルゼンチン", "ブラジル"]
+};
+
+// 【南半球産リスト】ここに指定された地域が選ばれた時、7〜12月表示に切り替わります
+const southernHemisphereDetails = ["オーストラリア", "ニュージーランド", "アルゼンチン", "ブラジル"];
+
+function initBirthplaceFields(monthSelectId, hasEmptyOption) {
+    const regionSelect = document.getElementById('region_select');
+    const detailSelect = document.getElementById('detail_select');
+    if (!regionSelect || !detailSelect) return;
+
+    // 産地（第1階層）の選択肢を動的に生成
+    regionSelect.innerHTML = '';
+    for (const region in locationData) {
+        const opt = document.createElement('option');
+        opt.value = region;
+        opt.textContent = region;
+        regionSelect.appendChild(opt);
+    }
+
+    // 産地変更時の連動処理
+    regionSelect.addEventListener('change', function() {
+        const selectedRegion = this.value;
+        const details = locationData[selectedRegion] || [];
+
+        detailSelect.innerHTML = '';
+
+        // 詳細データがある場合（北海道・海外）のみ表示し、それ以外は隠す
+        if (details.length > 0) {
+            details.forEach(detail => {
+                const opt = document.createElement('option');
+                opt.value = detail;
+                opt.textContent = detail;
+                detailSelect.appendChild(opt);
+            });
+            detailSelect.style.display = 'inline-block';
+        } else {
+            detailSelect.style.display = 'none';
+        }
+
+        // 月の選択肢を更新
+        updateMonthByLocation(monthSelectId, detailSelect.value, hasEmptyOption);
+    });
+
+    // 詳細地域変更時の処理
+    detailSelect.addEventListener('change', function() {
+        updateMonthByLocation(monthSelectId, this.value, hasEmptyOption);
+    });
+
+    // 初期表示を実行
+    regionSelect.dispatchEvent(new Event('change'));
+}
+
+function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
+    const select = document.getElementById(monthSelectId);
+    if (!select) return;
     
-    // 親馬登録画面など、空の選択肢が必要な場合の処理
+    const currentValue = select.value;
+    select.innerHTML = '';
+
     if (hasEmptyOption) {
         const emptyOpt = document.createElement('option');
         emptyOpt.value = '';
         select.appendChild(emptyOpt);
     }
-    
-    // チェックが入っていれば7〜12、入っていなければ1〜6
-    const start = checkbox.checked ? 7 : 1;
-    const end = checkbox.checked ? 12 : 6;
-    
+
+    // 南半球判定
+    const isSouthern = southernHemisphereDetails.includes(detailValue);
+    const start = isSouthern ? 7 : 1;
+    const end = isSouthern ? 12 : 6;
+
     for (let i = start; i <= end; i++) {
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = i;
         select.appendChild(opt);
     }
-    
-    // 可能であれば以前の選択値を復元（範囲外に切り替わった場合はリセット）
-    select.value = currentValue;
+
+    // 選択されていた値が新しい範囲内にあれば復元
+    if (currentValue && [...select.options].some(o => o.value === currentValue)) {
+        select.value = currentValue;
+    }
 }
+
+// window.onload = function() {
+//     updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
+    
+//     // 産地フォームの初期化（対象の月セレクトボックスID, 空の選択肢を含めるか）
+//     initBirthplaceFields('horse_month', false);
+
+//     {% if get_flashed_messages() %}
+//         if (typeof toggleStableForm === "function") toggleStableForm();
+//     {% endif %}
+// };
+
+// --- ページ読み込み時の初期化処理 ---
+document.addEventListener('DOMContentLoaded', function() {
+    // 1. 産地フォームの初期化（他の処理より先に実行して安全に生成する）
+    initBirthplaceFields('horse_month', false);
+
+    // 2. 厩舎の五十音フィルター初期化
+    const activeKana = document.querySelector('.reg-kana.active');
+    try {
+        updateStableDropdown('reg', '', activeKana);
+    } catch (e) {
+        console.error("厩舎フィルターの初期化エラー:", e);
+    }
+
+    // 3. フラッシュメッセージ（エラー時など）のフォーム表示切り替え
+    {% if get_flashed_messages() %}
+        if (typeof toggleStableForm === "function") toggleStableForm();
+    {% endif %}
+});
 </script>
 {% endblock %}
