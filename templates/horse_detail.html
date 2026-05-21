@@ -34,8 +34,8 @@
         {{ horse[5] }}・{{ horse[6] }}
     </p>
     <p><strong>産地：</strong> 
-        {% if horse|length > 7 and horse[7] %}{{ horse[7] }}{% endif %}
-        {% if horse|length > 8 and horse[8] %}・{{ horse[8] }}{% endif %}
+        {% if horse|length > 8 and horse[8] %}{{ horse[8] }}{% endif %}
+        {% if horse|length > 9 and horse[9] %}・{{ horse[9] }}{% endif %}
     </p>
 
     {% macro render_cell(node_id, gen) %}
