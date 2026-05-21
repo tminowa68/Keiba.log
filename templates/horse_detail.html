@@ -92,7 +92,8 @@
     </table>
     <p style="font-size: 0.9em; color: #555; margin-top: 5px;">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
 
-    <div id="inbreed-results" style="margin-top: 20px; padding: 15px; background: #fff; border: 1px solid #ddd; border-radius: 5px; display: none;">
+    <div id="inbreed-results" 
+        style="margin-top: 20px; padding: 15px; background: #fff; border: 1px solid #ddd; border-radius: 5px; display: none;">
     </div>
 </section>
 
@@ -350,7 +351,14 @@ document.addEventListener("DOMContentLoaded", function() {
     if (inbreedsResult.length > 0) {
         let inbreedsHTML = [];
         inbreedsResult.forEach(inbreed => {
-            inbreedsHTML.push(`<div style="margin-bottom: 5px;"><span style="color:#E53935; font-weight:bold;">${inbreed.displayNames}</span>：${inbreed.pct}% = ${inbreed.genString}</div>`);
+            inbreedsHTML.push(
+                `<div style="margin-bottom: 5px;">
+                    <span style="color:#E53935; font-weight:bold;">
+                        ${inbreed.displayNames}
+                    </span>
+                    ：${inbreed.pct}% = ${inbreed.genString}
+                </div>`
+            );
             
             inbreed.cells.forEach(cell => {
                 const nameDiv = cell.querySelector('.horse-name');
@@ -361,7 +369,7 @@ document.addEventListener("DOMContentLoaded", function() {
             });
         });
         
-        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">クロス（インブリード）：</strong>' + inbreedsHTML.join('');
+        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong>' + inbreedsHTML.join('');
         resultDiv.style.display = 'block';
     }
 });
