@@ -553,6 +553,7 @@ def add_horse():
             birth_date_str, request.form.get('sire'),
             request.form.get('dam'), request.form.get('area'),
             request.form.get('stable_name'),
+            request.form.get('status'),
             request.form.get('birthplace_region'),
             request.form.get('birthplace_detail')
         ])
