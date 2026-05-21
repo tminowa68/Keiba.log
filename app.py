@@ -435,11 +435,15 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         b_year = None
         sire_of_h = ''
         dam_of_h = ''
+        birthplace_region = ''
+        birthplace_detail = ''
         
         if record:
             b_year = extract_year(record.get('生年月日', ''))
             sire_of_h = record.get('父', '')
             dam_of_h = record.get('母', '')
+            birthplace_region = record.get('産地', '')
+            birthplace_detail = record.get('地域', '')
             
         # 仔が出生した時の馬齢を計算
         age_when_born = None
@@ -449,7 +453,9 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         pedigree[node_index] = {
             'name': h_name,
             'birth_year': b_year,
-            'age_when_born': age_when_born
+            'age_when_born': age_when_born,
+            'birthplace_region': birthplace_region,
+            'birthplace_detail': birthplace_detail
         }
 
         # さらに親を探索（子は現在の馬の生年を渡す）
@@ -541,7 +547,15 @@ def add_horse():
             flash(f"エラー：『{name}』は既に登録されています。")
             return redirect('/add_horse_page')
             
-        ws.append_row([name, request.form.get('gender'), birth_date_str, request.form.get('sire'), request.form.get('dam'), request.form.get('area'), request.form.get('stable_name')])
+        ws.append_row([
+            name,
+            request.form.get('gender'),
+            birth_date_str, request.form.get('sire'),
+            request.form.get('dam'), request.form.get('area'),
+            request.form.get('stable_name'),
+            request.form.get('birthplace_region'),
+            request.form.get('birthplace_detail')
+        ])
         sort_and_resize_table(ws, sort_col_index=0)
         return redirect(f"/horse/{name}")
     except Exception as e:
@@ -596,7 +610,7 @@ def add_parent():
                 ws = sh.worksheet(p_type)
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title=p_type, rows=100, cols=10)
-                ws.append_row(["馬名", "生年月日", "父", "母"])
+                ws.append_row(["馬名", "生年月日", "父", "母", "産地", "地域"])
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
             
@@ -616,15 +630,23 @@ def add_parent():
                     break
             
             if found_idx:
-                ws.update(f'B{found_idx}:D{found_idx}', 
-                          [[birth_date_str, 
-                            request.form.get('sire'), 
-                            request.form.get('dam')]])
+                ws.update(
+                    f'B{found_idx}:D{found_idx}', 
+                    [[birth_date_str, 
+                    request.form.get('sire'), 
+                    request.form.get('dam'),
+                    request.form.get('birthplace_region'),
+                    request.form.get('birthplace_detail')]]
+                )
             else:
-                ws.append_row([p_name, 
-                               birth_date_str, 
-                               request.form.get('sire'), 
-                               request.form.get('dam')])
+                ws.append_row(
+                    [p_name, 
+                    birth_date_str, 
+                    request.form.get('sire'), 
+                    request.form.get('dam'),
+                    request.form.get('birthplace_region'),
+                    request.form.get('birthplace_detail')]
+                )
             
             sort_and_resize_table(ws, sort_col_index=0)
         except Exception as e:
@@ -632,7 +654,15 @@ def add_parent():
         return redirect(f"/horse/{origin}") if origin else redirect('/')
 
     p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
-    existing_data = {"year": "", "month": "", "day": "", "sire": "", "dam": ""}
+    existing_data = {
+        "year": "",
+        "month": "",
+        "day": "",
+        "sire": "",
+        "dam": "", 
+        "birthplace_region": "",
+        "birthplace_detail": ""
+    }
     try:
         sh = gc.open(horse_data)
         ws = sh.worksheet(p_type)
@@ -645,6 +675,8 @@ def add_parent():
                     existing_data.update({"year": parts[0], "month": parts[1], "day": parts[2]})
             if len(row) > 2: existing_data["sire"] = row[2]
             if len(row) > 3: existing_data["dam"] = row[3]
+            if len(row) > 4: existing_data["birthplace_region"] = row[4]
+            if len(row) > 5: existing_data["birthplace_detail"] = row[5]
     except: pass
     return render_template('add_parent.html', 
                            p_type=p_type, 
@@ -667,9 +699,14 @@ def update_horse():
         for i, row in enumerate(data):
             if len(row) > 0 and row[0] == request.form.get('old_name'):
                 update_values = [[
-                    new_name, request.form.get('gender'), birth_date_str,
-                    request.form.get('sire'), request.form.get('dam'),
-                    request.form.get('location'), request.form.get('stable_name')
+                    new_name, request.form.get('gender'),
+                    birth_date_str,
+                    request.form.get('sire'),
+                    request.form.get('dam'),
+                    request.form.get('location'),
+                    request.form.get('stable_name'),
+                    request.form.get('birthplace_region'),
+                    request.form.get('birthplace_detail')
                 ]]
                 ws.update(f'A{i+1}:G{i+1}', update_values)
                 break
