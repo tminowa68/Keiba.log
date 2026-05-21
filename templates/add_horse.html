@@ -245,13 +245,6 @@ function getRowRegex(char) {
     return kanaMap[char] || /.*/;
 }
 
-// window.onload = function() {
-//     updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
-//     {% if get_flashed_messages() %}
-//         if (typeof toggleStableForm === "function") toggleStableForm();
-//     {% endif %}
-// };
-
 function splitStableValue(selectElement) {
     const fullValue = selectElement.value;
     const areaInput = document.getElementById('hidden_area');
