@@ -448,8 +448,8 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             b_reg = str(record.get('産地', '')).strip()
             b_det = str(record.get('地域', '')).strip()
             
-            # 2〜6列目すべてに何らかの値が入っていればボタン非表示（False）
-            if dob and s and d and b_reg and b_det:
+            # 2〜5列目すべてに何らかの値が入っていればボタン非表示（False）
+            if dob and s and d and b_reg:
                 needs_update = False
 
             b_year = extract_year(dob)
@@ -629,11 +629,11 @@ def add_parent():
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
             
-            birth_date_str = f"{y}/{m}/{d}" 
+            # --- 生年月日の保存文字列を作成 ---
             if y and m and d:
                 birth_date_str = f"{y}/{m}/{d}"
             elif y:
-                birth_date_str = str(y)
+                birth_date_str = str(y) # 西暦のみの場合
             else:
                 birth_date_str = ""
 
@@ -668,6 +668,7 @@ def add_parent():
             flash(f"エラーが発生しました: {e}")
         return redirect(f"/horse/{origin}") if origin else redirect('/')
 
+    # --- GETリクエスト時の処理 ---
     p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
     existing_data = {
         "year": "",
@@ -684,15 +685,25 @@ def add_parent():
         data = ws.get_all_values()
         row = next((r for r in data if len(r)>0 and r[0] == p_name), None)
         if row:
+            # --- 汎用的な生年月日分解ロジック ---
             if len(row) > 1 and row[1]:
-                parts = row[1].split('/')
-                if len(parts) == 3:
-                    existing_data.update({"year": parts[0], "month": parts[1], "day": parts[2]})
+                dob = row[1].strip()
+                # スラッシュ(/) または ハイフン(-) のいずれでも分割できるように正規表現を使用
+                parts = re.split(r'[-/]', dob)
+                if len(parts) >= 1:
+                    existing_data["year"] = parts[0].strip()
+                if len(parts) >= 2:
+                    existing_data["month"] = parts[1].strip()
+                if len(parts) >= 3:
+                    existing_data["day"] = parts[2].strip()
+                    
             if len(row) > 2: existing_data["sire"] = row[2]
             if len(row) > 3: existing_data["dam"] = row[3]
             if len(row) > 4: existing_data["birthplace_region"] = row[4]
             if len(row) > 5: existing_data["birthplace_detail"] = row[5]
-    except: pass
+    except: 
+        pass
+
     return render_template('add_parent.html', 
                            p_type=p_type, 
                            p_name=p_name, 
