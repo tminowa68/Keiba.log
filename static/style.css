@@ -208,16 +208,6 @@ input, select {
     font-size: 0.85em;
 }
 
-/* horse_detailのスタイル */
-.sire {
-    background-color: #e3f2fd;
-    min-width: 9em;
-}
-.dam {
-    background-color: #ffebee;
-    min-width: 9em;
-}
-
 /* race_listのスタイル */
 .date {
     display: inline-block;
@@ -576,19 +566,43 @@ td.col-num{
 
 /* --- horse_detail 用スタイル --- */
 /* --- 5代血統表用スタイル --- */
+.pedigree-cell {
+    text-align: center;
+    vertical-align: middle; 
+    border: 1px solid #ccc; 
+    padding: 6px;
+    min-width: 9em;
+}
+
+.pedigree-cell .horse-name {
+    display: flex; 
+    align-items: center;
+    justify-content: center; 
+    gap: 4px;
+}
+
+.country-flag {
+    height: 1em;
+    width: auto;
+    object-fit: contain;
+    vertical-align: middle;
+}
+
 .pedigree-table {
     border-collapse: collapse;
     border: 3px solid #333; /* 表の一番外の枠を太枠にする */
     font-size: 0.85em;
     background-color: white;
+    table-layout: fixed;
 }
 
-.pedigree-table td.pedigree-cell {
-    border: 1px solid #ccc;
-    padding: 6px;
-    vertical-align: middle;
-    text-align: center;
-    width: 210px;
+#inbreed-results {
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #fff; 
+    border: 1px solid #ddd; 
+    border-radius: 5px; 
+    display: none;
 }
 
 /* 親登録リンクのデザイン */
