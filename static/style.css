@@ -565,7 +565,6 @@ td.col-num{
 }
 
 /* --- horse_detail 用スタイル --- */
-/* --- 5代血統表用スタイル --- */
 .pedigree-cell {
     text-align: center;
     vertical-align: middle; 
@@ -573,21 +572,33 @@ td.col-num{
     padding: 6px;
     min-width: 9em;
 }
-
-.pedigree-cell .horse-name {
-    display: flex; 
+.pedigree-cell-content {
+    position: relative;
+    display: flex;
     align-items: center;
-    justify-content: center; 
-    gap: 4px;
+    justify-content: center;
+    min-height: 2.5em;
 }
-
+.pedigree-main-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.pedigree-text-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.pedigree-cell .horse-name {
+    display: block; 
+    text-align: center;
+}
 .country-flag {
-    height: 1em;
+    height: 2.5em;
     width: auto;
     object-fit: contain;
-    vertical-align: middle;
 }
-
 .pedigree-table {
     border-collapse: collapse;
     border: 3px solid #333; /* 表の一番外の枠を太枠にする */
@@ -595,7 +606,6 @@ td.col-num{
     background-color: white;
     table-layout: fixed;
 }
-
 #inbreed-results {
     margin-top: 20px; 
     padding: 15px; 
@@ -605,24 +615,26 @@ td.col-num{
     display: none;
 }
 
-/* 親登録リンクのデザイン */
-.pedigree-cell .add-parent-link {
-    font-size: 0.85em;
+/* 編集リンクのデザイン */
+.pedigree-cell .add-parent-link.side-action {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75em;
     color: #4CAF50;
     text-decoration: none;
     border: 1px solid #4CAF50;
-    padding: 2px 6px;
+    padding: 3px 5px;
     border-radius: 4px;
-    display: inline-block;
     background: #fff;
-    margin-top: 2px;
+    margin: 0;
+    white-space: nowrap;
 }
-
-.pedigree-cell .add-parent-link:hover {
+.pedigree-cell .add-parent-link.side-action:hover {
     background: #4CAF50;
     color: white;
 }
-
 .btn-edit {
     display: inline-block;
     background: #2196F3;
