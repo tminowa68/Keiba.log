@@ -431,6 +431,8 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
 
         # 該当の親馬のレコードを検索
         record = sire_dict.get(h_name) if is_sire else dam_dict.get(h_name)
+
+        needs_update = True
         
         b_year = None
         sire_of_h = ''
@@ -439,11 +441,22 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         birthplace_detail = ''
         
         if record:
-            b_year = extract_year(record.get('生年月日', ''))
-            sire_of_h = record.get('父', '')
-            dam_of_h = record.get('母', '')
-            birthplace_region = record.get('産地', '')
-            birthplace_detail = record.get('地域', '')
+            # 各列の値を取得して空白チェック
+            dob = str(record.get('生年月日', '')).strip()
+            s = str(record.get('父', '')).strip()
+            d = str(record.get('母', '')).strip()
+            b_reg = str(record.get('産地', '')).strip()
+            b_det = str(record.get('地域', '')).strip()
+            
+            # 2〜6列目すべてに何らかの値が入っていればボタン非表示（False）
+            if dob and s and d and b_reg and b_det:
+                needs_update = False
+
+            b_year = extract_year(dob)
+            sire_of_h = s
+            dam_of_h = d
+            birthplace_region = b_reg
+            birthplace_detail = b_det
             
         # 仔が出生した時の馬齢を計算
         age_when_born = None
@@ -455,7 +468,8 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             'birth_year': b_year,
             'age_when_born': age_when_born,
             'birthplace_region': birthplace_region,
-            'birthplace_detail': birthplace_detail
+            'birthplace_detail': birthplace_detail,
+            'needs_update': needs_update
         }
 
         # さらに親を探索（子は現在の馬の生年を渡す）
@@ -632,7 +646,7 @@ def add_parent():
             
             if found_idx:
                 ws.update(
-                    f'B{found_idx}:D{found_idx}', 
+                    f'B{found_idx}:F{found_idx}', 
                     [[birth_date_str, 
                     request.form.get('sire'), 
                     request.form.get('dam'),
@@ -812,7 +826,9 @@ def horse_detail(name):
     
     # 対象馬の生年月日から西暦を取得
     base_birth_year = None
-    if isinstance(horse[2], str):
+    if isinstance(horse[2], datetime):
+        base_birth_year = horse[2].year
+    elif isinstance(horse[2], str):
         base_birth_year = extract_year(horse[2])
     elif isinstance(horse[2], dict) and 'year' in horse[2]:
         base_birth_year = int(horse[2]['year'])
