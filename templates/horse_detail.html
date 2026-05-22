@@ -50,47 +50,57 @@
                 data-name="{{ node.name }}" data-gen="{{ gen }}"
             {% endif %}>
             {% if node %}
-                <div class="horse-name">
-                    {% if node.birthplace_region %}
-                        {% if node.birthplace_region != '海外' %}
-                            <img src="{{ url_for('static', filename='JPN.png') }}" class="country-flag" alt="日本">
-                        {% elif node.birthplace_detail %}
-                            {% set flag_map = {
-                                'アメリカ': 'USA',
-                                'カナダ': 'CAN',
-                                'イギリス': 'GB',
-                                'アイルランド': 'IRE',
-                                'フランス': 'FR',
-                                'ドイツ': 'GER',
-                                'オーストラリア': 'AUS',
-                                'アルゼンチン': 'ARG'
-                            } %}
-                            {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
-                            <img src="{{ url_for('static', filename=filename_base ~ '.png') }}" 
-                                class="country-flag" alt="{{ node.birthplace_detail }}">
+                <div class="pedigree-cell-content">
+                    <div class="pedigree-main-info">
+                        {% if node.birthplace_region %}
+                            {% if node.birthplace_region != '海外' %}
+                                <img src="{{ url_for('static', filename='images/JPN.png') }}" 
+                                    class="country-flag" alt="日本">
+                            {% elif node.birthplace_detail %}
+                                {% set flag_map = {
+                                    'アメリカ': 'USA',
+                                    'カナダ': 'CAN',
+                                    'イギリス': 'GB',
+                                    'アイルランド': 'IRE',
+                                    'フランス': 'FR',
+                                    'ドイツ': 'GER',
+                                    'オーストラリア': 'AUS',
+                                    'アルゼンチン': 'ARG',
+                                    '南アフリカ': 'SAF'
+                                } %}
+                                {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
+                                <img src="{{ url_for('static', filename='images/' ~ filename_base ~ '.png') }}" 
+                                    class="country-flag" alt="{{ node.birthplace_detail }}">
+                            {% endif %}
                         {% endif %}
-                    {% endif %}
-                    {{ node.name }}
-                </div>
-                {% if node.birth_year %}
-                    <div style="font-size: 0.8em; color: #666;">
-                        {{ node.birth_year }}年
-                        {% if node.age_when_born != None %}
-                            ({{ node.age_when_born }}歳)
-                        {% endif %}
-                    </div>
-                {% endif %}
                 
-                {% if gen < 5 %}
+                        <div class="pedigree-text-group">
+                            <div class="horse-name">
+                                {{ node.name }}
+                            </div>
+
+                            {% if node.birth_year %}
+                                <div style="font-size: 0.8em; color: #666;">
+                                    {{ node.birth_year }}年
+                                    {% if node.age_when_born != None %}
+                                        ({{ node.age_when_born }}歳)
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
                     {% set sire_node = pedigree.get(node_id * 2) %}
                     {% set dam_node = pedigree.get(node_id * 2 + 1) %}
                     <div style="margin-top: 5px; font-size: 0.85em;">
-                    {% if session.get('login') and (not sire_node or not dam_node) %}
+                    {% if session.get('login') and node.needs_update %}
                         {% set parent_type = 'Sire' if node_id % 2 == 0 else 'Dam' %}
-                        <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" class="add-parent-link">血統を登録する</a><br>
+                        <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" 
+                            class="add-parent-link">[ 編集 ] 
+                        </a>
                     {% endif %}
                     </div>
-                {% endif %}
+                </div>
             {% else %}
                 <span style="color:#ccc;">不明</span>
             {% endif %}
