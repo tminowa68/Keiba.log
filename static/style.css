@@ -614,10 +614,13 @@ td.col-num{
 }
 .pedigree-table {
     border-collapse: collapse;
-    border: 3px solid #333; /* 表の一番外の枠を太枠にする */
+    border: 3px solid #333;
     font-size: 0.85em;
     background-color: white;
     table-layout: fixed;
+}
+.pedigree-table tr.pedigree-mid-boundary td {
+    border-top: 3px solid #333;
 }
 #inbreed-results {
     margin-top: 20px; 
