@@ -114,7 +114,7 @@
     <table class="pedigree-table">
         <tbody>
             {% for r in range(32) %}
-            <tr>
+            <tr class="{% if r == 16 %}pedigree-mid-boundary{% endif %}">
                 {% if r % 16 == 0 %} {{ render_cell(2 + (r // 16), 1) }} {% endif %}
                 {% if r % 8 == 0 %}  {{ render_cell(4 + (r // 8), 2) }} {% endif %}
                 {% if r % 4 == 0 %}  {{ render_cell(8 + (r // 4), 3) }} {% endif %}
