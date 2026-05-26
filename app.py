@@ -12,6 +12,7 @@ from google.oauth2.service_account import Credentials
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here' # セッション用の秘密鍵
+app.permanent_session_lifetime = timedelta(days=30)
 DB_NAME = 'users.db'
 horse_data = 'Horse_Data'
 
@@ -59,7 +60,7 @@ def login_required(f):
     def decorated_function(*args, **kwargs):
         if not session.get('login'):
             flash('この操作にはログインが必要です。')
-            return redirect(url_for('login'))
+            return redirect(url_for('login', next=request.url))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -491,6 +492,7 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
+        next_url = request.form.get('next_url')
         
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -499,13 +501,21 @@ def login():
             
             if user and check_password_hash(user[0], password):
                 session.clear()
+                session.permanent = True
                 session['login'] = True
                 session['username'] = username
+
+                if next_url and '/login' not in next_url:
+                    return redirect(next_url)
                 return redirect(url_for('index'))
             else:
                 flash('ユーザー名またはパスワードが違います。')
+
+    next_url = request.args.get('next')
+    if not next_url and request.referrer and '/login' not in request.referrer:
+        next_url = request.referrer
                 
-    return render_template('login.html')
+    return render_template('login.html', next_url=next_url)
 
 @app.route('/logout')
 def logout():
