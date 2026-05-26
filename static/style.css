@@ -697,9 +697,19 @@ td.col-num{
     input, select, textarea, button {
         font-size: 16px;
     }
-
+    .navbar {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+    .navbar a {
+        flex: 0 0 auto;
+        width: 3em;
+        padding: 12px 6px;
+    }
     .navbar a span {
         display: block;
         text-align: center;
+        white-space: nowrap;
     }
 }
