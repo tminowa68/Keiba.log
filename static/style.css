@@ -87,10 +87,16 @@ input, select {
     font-size: 0.9em;
 }
 
-.navbar a .login-status {
-    background-color: #ffeb3b;
-    color: #333333;
-    border: 1px solid #fbc02d;
+.navbar a.login-status {
+    background-color: #ffeb3b !important;
+    color: #333333 !important;
+    border: 1px solid #fbc02d !important;
+    cursor: default;
+}
+
+.navbar a:hover:not(.login-status) {
+    background-color: #ddd;
+    color: black;
 }
 
 .navbar a:hover {
