@@ -25,10 +25,10 @@
         
         {% if session.get('login') %}
         <a href="javascript:void(0)" class="active login-status">
-            <span>ログイン中</span>
+            <span>ログ</span><span>イン中</span>
         </a>
         <a href="/logout">
-            <span>ログアウト</span>
+            <span>ログ</span><span>アウト</span>
         </a>
         {% else %}
         <a href="/login" class="{% if request.path == '/login' %}active{% endif %}">
