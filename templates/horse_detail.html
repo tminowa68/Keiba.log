@@ -403,6 +403,9 @@ document.addEventListener("DOMContentLoaded", function() {
         
         resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong>' + inbreedsHTML.join('');
         resultDiv.style.display = 'block';
+    } else {
+        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong><span style="color:#888;">なし</span>';
+        resultDiv.style.display = 'block';
     }
 });
 </script>
