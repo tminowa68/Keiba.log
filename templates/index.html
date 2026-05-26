@@ -28,7 +28,7 @@
         </select>
 
         <p id="stable_basic_info" style="display: none; margin-top: 5px; padding-left: 10px;">
-            <span id="stable_age"></span>歳・<span id="stable_years"></span>年目
+            <span id="stable_age"></span>歳・<span id="stable_years"></span>
         </p>
     </div>
 
@@ -210,12 +210,17 @@ function onStableChange() {
         
         // 1. 年齢と何年目かの計算・反映
         const age = calculateAge(stableInfo.birth_date);
-        const years = stableInfo.license_year ? (currentYear - parseInt(stableInfo.license_year)) : '-';
+        let yearsText = '-';
+        if (stableInfo.capacity === '技術調教師') {
+            yearsText = '技術調教師';
+        } else if (stableInfo.license_year) {
+            yearsText = (currentYear - parseInt(stableInfo.license_year)) + '年目';
+        }
         
         const elAge = document.getElementById('stable_age');
         const elYears = document.getElementById('stable_years');
         if (elAge) elAge.textContent = age;
-        if (elYears) elYears.textContent = years;
+        if (elYears) elYears.textContent = yearsText;
         if (basicInfo) basicInfo.style.display = 'block';
 
         // 2. 所属頭数などの計算・反映

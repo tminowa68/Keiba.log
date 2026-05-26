@@ -118,8 +118,15 @@
             <input type="number" name="license_year" style="width: 50px;" required>年
         </div>
         <div style="margin-bottom: 15px;">
+            <label>免許取得年：</label>
+            <input type="number" name="license_year" style="width: 50px;" required>年
+        </div>
+        <div style="margin-bottom: 15px;">
             <label>馬房数：</label>
-            <input type="number" name="capacity" value="20" step="2" style="width: 45px;" required>
+            <input type="number" name="capacity" id="capacity_input" value="20" step="2" style="width: 45px;" required>
+            <label style="margin-left: 15px; cursor: pointer;">
+                <input type="checkbox" name="is_technical" id="is_technical" onchange="toggleCapacity(this)"> 技術調教師
+            </label>
         </div>
         <div style="margin-top:20px; display:flex; gap:10px;">
             <button type="submit" style="background:#9C27B0; color:white; border:none; padding:10px 12px; border-radius:4px; cursor:pointer;">厩舎を登録</button>
@@ -166,6 +173,19 @@ const rowMap = {
     'わ': ['わ', 'を', 'ん']
 };
 
+function toggleCapacity(checkbox) {
+    const capacityInput = document.getElementById('capacity_input');
+    if (checkbox.checked) {
+        capacityInput.value = "0";
+        capacityInput.readOnly = true;
+        capacityInput.style.backgroundColor = "#e9ecef";
+    } else {
+        capacityInput.value = "20";
+        capacityInput.readOnly = false;
+        capacityInput.style.backgroundColor = "";
+    }
+}
+
 function updateStableDropdown(type, char, btn, isSubChar = false) {
     if (!isSubChar) {
         document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
@@ -183,7 +203,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         subContainer.innerHTML = '';
         if (char && rowMap[char]) {
             createSubButtons(char);
-            subContainer.style.display = 'flex'; // blockからflexに変更してサブボタンも折り返し対応
+            subContainer.style.display = 'flex';
         } else {
             subContainer.style.display = 'none';
         }
@@ -196,6 +216,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
     const filtered = allStables
         .filter(s => currentArea === '全' || s.area === currentArea)
         .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .filter(s => s.capacity !== '技術調教師')
         .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
 
     filtered.forEach(s => {
