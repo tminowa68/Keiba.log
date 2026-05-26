@@ -599,7 +599,9 @@ def add_stable():
     birth_date_str = f"{year}/{month}/{day}" if year and month and day else ""
     license_year = request.form.get('license_year')
     capacity = request.form.get('capacity')
-
+    is_technical = request.form.get('is_technical')
+    if is_technical:
+        capacity = "技術調教師"
 
     if name and area and area in ["美浦", "栗東"]:
         try:
