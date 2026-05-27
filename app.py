@@ -199,7 +199,7 @@ def get_class_from_results(horse_name, target_date_str, all_results_dict, horse_
 def load_all_horse_results():
     all_results = {}
     files = gc.list_spreadsheet_files()
-    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+\.xlsx$', f['name'])]
+    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+$', f['name'])]
     
     for f_info in entry_files:
         try:
@@ -759,10 +759,10 @@ def horse_detail(name):
     horse_races, schedule_cache = [], {}
 
     files = gc.list_spreadsheet_files()
-    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+\.xlsx$', f['name'])]
+    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+$', f['name'])]
 
     for f_info in entry_files:
-        match = re.search(r'^(\d{4})_entry_(.+)\.xlsx$', f_info['name'])
+        match = re.search(r'^(\d{4})_entry_(.+)$', f_info['name'])
         if not match: continue
         target_year, venue = match.group(1), match.group(2)
 
@@ -1047,7 +1047,7 @@ def race_detail():
                 })
                 
     entered_horses = []
-    entry_file = f'{target_year}_entry_{venue}.xlsx'
+    entry_file = f'{target_year}_entry_{venue}'
     try:
         wb_entry = gc.open(entry_file)
         ws_entry = wb_entry.worksheet(search_text)
@@ -1079,7 +1079,7 @@ def save_entry():
     horse_num, horse_rank = data.get('horse_num'), data.get('horse_rank')
 
     status_label = {"estimated": "想定", "special": "特別", "final": "確定"}.get(entry_type, "想定")
-    file_name = f'{target_year}_entry_{data.get("venue")}.xlsx'
+    file_name = f'{target_year}_entry_{data.get("venue")}'
     
     try:
         wb = gc.open(file_name)
