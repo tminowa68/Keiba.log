@@ -135,45 +135,55 @@
         <div>合計収得賞金： <span id="total-prize">0</span> 万円</div>
     </div>
     <hr>
-    <div class="race-history-header">
-        <h3 class="m-0">出走レース一覧</h3>
-        {% if session.get('logged_in') %}
-        <a href="/races" class="btn-add btn-link">レースを登録する</a>
-        {% endif %}
+    <div class="race-list-container">
+        <div class="race-list-header">
+            <h2>出走レース一覧</h2>
+            <button id="toggle-entry-form-btn" class="btn-entry-toggle">レースに登録する</button>
+        </div>
+        
+        <table class="race-list-table">
+            <thead>
+                <tr>
+                    <th>日付</th>
+                    <th>開催</th>
+                    <th>レース</th>
+                    <th>レース名</th>
+                    <th>条件</th>
+                    <th>コース</th>
+                    <th>ステータス</th>
+                    <th>着順</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in horse_races %}
+                <tr>
+                    <td>{{ r.date_label }}</td>
+                    <td>{{ r.venue }}</td>
+                    <td>{{ r.num }}R</td>
+                    <td>{{ r.name }}</td>
+                    <td>{{ r.condition }}</td>
+                    <td>{{ r.course }}</td>
+                    <td>{{ r.status }}</td>
+                    <td>{{ r.rank }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="no-data-text">出走履歴がありません。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-    
-    <table class="entry-table">
-        <thead>
-            <tr>
-                <th>年月日</th>
-                <th>場所</th>
-                <th>レース<br>番号</th>
-                <th>レース名</th>
-                <th>出走条件</th>
-                <th>コース</th>
-                <th>着順</th>
-                <th>加算収得賞金<br>（万円）</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for r in horse_races %}
-            <tr class="race-history-row">
-                <td>{{ r.date_label }}</td>
-                <td>{{ r.venue }}</td>
-                <td class="text-center">{{ r.num }}R</td>
-                <td class="r-name">{{ r.name if r.name else '-' }}</td>
-                <td class="r-condition">{{ r.condition if r.condition else '-' }}</td>
-                <td>{{ r.course if r.course else '-' }}</td>
-                <td class="r-rank text-center-bold">{{ r.rank if r.rank else '-' }}着</td>
-                <td class="r-added-prize prize-text"></td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="8" class="empty-row-message">登録されたレースはありません。</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+
+    <div id="entry-form-section" class="entry-form-section hidden">
+        <h3>新規レース登録</h3>
+        <div class="form-group">
+            <label for="input-race-date">開催年月日を選択してください：</label>
+            <input type="date" id="input-race-date" class="form-date-input">
+        </div>
+        
+        <div id="available-races-section" class="available-races-section"></div>
+    </div>
 </section>
 
 <div class="back-link-container">
@@ -407,6 +417,130 @@ document.addEventListener("DOMContentLoaded", function() {
         resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong><span style="color:#888;">なし</span>';
         resultDiv.style.display = 'block';
     }
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    const toggleBtn = document.getElementById('toggle-entry-form-btn');
+    const formSection = document.getElementById('entry-form-section');
+    const dateInput = document.getElementById('input-race-date');
+    const racesSection = document.getElementById('available-races-section');
+    const horseName = "{{ horse[0] }}"; // テンプレートから馬名を取得
+
+    // 「レースに登録する」ボタンでフォームの表示/非表示を切り替え
+    toggleBtn.addEventListener('click', function() {
+        formSection.classList.toggle('hidden');
+    });
+
+    // 年月日が入力・変更された時の処理
+    dateInput.addEventListener('change', function() {
+        const selectedDate = dateInput.value;
+        if (!selectedDate) {
+            racesSection.innerHTML = '';
+            return;
+        }
+
+        racesSection.innerHTML = '<p class="status-msg-loading">出走可能なレースを検索中...</p>';
+
+        // 出走可能レースを取得するAPIを呼び出し
+        fetch(`/api/available_races?horse_name=${encodeURIComponent(horseName)}&date=${selectedDate}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    racesSection.innerHTML = `<p class="status-msg-error">エラー: ${data.error}</p>`;
+                    return;
+                }
+
+                if (!data.races || data.races.length === 0) {
+                    racesSection.innerHTML = `<p class="status-msg-empty">${data.message || '出走可能なレースが見つかりませんでした。'}</p>`;
+                    return;
+                }
+
+                // 出走可能レース一覧のテーブルを生成
+                let html = `
+                    <p class="class-badge-info">判定時点の賞金クラス: <strong>${data.current_class}</strong></p>
+                    <table class="available-races-table">
+                        <thead>
+                            <tr>
+                                <th>開催</th>
+                                <th>レース</th>
+                                <th>発走時刻</th>
+                                <th>レース名</th>
+                                <th>条件</th>
+                                <th>コース</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                data.races.forEach(race => {
+                    html += `
+                        <tr>
+                            <td>${race.venue}</td>
+                            <td>${race.race_num}R</td>
+                            <td>${race.time || '-'}</td>
+                            <td><strong>${race.name}</strong></td>
+                            <td>${race.condition}</td>
+                            <td>${race.course}</td>
+                            <td>
+                                <button class="btn-submit-entry" 
+                                        data-venue="${race.venue}" 
+                                        data-num="${race.race_num}">
+                                    エントリー
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                html += '</tbody></table>';
+                racesSection.innerHTML = html;
+
+                // 生成された各「エントリー」ボタンにクリックイベントを設定
+                document.querySelectorAll('.btn-submit-entry').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const venue = this.getAttribute('data-venue');
+                        const raceNum = this.getAttribute('data-num');
+
+                        if (confirm(`${selectedDate} ${venue}${raceNum}R に「想定」でエントリーしますか？`)) {
+                            // 既存の save_entry エンドポイントへPOST
+                            fetch('/save_entry', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    date: selectedDate,
+                                    venue: venue,
+                                    race_num: raceNum,
+                                    horse_name: horseName,
+                                    entry_type: 'estimated', // 想定として登録
+                                    horse_num: null,
+                                    horse_rank: null
+                                })
+                            })
+                            .then(res => res.json())
+                            .then(resData => {
+                                if (resData.status === 'success') {
+                                    alert('レースへのエントリーが完了しました！');
+                                    location.reload(); // 画面をリロードして出走履歴に反映
+                                } else {
+                                    alert('エントリーの保存に失敗しました。');
+                                }
+                            })
+                            .catch(err => {
+                                console.error(err);
+                                alert('通信エラーが発生しました。');
+                            });
+                        }
+                    });
+                });
+            })
+            .catch(err => {
+                console.error(err);
+                racesSection.innerHTML = '<p class="status-msg-error">データの取得中に通信エラーが発生しました。</p>';
+            });
+    });
 });
 </script>
 {% endblock %}
