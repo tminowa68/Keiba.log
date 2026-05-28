@@ -415,7 +415,7 @@ td.col-num{
     font-size: 0.9em;
 }
 
-/* レース詳細のスタイル */
+/* race_detailのスタイル */
 .race-header-card {
     background: #f8f9fa;
     padding: 20px;
@@ -690,6 +690,167 @@ td.col-num{
     text-align: center;
     padding: 20px;
     color: #888;
+}
+
+/* 出走レース一覧の見出しとボタンの横並び設定 */
+.race-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.race-list-header h2 {
+    margin: 0;
+}
+
+/* レースに登録する（トグル）ボタン */
+.btn-entry-toggle {
+    background-color: #28a745;
+    color: #ffffff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background-color 0.2s ease;
+}
+
+.btn-entry-toggle:hover {
+    background-color: #218838;
+}
+
+/* レース登録フォームのセクション枠 */
+.entry-form-section {
+    margin-top: 30px;
+    padding: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    background-color: #f8f9fa;
+}
+
+/* 表示・非表示切り替え用クラス */
+.entry-form-section.hidden {
+    display: none;
+}
+
+.entry-form-section h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #28a745;
+    padding-bottom: 5px;
+    color: #333333;
+}
+
+/* 日付入力まわりの調整 */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #495057;
+}
+
+.form-date-input {
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #495057;
+    background-color: #ffffff;
+    width: 100%;
+    max-width: 220px;
+    box-sizing: border-box;
+}
+
+.form-date-input:focus {
+    border-color: #28a745;
+    outline: none;
+    box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+}
+
+/* 出走可能レース一覧エリア */
+.available-races-section {
+    margin-top: 20px;
+}
+
+.class-badge-info {
+    font-size: 14px;
+    color: #495057;
+    margin-bottom: 12px;
+    background-color: #e2e3e5;
+    padding: 8px 12px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+/* 出走可能レースのテーブルスタイル */
+.available-races-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.available-races-table th,
+.available-races-table td {
+    border: 1px solid #dee2e6;
+    padding: 12px;
+    text-align: left;
+    font-size: 14px;
+}
+
+.available-races-table th {
+    background-color: #e9ecef;
+    color: #495057;
+    font-weight: bold;
+}
+
+.available-races-table tr:hover {
+    background-color: #f1f3f5;
+}
+
+/* エントリー実行ボタン */
+.btn-submit-entry {
+    background-color: #007bff;
+    color: #ffffff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    transition: background-color 0.2s ease;
+}
+
+.btn-submit-entry:hover {
+    background-color: #0069d9;
+}
+
+/* 状態通知メッセージ用 */
+.status-msg-loading {
+    color: #6c757d;
+    font-style: italic;
+    margin: 15px 0;
+}
+
+.status-msg-error {
+    color: #dc3545;
+    font-weight: bold;
+    margin: 15px 0;
+}
+
+.status-msg-empty {
+    color: #6c757d;
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    padding: 12px;
+    border-radius: 4px;
+    margin: 15px 0;
 }
 
 /* モバイル端末向けのスタイル */
