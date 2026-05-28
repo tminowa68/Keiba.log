@@ -1,7 +1,7 @@
 import sqlite3
-import re, os, glob
+import re, os
 import json
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -13,8 +13,9 @@ from google.oauth2.service_account import Credentials
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here' # セッション用の秘密鍵
 app.permanent_session_lifetime = timedelta(days=30)
-DB_NAME = 'users.db'
+UsersDB= 'users.db'
 horse_data = 'Horse_Data'
+EntryDB = 'entry.db'
 
 # --- スプレッドシート認証設定 ---
 SCOPES = [
@@ -34,7 +35,7 @@ gc = gspread.authorize(CREDS)
 
 # --- データベース初期化 ---
 def add_new_user(username, password):
-    with sqlite3.connect(DB_NAME) as conn:
+    with sqlite3.connect(UsersDB) as conn:
         cursor = conn.cursor()
         hashed_pw = generate_password_hash(password)
         try:
@@ -45,7 +46,7 @@ def add_new_user(username, password):
             print("そのユーザー名は既に存在します。")
 
 def delete_user(username):
-    with sqlite3.connect(DB_NAME) as conn:
+    with sqlite3.connect(UsersDB) as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM users WHERE username = ?", (username,))
         conn.commit()
@@ -53,6 +54,25 @@ def delete_user(username):
             print(f"ユーザー {username} を削除しました。")
         else:
             print(f"ユーザー {username} が見つかりませんでした。")
+
+def entry_race():
+    with sqlite3.connect(EntryDB) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS race_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_date TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                race_num INTEGER NOT NULL,
+                horse_name TEXT NOT NULL,
+                status TEXT,
+                horse_num INTEGER,
+                rank INTEGER,
+                UNIQUE(race_date, venue, race_num, horse_name) -- 同一レースに同じ馬が重複登録されるのを防ぐ
+            )
+        """)
+        conn.commit()
+entry_race()
 
 # --- 認証用デコレータ ---
 def login_required(f):
@@ -494,7 +514,7 @@ def login():
         password = request.form.get('password')
         next_url = request.form.get('next_url')
         
-        with sqlite3.connect(DB_NAME) as conn:
+        with sqlite3.connect(UsersDB) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
             user = cursor.fetchone()
@@ -756,67 +776,84 @@ def update_horse():
 def horse_detail(name):
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and h[0] == name), None)
-    horse_races, schedule_cache = [], {}
-
-    files = gc.list_spreadsheet_files()
-    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+$', f['name'])]
-
-    for f_info in entry_files:
-        match = re.search(r'^(\d{4})_entry_(.+)$', f_info['name'])
-        if not match: continue
-        target_year, venue = match.group(1), match.group(2)
-
-        if target_year not in schedule_cache:
-            _, _, y_date_map, y_venue_map = get_schedule_data(target_year)
-            schedule_cache[target_year] = (y_date_map, y_venue_map)
-        
-        date_map, venue_map = schedule_cache[target_year]
-        try:
-            wb_e = gc.open_by_key(f_info['id'])
-        except Exception: continue
-
-        race_master_data = {}
-        race_data = f"{target_year}_Race_Data"
-        try:
-            rm_sh = gc.open(race_data)
-            for sheet in rm_sh.worksheets():
-                race_master_data[sheet.title] = sheet.get_all_values()
-        except Exception: pass
-
-        for ws_e in wb_e.worksheets():
-            sheet_name = ws_e.title
-            race_date = date_map.get(sheet_name, sheet_name)
+    horse_races = []
+    
+    schedule_cache = {}
+    race_master_cache_by_year = {}
+    
+    try:
+        with sqlite3.connect('EntryDB') as conn:
+            conn.row_factory = sqlite3.Row 
+            cursor = conn.cursor()
             
-            display_date = race_date
-            try: display_date = f"{datetime.strptime(race_date, '%Y-%m-%d').strftime('%Y年%m月%d日')}({['月','火','水','木','金','土','日'][datetime.strptime(race_date, '%Y-%m-%d').weekday()]})"
-            except: pass
+            cursor.execute("""
+                SELECT race_date, venue, race_num, status, horse_num, rank 
+                FROM race_entries 
+                WHERE horse_name = ? 
+                ORDER BY race_date DESC, race_num DESC
+            """, (name,))
+            
+            for row in cursor.fetchall():
+                r_date = row['race_date']
+                r_venue = row['venue']
+                r_num = int(row['race_num'])
+                target_year = r_date[:4]
+                
+                if target_year not in schedule_cache:
+                    _, v_data_map, _, _ = get_schedule_data(target_year)
+                    schedule_cache[target_year] = v_data_map
+                
+                v_data_map = schedule_cache[target_year]
+                
+                if target_year not in race_master_cache_by_year:
+                    race_master_data = {}
+                    try:
+                        rm_sh = gc.open(f"{target_year}_Race_Data")
+                        for sheet in rm_sh.worksheets():
+                            race_master_data[sheet.title] = sheet.get_all_values()
+                    except Exception: 
+                        pass
+                    race_master_cache_by_year[target_year] = race_master_data
 
-            race_info_cache = {}
-            m_sheet_name = venue_map.get(sheet_name)
-            if m_sheet_name and m_sheet_name in race_master_data:
-                race_info_cache = get_race_info_from_sheet(race_master_data[m_sheet_name], sheet_name)
+                r_name, r_condition, r_course = "-", "-", "-"
+                
+                v_info = v_data_map.get(r_date, {}).get(r_venue)
+                
+                if v_info:
+                    m_sheet_name = f"{v_info['id']}回{r_venue}"
+                    search_text = f"{v_info['id']}回{r_venue}{v_info['day']}日"
+                    
+                    if m_sheet_name in race_master_cache_by_year[target_year]:
+                        race_info_cache = get_race_info_from_sheet(
+                            race_master_cache_by_year[target_year][m_sheet_name], 
+                            search_text
+                        )
+                        if r_num in race_info_cache:
+                            r_name = race_info_cache[r_num].get('name', '-')
+                            r_condition = race_info_cache[r_num].get('condition', '-')
+                            r_course = race_info_cache[r_num].get('course', '-')
 
-            data = ws_e.get_all_values()
-            if len(data) < 3: continue
+                display_date = r_date
+                try:
+                    dt = datetime.strptime(r_date, '%Y-%m-%d')
+                    display_date = f"{dt.strftime('%Y年%m月%d日')}({['月','火','水','木','金','土','日'][dt.weekday()]})"
+                except Exception:
+                    pass
 
-            for r_num in range(1, 13):
-                rank_col, num_col, name_col, stat_col = (r_num - 1)*4, (r_num - 1)*4 + 1, (r_num - 1)*4 + 2, (r_num - 1)*4 + 3
-                for row in data[2:]:
-                    if name_col < len(row) and row[name_col] == name:
-                        r_info = race_info_cache.get(r_num, {})
-                        horse_races.append({
-                            'sort_date': race_date, 
-                            'date_label': display_date, 
-                            'venue': venue, 
-                            'num': r_num,
-                            'name': r_info.get('name', '-'), 
-                            'condition': r_info.get('condition', '-'), 
-                            'course': r_info.get('course', '-'),
-                            'status': row[stat_col] if stat_col < len(row) else "-", 
-                            'rank': row[rank_col] if rank_col < len(row) else "-"
-                        })
-
-    horse_races.sort(key=lambda x: (x['sort_date'], x['num']), reverse=True)
+                horse_races.append({
+                    'sort_date': r_date, 
+                    'date_label': display_date, 
+                    'venue': r_venue, 
+                    'num': r_num,
+                    'name': r_name,
+                    'condition': r_condition,
+                    'course': r_course,
+                    'status': row['status'] if row['status'] else "-", 
+                    'rank': row['rank'] if row['rank'] else "-"
+                })
+                
+    except Exception as e:
+        print(f"データベースの読み込みエラー: {e}")
 
     sire_info, dam_info = {"line1": "不明", "line2": "不明"}, {"line3": "不明", "line4": "不明"}
     try:
@@ -847,7 +884,6 @@ def horse_detail(name):
             except ValueError:
                 pass
     
-    # 対象馬の生年月日から西暦を取得
     base_birth_year = None
     if isinstance(horse[2], datetime):
         base_birth_year = horse[2].year
@@ -856,7 +892,6 @@ def horse_detail(name):
     elif isinstance(horse[2], dict) and 'year' in horse[2]:
         base_birth_year = int(horse[2]['year'])
     
-    # 5代血統データの構築 (horse[3]が父、horse[4]が母の想定)
     pedigree_data = get_5gen_pedigree(horse[3], horse[4], base_birth_year, gc)
 
     return render_template('horse_detail.html', 
@@ -1074,57 +1109,31 @@ def race_detail():
 @login_required
 def save_entry():
     data = request.json
-    target_year = data.get('date')[:4]
-    race_num, horse_name, entry_type, sheet_name = int(data.get('race_num')), data.get('horse_name'), data.get('entry_type'), data.get('sheet_name')
-    horse_num, horse_rank = data.get('horse_num'), data.get('horse_rank')
+    
+    # データの受け取り
+    race_date = data.get('date') # 例: "2026-05-28"
+    venue = data.get('venue')
+    race_num = int(data.get('race_num'))
+    horse_name = data.get('horse_name')
+    entry_type = data.get('entry_type')
+    horse_num = data.get('horse_num') or None
+    horse_rank = data.get('horse_rank') or None
 
     status_label = {"estimated": "想定", "special": "特別", "final": "確定"}.get(entry_type, "想定")
-    file_name = f'{target_year}_entry_{data.get("venue")}'
     
-    try:
-        wb = gc.open(file_name)
-    except gspread.SpreadsheetNotFound:
-        wb = gc.create(file_name)
-        # 初期生成されたシートの名前を変更
-        wb.sheet1.update_title(sheet_name)
-        
-    try:
-        ws = wb.worksheet(sheet_name)
-    except gspread.WorksheetNotFound:
-        ws = wb.add_worksheet(title=sheet_name, rows=100, cols=50)
-        
-    sheet_data = ws.get_all_values()
-    
-    # シートが空の場合のヘッダー作成
-    if len(sheet_data) == 0:
-        row1, row2 = [""], [""]
-        for r in range(1, 13):
-            row1.extend([f"{r}R", "", "", ""])
-            row2.extend(["着順", "馬番", "馬名", "出走"])
-        ws.append_row(row1)
-        ws.append_row(row2)
-        sheet_data = ws.get_all_values()
-
-    rank_col, num_col, name_col, status_col = (race_num - 1)*4, (race_num - 1)*4 + 1, (race_num - 1)*4 + 2, (race_num - 1)*4 + 3
-    
-    target_row_idx = None
-    for i, row in enumerate(sheet_data[2:]):
-        if name_col < len(row) and row[name_col] == horse_name:
-            target_row_idx = i + 3 # 1-indexed (header 2 rows)
-            break
-            
-    if target_row_idx is None:
-        # 新しい行を探す
-        target_row_idx = len(sheet_data) + 1
-
-    # セル更新のリストを作成して一括アップデート
-    cell_list = []
-    cell_list.append(gspread.Cell(target_row_idx, name_col + 1, horse_name))
-    cell_list.append(gspread.Cell(target_row_idx, status_col + 1, status_label))
-    if horse_num: cell_list.append(gspread.Cell(target_row_idx, num_col + 1, int(horse_num)))
-    if horse_rank: cell_list.append(gspread.Cell(target_row_idx, rank_col + 1, int(horse_rank)))
-    
-    ws.update_cells(cell_list)
+    with sqlite3.connect(EntryDB) as conn:
+        cursor = conn.cursor()
+        # すでに登録されていれば上書き（UPDATE）、なければ新規登録（INSERT）
+        cursor.execute("""
+            INSERT INTO race_entries (race_date, venue, race_num, horse_name, status, horse_num, rank)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(race_date, venue, race_num, horse_name) 
+            DO UPDATE SET 
+                status = excluded.status,
+                horse_num = excluded.horse_num,
+                rank = excluded.rank
+        """, (race_date, venue, race_num, horse_name, status_label, horse_num, horse_rank))
+        conn.commit()
 
     return {"status": "success"}, 200
 
