@@ -782,7 +782,7 @@ def horse_detail(name):
     race_master_cache_by_year = {}
     
     try:
-        with sqlite3.connect('EntryDB') as conn:
+        with sqlite3.connect(EntryDB) as conn:
             conn.row_factory = sqlite3.Row 
             cursor = conn.cursor()
             
@@ -1136,6 +1136,74 @@ def save_entry():
         conn.commit()
 
     return {"status": "success"}, 200
+
+@app.route('/api/available_races')
+def api_available_races():
+    horse_name = request.args.get('horse_name')
+    date_str = request.args.get('date') # YYYY-MM-DD
+    
+    if not horse_name or not date_str:
+        return {"error": "パラメータが不足しています。"}, 400
+        
+    all_horses = get_all_horses()
+    horse = next((h for h in all_horses if len(h) > 0 and h[0] == horse_name), None)
+    if not horse:
+        return {"error": "馬が見つかりませんでした。"}, 404
+        
+    horse_birthday_str = horse[2]
+    all_results_dict = load_all_horse_results()
+    
+    # 対象日時点での馬のクラスを取得
+    current_class = get_class_from_results(horse_name, date_str, all_results_dict, horse_birthday_str)
+    
+    target_year = date_str[:4]
+    _, venue_data_map, _, _ = get_schedule_data(target_year)
+    
+    current_day_venues = venue_data_map.get(date_str, {})
+    if not current_day_venues:
+        return {"races": [], "message": "指定された日に開催されるレースはありません。"}, 200
+        
+    race_data = f"{target_year}_Race_Data"
+    available_races = []
+    
+    try:
+        wb = gc.open(race_data)
+        for venue, venue_info in current_day_venues.items():
+            target_sheet_name = f"{venue_info['id']}回{venue}"
+            try:
+                ws = wb.worksheet(target_sheet_name)
+                search_text = f"{venue_info['id']}回{venue}{venue_info['day']}日"
+                races_info = get_race_info_from_sheet(ws.get_all_values(), search_text)
+                
+                for r_num, race in races_info.items():
+                    race_req_class = judge_required_class(race['condition'])
+                    
+                    # 出走可能かどうかのクラス判定
+                    allowed = False
+                    if race_req_class == "新馬" and current_class == "新馬":
+                        allowed = True
+                    elif race_req_class == "未勝利" and current_class in ["新馬", "未勝利"]:
+                        allowed = True
+                    elif race_req_class == "オープン":
+                        allowed = True
+                    elif race_req_class == current_class:
+                        allowed = True
+                        
+                    if allowed:
+                        available_races.append({
+                            'venue': venue,
+                            'race_num': r_num,
+                            'name': race.get('name', '-'),
+                            'condition': race.get('condition', '-'),
+                            'course': race.get('course', '-'),
+                            'time': race.get('time', '')
+                        })
+            except Exception:
+                continue
+    except Exception as e:
+        return {"error": f"レースデータの取得に失敗しました: {e}"}, 500
+        
+    return {"races": available_races, "current_class": current_class}, 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001 ,use_reloader=False)
