@@ -436,13 +436,24 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         sire_data = []
         dam_data = []
 
-    sire_dict = {str(r.get('馬名', '')).strip(): r for r in sire_data}
-    dam_dict = {str(r.get('馬名', '')).strip(): r for r in dam_data}
+    sire_dict = {}
+    for r in sire_data:
+        name = str(r.get('馬名', '')).strip()
+        if name not in sire_dict:
+            sire_dict[name] = []
+        sire_dict[name].append(r)
+        
+    dam_dict = {}
+    for r in dam_data:
+        name = str(r.get('馬名', '')).strip()
+        if name not in dam_dict:
+            dam_dict[name] = []
+        dam_dict[name].append(r)
 
     pedigree = {}
 
     def traverse(node_index, h_name, child_birth_year, is_sire):
-        if node_index >= 64:  # 5代前(インデックス32~63)まで取得
+        if node_index >= 64:
             return
         
         h_name = str(h_name).strip() if h_name else ''
@@ -450,8 +461,31 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             pedigree[node_index] = None
             return
 
-        # 該当の親馬のレコードを検索
-        record = sire_dict.get(h_name) if is_sire else dam_dict.get(h_name)
+        # 該当の親馬のレコード"リスト"を取得
+        records = sire_dict.get(h_name, []) if is_sire else dam_dict.get(h_name, [])
+        record = None
+
+        if records:
+            if child_birth_year:
+                valid_records = []
+                for r in records:
+                    dob = str(r.get('生年月日', '')).strip()
+                    b_year = extract_year(dob)
+                    
+                    # 仔の生年より前に生まれている馬だけを候補にする
+                    if b_year and b_year < child_birth_year:
+                        valid_records.append((r, b_year))
+                
+                if valid_records:
+                    # 仔の生年と親の生年の差が小さい（一番近い）順に並び替え
+                    valid_records.sort(key=lambda x: child_birth_year - x[1])
+                    record = valid_records[0][0] # 一番近い馬を選択
+                else:
+                    # 候補がない場合（データ不備など）はとりあえず最初のものを取得
+                    record = records[0] 
+            else:
+                # 仔の生年自体が不明な場合は最初のものを取得
+                record = records[0]
 
         needs_update = True
         
