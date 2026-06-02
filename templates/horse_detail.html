@@ -38,93 +38,158 @@
         {% if horse|length > 9 and horse[9] %}・{{ horse[9] }}{% endif %}
     </p>
 
-    {% macro render_cell(node_id, gen) %}
-        {% set node = pedigree.get(node_id) %}
-        {% set rowspan = 32 // (2 ** gen) %}
-        {% set bg_color = '#eef5ff' if node_id % 2 == 0 else '#fff0f0' %}
-        
-        <td class="pedigree-cell" rowspan="{{ rowspan }}" 
-            style="background-color: {{ bg_color }};"
-            data-index="{{ node_id }}"
-            {% if node %}
-                data-name="{{ node.name }}" data-gen="{{ gen }}"
-            {% endif %}>
-            {% if node %}
-                <div class="pedigree-cell-content">
-                    <div class="pedigree-main-info">
-                        {% if node.birthplace_region %}
-                            {% if node.birthplace_region != '海外' %}
-                                <img src="{{ url_for('static', filename='images/JPN.png') }}" 
-                                    class="country-flag" alt="日本">
-                            {% elif node.birthplace_detail %}
-                                {% set flag_map = {
-                                    'アメリカ': 'USA',
-                                    'カナダ': 'CAN',
-                                    'イギリス': 'GB',
-                                    'アイルランド': 'IRE',
-                                    'フランス': 'FR',
-                                    'ドイツ': 'GER',
-                                    'イタリア': 'ITR',
-                                    'オーストラリア': 'AUS',
-                                    'ニュージーランド': 'NZ',
-                                    'アルゼンチン': 'ARG',
-                                    'チリ': 'CHI',
-                                    'ブラジル': 'BRZ',
-                                    '南アフリカ': 'SAF'
-                                } %}
-                                {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
-                                <img src="{{ url_for('static', filename='images/' ~ filename_base ~ '.png') }}" 
-                                    class="country-flag" alt="{{ node.birthplace_detail }}">
-                            {% endif %}
-                        {% endif %}
-                
-                        <div class="pedigree-text-group">
-                            <div class="horse-name">
-                                {{ node.name }}
-                            </div>
-
-                            {% if node.birth_year %}
-                                <div style="font-size: 0.8em; color: #666;">
-                                    {{ node.birth_year }}年
-                                    {% if node.age_when_born != None %}
-                                        ({{ node.age_when_born }}歳)
-                                    {% endif %}
-                                </div>
-                            {% endif %}
-                        </div>
-                    </div>
-
-                    {% set sire_node = pedigree.get(node_id * 2) %}
-                    {% set dam_node = pedigree.get(node_id * 2 + 1) %}
-                    <div style="margin-top: 5px; font-size: 0.85em;">
-                    {% if session.get('login') and node.needs_update %}
-                        {% set parent_type = 'Sire' if node_id % 2 == 0 else 'Dam' %}
-                        <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" 
-                            class="add-parent-link">[ 編集 ] 
-                        </a>
+{% macro render_inner(node, node_id, role='') %}
+    <div class="horse-content">
+        {% if role %}
+            <div class="horse-role">{{ role }}</div>
+        {% endif %}
+        {% if node %}
+            <div class="pedigree-main-info">
+                {% if node.birthplace_region %}
+                    {% if node.birthplace_region != '海外' %}
+                        <img src="{{ url_for('static', filename='images/JPN.png') }}" class="country-flag" alt="日本">
+                    {% elif node.birthplace_detail %}
+                        {% set flag_map = {
+                            'アメリカ': 'USA', 'カナダ': 'CAN', 'イギリス': 'GB', 'アイルランド': 'IRE',
+                            'フランス': 'FR', 'ドイツ': 'GER', 'イタリア': 'ITR', 'オーストラリア': 'AUS',
+                            'ニュージーランド': 'NZ', 'アルゼンチン': 'ARG', 'チリ': 'CHI',
+                            'ブラジル': 'BRZ', '南アフリカ': 'SAF'
+                        } %}
+                        {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
+                        <img src="{{ url_for('static', filename='images/' ~ filename_base ~ '.png') }}" class="country-flag" alt="{{ node.birthplace_detail }}">
                     {% endif %}
-                    </div>
+                {% endif %}
+                
+                <div class="pedigree-text-group">
+                    <div class="horse-name">{{ node.name }}</div>
+                    {% if node.birth_year %}
+                        <div class="horse-meta">
+                            {{ node.birth_year }}年
+                            {% if node.age_when_born != None %}({{ node.age_when_born }}歳){% endif %}
+                        </div>
+                    {% endif %}
                 </div>
-            {% else %}
-                <span style="color:#ccc;">不明</span>
-            {% endif %}
-        </td>
-    {% endmacro %}
+            </div>
 
-    <p><strong>血統表（5代）</strong></p>
-    <table class="pedigree-table">
-        <tbody>
-            {% for r in range(32) %}
-            <tr class="{% if r == 16 %}pedigree-mid-boundary{% endif %}">
-                {% if r % 16 == 0 %} {{ render_cell(2 + (r // 16), 1) }} {% endif %}
-                {% if r % 8 == 0 %}  {{ render_cell(4 + (r // 8), 2) }} {% endif %}
-                {% if r % 4 == 0 %}  {{ render_cell(8 + (r // 4), 3) }} {% endif %}
-                {% if r % 2 == 0 %}  {{ render_cell(16 + (r // 2), 4) }} {% endif %}
-                {{ render_cell(32 + r, 5) }}
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+            {% if session.get('login') and node.needs_update %}
+                <div class="horse-edit">
+                    {% set parent_type = 'Sire' if node_id % 2 == 0 else 'Dam' %}
+                    <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" class="add-parent-link">[ 編集 ]</a>
+                </div>
+            {% endif %}
+        {% else %}
+            <span class="unknown-horse">不明</span>
+        {% endif %}
+    </div>
+{% endmacro %}
+
+{% macro render_block(node_id, gen, role) %}
+    {% set node = pedigree.get(node_id) %}
+    {% set bg_class = 'bg-sire' if node_id % 2 == 0 else 'bg-dam' %}
+    <div class="tier-block pedigree-cell {{ bg_class }}" 
+         data-index="{{ node_id }}"
+         {% if node %}data-name="{{ node.name }}" data-gen="{{ gen }}"{% endif %}>
+        {{ render_inner(node, node_id, role) }}
+    </div>
+{% endmacro %}
+
+{% macro render_td(node_id, gen, rowspan) %}
+    {% set node = pedigree.get(node_id) %}
+    {% set bg_class = 'bg-sire' if node_id % 2 == 0 else 'bg-dam' %}
+    <td class="pedigree-cell {{ bg_class }}" rowspan="{{ rowspan }}"
+        data-index="{{ node_id }}"
+        {% if node %}data-name="{{ node.name }}" data-gen="{{ gen }}"{% endif %}>
+        {{ render_inner(node, node_id) }}
+    </td>
+{% endmacro %}
+
+<p><strong>血統表（5代）</strong></p>
+<div class="layered-pedigree">
+
+    <section class="pedigree-section sire-side">
+        <h3 class="side-title">父系</h3>
+        
+        <div class="tier-1">
+            {{ render_block(2, 1, '父') }}
+        </div>
+        
+        <div class="tier-2">
+            <div class="tier-2-item">{{ render_block(4, 2, '父父') }}</div>
+            <div class="tier-2-item">{{ render_block(5, 2, '父母') }}</div>
+        </div>
+        
+        <div class="tier-3-container">
+            <div class="tier-3-sub">
+                <table class="sub-pedigree-table">
+                    <tbody>
+                        {% for i in range(8) %}
+                        <tr>
+                            {% if i % 4 == 0 %} {{ render_td(8 + (i//4), 3, 4) }} {% endif %}
+                            {% if i % 2 == 0 %} {{ render_td(16 + (i//2), 4, 2) }} {% endif %}
+                            {{ render_td(32 + i, 5, 1) }}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="tier-3-sub">
+                <table class="sub-pedigree-table">
+                    <tbody>
+                        {% for i in range(8) %}
+                        <tr>
+                            {% if i % 4 == 0 %} {{ render_td(10 + (i//4), 3, 4) }} {% endif %}
+                            {% if i % 2 == 0 %} {{ render_td(20 + (i//2), 4, 2) }} {% endif %}
+                            {{ render_td(40 + i, 5, 1) }}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="pedigree-section dam-side">
+        <h3 class="side-title">母系</h3>
+        
+        <div class="tier-1">
+            {{ render_block(3, 1, '母') }}
+        </div>
+        
+        <div class="tier-2">
+            <div class="tier-2-item">{{ render_block(6, 2, '母父') }}</div>
+            <div class="tier-2-item">{{ render_block(7, 2, '母母') }}</div>
+        </div>
+        
+        <div class="tier-3-container">
+            <div class="tier-3-sub">
+                <table class="sub-pedigree-table">
+                    <tbody>
+                        {% for i in range(8) %}
+                        <tr>
+                            {% if i % 4 == 0 %} {{ render_td(12 + (i//4), 3, 4) }} {% endif %}
+                            {% if i % 2 == 0 %} {{ render_td(24 + (i//2), 4, 2) }} {% endif %}
+                            {{ render_td(48 + i, 5, 1) }}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="tier-3-sub">
+                <table class="sub-pedigree-table">
+                    <tbody>
+                        {% for i in range(8) %}
+                        <tr>
+                            {% if i % 4 == 0 %} {{ render_td(14 + (i//4), 3, 4) }} {% endif %}
+                            {% if i % 2 == 0 %} {{ render_td(28 + (i//2), 4, 2) }} {% endif %}
+                            {{ render_td(56 + i, 5, 1) }}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
     <p style="font-size: 0.9em; color: #555; margin-top: 5px;">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
 
     <div id="inbreed-results"></div>
