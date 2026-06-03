@@ -77,6 +77,24 @@
                     <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" class="add-parent-link">[ 編集 ]</a>
                 </div>
             {% endif %}
+            
+            {% if node.is_ambiguous %}
+                {% set child_id = node_id // 2 %}
+                {% set child_node = pedigree.get(child_id) %}
+                {% set child_name = child_node.full_db_name if child_node else horse[0] %}
+                {% set parent_col = '父' if node_id % 2 == 0 else '母' %}
+                
+                <div class="horse-edit" style="margin-top: 5px;">
+                    <button type="button" class="btn-warning btn-select-candidate"
+                        data-child="{{ child_name }}"
+                        data-col="{{ parent_col }}"
+                        data-name="{{ node.name }}"
+                        data-candidates='{{ node.candidates | tojson }}'
+                        onclick="openCandidateModal(this)">
+                        [ 同名馬を選択 ]
+                    </button>
+                </div>
+            {% endif %}
         {% else %}
             <span class="unknown-horse">不明</span>
         {% endif %}
@@ -114,8 +132,8 @@
         </div>
         
         <div class="tier-2">
-            <div class="tier-2-item">{{ render_block(4, 2, '父父') }}</div>
-            <div class="tier-2-item">{{ render_block(5, 2, '父母') }}</div>
+            <div class="tier-2-item">{{ render_block(4, 2, '父の父') }}</div>
+            <div class="tier-2-item">{{ render_block(5, 2, '父の母') }}</div>
         </div>
         
         <div class="tier-3-container">
@@ -156,8 +174,8 @@
         </div>
         
         <div class="tier-2">
-            <div class="tier-2-item">{{ render_block(6, 2, '母父') }}</div>
-            <div class="tier-2-item">{{ render_block(7, 2, '母母') }}</div>
+            <div class="tier-2-item">{{ render_block(6, 2, '母の父') }}</div>
+            <div class="tier-2-item">{{ render_block(7, 2, '母の母') }}</div>
         </div>
         
         <div class="tier-3-container">
@@ -252,11 +270,101 @@
     </div>
 </section>
 
+<!-- 同名馬選択用モーダル (初期状態は非表示) -->
+<div id="candidateModal" class="candidate-modal-overlay">
+    <div class="candidate-modal-content">
+        <h3 id="candidateModalTitle" style="margin-top:0;">同名馬の選択</h3>
+        <p>正しい親馬を選択してください。</p>
+        <ul id="candidateModalList" class="candidate-list">
+            <!-- JavaScriptでここに候補リストが生成されます -->
+        </ul>
+        <button type="button" onclick="closeCandidateModal()" class="btn-close-modal">閉じる</button>
+    </div>
+</div>
+
 <div class="back-link-container">
     <a href="/">一覧に戻る</a>
 </div>
 
 <script>
+// モーダル間で受け渡すための一時変数
+let currentChildName = '';
+let currentParentCol = '';
+
+function openCandidateModal(btnElement) {
+    const nodeName = btnElement.getAttribute('data-name');
+    currentChildName = btnElement.getAttribute('data-child');
+    currentParentCol = btnElement.getAttribute('data-col');
+    
+    const rawData = btnElement.getAttribute('data-candidates');
+    const candidates = JSON.parse(rawData);
+
+    document.getElementById('candidateModalTitle').innerText = `「${nodeName}」の同名馬候補`;
+    
+    const listElement = document.getElementById('candidateModalList');
+    let html = '';
+
+    candidates.forEach(c => {
+        const birthStr = String(c['生年月日'] || '');
+        const birthYear = birthStr.split('/')[0] || birthStr.split('-')[0] || '不明'; // 年だけを抽出
+        const region = c['地域'] || c['産地'] || '海外';
+        const dam = c['母'] || '不明';
+        
+        // シングルクォーテーションのエスケープ対策
+        const safeName = c['馬名'].replace(/'/g, "\'");
+        const safeDam = dam.replace(/'/g, "\'");
+        
+        html += `
+        <li>
+            <div class="candidate-info">
+                <strong>${c['馬名']}</strong> (${birthYear}生 / ${region})<br>
+                <span style="font-size: 11px; color: #666;">父: ${c['父']} / 母: ${dam}</span>
+            </div>
+            <button class="btn-submit-entry" 
+                onclick="selectCorrectParent('${safeName}', '${safeDam}', '${birthYear}')">これを選択</button>
+        </li>`;
+    });
+
+    listElement.innerHTML = html;
+    document.getElementById('candidateModal').style.display = 'block';
+}
+
+function selectCorrectParent(parentName, damName, birthYear) {
+    if (!confirm(`データベースの「${currentChildName}」の${currentParentCol}を、この馬で確定・保存しますか？`)) {
+        return;
+    }
+    
+    // バックエンドへ送る新しい形式の名前を生成 例: "Bold Lad (Misty Morn - 1962)"
+    const formattedNewName = `${parentName} (${damName} - ${birthYear})`;
+    
+    fetch('/update_specific_parent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            child_name: currentChildName, 
+            parent_col: currentParentCol, 
+            new_parent_name: formattedNewName 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('親馬の設定を保存しました！');
+            location.reload(); // 画面をリロードして再描画
+        } else {
+            alert('エラーが発生しました: ' + data.message);
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('通信エラーが発生しました。');
+    });
+}
+
+function closeCandidateModal() {
+    document.getElementById('candidateModal').style.display = 'none';
+}
+
 function switchHorseTab(tabId) {
     document.querySelectorAll('.entry-section').forEach(s => s.style.display = 'none');
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
