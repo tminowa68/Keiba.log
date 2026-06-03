@@ -461,34 +461,63 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             pedigree[node_index] = None
             return
 
-        # 該当の親馬のレコード"リスト"を取得
-        records = sire_dict.get(h_name, []) if is_sire else dam_dict.get(h_name, [])
+        # 1. 括弧指定「馬名 (母馬 - 生年)」の解析
+        match = re.match(r'^(.*?)\s*\((.*?)\s*-\s*(\d{4})[年]?\)$', h_name)
+        
+        display_name = h_name
+        target_dam = None
+        target_year = None
+        
+        if match:
+            display_name = match.group(1).strip()
+            target_dam = match.group(2).strip()
+            target_year = int(match.group(3))
+
+        records = sire_dict.get(display_name, []) if is_sire else dam_dict.get(display_name, [])
         record = None
+        is_ambiguous = False
+        candidates = []
 
         if records:
-            if child_birth_year:
-                valid_records = []
+            if match:
                 for r in records:
-                    dob = str(r.get('生年月日', '')).strip()
-                    b_year = extract_year(dob)
+                    r_dam = str(r.get('母', '')).strip()
+                    r_dob = str(r.get('生年月日', '')).strip()
+                    r_year = extract_year(r_dob)
                     
-                    # 仔の生年より前に生まれている馬だけを候補にする
-                    if b_year and b_year < child_birth_year:
-                        valid_records.append((r, b_year))
+                    if r_dam == target_dam and r_year == target_year:
+                        record = r
+                        break
                 
-                if valid_records:
-                    # 仔の生年と親の生年の差が小さい（一番近い）順に並び替え
-                    valid_records.sort(key=lambda x: child_birth_year - x[1])
-                    record = valid_records[0][0] # 一番近い馬を選択
-                else:
-                    # 候補がない場合（データ不備など）はとりあえず最初のものを取得
-                    record = records[0] 
+                if not record:
+                    record = records[0]
             else:
-                # 仔の生年自体が不明な場合は最初のものを取得
-                record = records[0]
+                if child_birth_year:
+                    valid_records = []
+                    for r in records:
+                        dob = str(r.get('生年月日', '')).strip()
+                        b_year = extract_year(dob)
+                        if b_year and b_year < child_birth_year:
+                            valid_records.append((r, b_year))
+                    
+                    if valid_records:
+                        valid_records.sort(key=lambda x: child_birth_year - x[1])
+                        record = valid_records[0][0] 
+                        if len(valid_records) > 1:
+                            is_ambiguous = True
+                            candidates = [r[0] for r in valid_records]
+                    else:
+                        record = records[0] 
+                        if len(records) > 1:
+                            is_ambiguous = True
+                            candidates = records
+                else:
+                    record = records[0]
+                    if len(records) > 1:
+                        is_ambiguous = True
+                        candidates = records
 
         needs_update = True
-        
         b_year = None
         sire_of_h = ''
         dam_of_h = ''
@@ -496,14 +525,12 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         birthplace_detail = ''
         
         if record:
-            # 各列の値を取得して空白チェック
             dob = str(record.get('生年月日', '')).strip()
             s = str(record.get('父', '')).strip()
             d = str(record.get('母', '')).strip()
             b_reg = str(record.get('産地', '')).strip()
             b_det = str(record.get('地域', '')).strip()
             
-            # 2〜5列目すべてに何らかの値が入っていればボタン非表示（False）
             if dob and s and d and b_reg:
                 needs_update = False
 
@@ -513,25 +540,25 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             birthplace_region = b_reg
             birthplace_detail = b_det
             
-        # 仔が出生した時の馬齢を計算
         age_when_born = None
         if b_year is not None and child_birth_year is not None:
             age_when_born = child_birth_year - b_year
 
         pedigree[node_index] = {
-            'name': h_name,
+            'name': display_name,
+            'full_db_name': h_name,
             'birth_year': b_year,
             'age_when_born': age_when_born,
             'birthplace_region': birthplace_region,
             'birthplace_detail': birthplace_detail,
-            'needs_update': needs_update
+            'needs_update': needs_update,
+            'is_ambiguous': is_ambiguous,
+            'candidates': candidates
         }
 
-        # さらに親を探索（子は現在の馬の生年を渡す）
         traverse(node_index * 2, sire_of_h, b_year, True)
         traverse(node_index * 2 + 1, dam_of_h, b_year, False)
 
-    # 1代前（父=インデックス2、母=インデックス3）から探索開始
     traverse(2, sire_name, base_birth_year, True)
     traverse(3, dam_name, base_birth_year, False)
 
@@ -805,6 +832,50 @@ def update_horse():
         return redirect(f"/horse/{new_name}")
     except Exception as e:
         return f"エラーが発生しました: {e}", 400
+
+@app.route('/update_specific_parent', methods=['POST'])
+@login_required
+def update_specific_parent():
+    data = request.json
+    child_name = data.get('child_name')
+    parent_col = data.get('parent_col') # '父' または '母'
+    new_parent_name = data.get('new_parent_name')
+    
+    try:
+        wb = gc.open('Horse_Data')
+        target_sheets = ['Horses', 'Sire', 'Dam']
+        updated = False
+        
+        for sheet_name in target_sheets:
+            try:
+                ws = wb.worksheet(sheet_name)
+            except gspread.WorksheetNotFound:
+                continue
+                
+            records = ws.get_all_records()
+            if not records:
+                continue
+                
+            headers = ws.row_values(1)
+            
+            for i, r in enumerate(records):
+                if str(r.get('馬名', '')).strip() == child_name:
+                    if parent_col in headers:
+                        col_idx = headers.index(parent_col) + 1
+                        row_idx = i + 2 
+                        ws.update_cell(row_idx, col_idx, new_parent_name)
+                        updated = True
+                        break
+            if updated:
+                break
+        
+        if updated:
+            return {"status": "success"}
+        else:
+            return {"status": "error", "message": "対象の仔馬データが見つかりませんでした。"}
+            
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.route('/horse/<name>')
 def horse_detail(name):
