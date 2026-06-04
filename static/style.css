@@ -583,7 +583,7 @@ td.col-num{
     vertical-align: middle; 
     border: 1px solid #ccc; 
     padding: 6px;
-    min-width: 9em;
+    min-width: 210px;
 }
 .pedigree-cell-content {
     position: relative;
@@ -723,16 +723,71 @@ td.col-num{
 
 .layered-pedigree {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;     /* column から row (横並び) に変更 */
     gap: 25px;
+    overflow-x: auto;        /* 横スクロールを許可 */
+    scroll-snap-type: x mandatory; /* スクロール時にセクション単位でピタッと止める */
+    scroll-behavior: smooth; /* スムーズスクロールを有効化 */
+    padding-bottom: 15px;    /* スクロールバー用の余白 */
+    -webkit-overflow-scrolling: touch;
 }
 
 .pedigree-section {
+    flex: 0 0 100%;          /* 1つのセクションで表示幅を100%占有させる */
+    box-sizing: border-box;
+    scroll-snap-align: start; /* スナップ位置をセクションの先頭に合わせる */
     background: #fff;
     border: 2px solid #ddd;
     border-radius: 8px;
     padding: 15px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+/* --- 新しく追加するスタイル --- */
+.pedigree-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #eee;
+    margin-bottom: 15px;
+    padding-bottom: 5px;
+}
+
+.pedigree-header .header-spacer {
+    flex: 1;
+}
+
+.pedigree-header .header-link-box {
+    flex: 1;
+}
+
+.pedigree-header .header-link-box.right {
+    text-align: right;
+}
+
+.pedigree-header .side-title {
+    flex: 2;
+    border-bottom: none;
+    margin: 0;
+    padding-bottom: 0;
+    text-align: center;
+}
+
+.scroll-link {
+    color: #4CAF50;
+    text-decoration: none;
+    font-size: 0.9em;
+    font-weight: bold;
+    padding: 6px 12px;
+    border: 1px solid #4CAF50;
+    border-radius: 4px;
+    background: #f0f4f8;
+    transition: 0.2s ease;
+}
+
+.scroll-link:hover {
+    background: #4CAF50;
+    color: #fff;
 }
 
 .side-title {
@@ -762,7 +817,6 @@ td.col-num{
     font-weight: bold;
     font-size: 11px;
     color: #555;
-    margin-bottom: 4px;
     border-bottom: 1px solid #ccc;
     display: inline-block;
     align-self: flex-start;
@@ -812,9 +866,18 @@ td.col-num{
     min-height: 36px;
     padding: 4px; /* テーブル内は余白を少し詰めてスッキリ見せる */
 }
-.horse-edit { font-size: 11px; margin-top: 5px; text-align: right; }
-.unknown-horse { color: #aaa; font-size: 13px; }
-.country-flag { width: 35px; height: auto; }
+.horse-edit {
+    font-size: 11px;
+    text-align: right;
+}
+.unknown-horse {
+    color: #aaa;
+    font-size: 13px;
+}
+.country-flag {
+    width: 35px;
+    height: auto;
+}
 
 /* 1段目 (Tier 1) */
 .tier-1 {
@@ -1062,4 +1125,37 @@ td.col-num{
     cursor: pointer;
     width: 100%;
     margin-top: 10px;
+}
+
+/* --- [修正] 1段目と2段目の馬ブロックのスタイルを共通化し、幅を最適化 --- */
+.tier-1 .tier-block,
+.tier-2-item .tier-block {
+    min-width: 210px;
+    width: max-content; /* 文字数に応じた幅にする */
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+    box-sizing: border-box;
+}
+
+/* --- [修正] 2段目（祖父母）のコンテナ調整 --- */
+.tier-2 {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+.tier-2-item {
+    flex: 1; /* 3代目の系統ごとの領域幅と同期させる */
+    /* 不要になった独自の border, border-radius, box-shadow は削除 */
+    display: flex;
+    justify-content: flex-start; /* 下のテーブルの開始位置（左端）に綺麗に揃える */
+}
+
+/* --- [修正] 3段目以降のテーブルの自動幅化（引き伸ばしを解除） --- */
+.sub-pedigree-table {
+    width: auto;           /* 100% から auto に変更 */
+    border-collapse: collapse;
+    table-layout: auto;    /* fixed から auto に変更して、中身の幅に合わせる */
+    margin: 0;
 }
