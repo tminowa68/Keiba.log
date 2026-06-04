@@ -122,14 +122,21 @@
 {% endmacro %}
 
 <p><strong>血統表（5代）</strong></p>
-<div class="layered-pedigree">
+    <div class="layered-pedigree">
 
-    <section class="pedigree-section sire-side">
-        <h3 class="side-title">父系</h3>
-        
-        <div class="tier-1">
-            {{ render_block(2, 1, '父') }}
-        </div>
+        <!-- 父系セクション -->
+        <section id="sire-side" class="pedigree-section sire-side">
+            <div class="pedigree-header">
+                <div class="header-spacer"></div>
+                <h3 class="side-title">父系</h3>
+                <div class="header-link-box right">
+                    <a href="javascript:void(0)" onclick="document.getElementById('dam-side').scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'start'})" class="scroll-link">母系へ→</a>
+                </div>
+            </div>
+            
+            <div class="tier-1">
+                {{ render_block(2, 1, '父') }}
+            </div>
         
         <div class="tier-2">
             <div class="tier-2-item">{{ render_block(4, 2, '父の父') }}</div>
@@ -166,12 +173,19 @@
         </div>
     </section>
 
-    <section class="pedigree-section dam-side">
-        <h3 class="side-title">母系</h3>
-        
-        <div class="tier-1">
-            {{ render_block(3, 1, '母') }}
-        </div>
+        <!-- 母系セクション -->
+        <section id="dam-side" class="pedigree-section dam-side">
+            <div class="pedigree-header">
+                <div class="header-link-box">
+                    <a href="javascript:void(0)" onclick="document.getElementById('sire-side').scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'start'})" class="scroll-link">←父系へ</a>
+                </div>
+                <h3 class="side-title">母系</h3>
+                <div class="header-spacer"></div>
+            </div>
+            
+            <div class="tier-1">
+                {{ render_block(3, 1, '母') }}
+            </div>
         
         <div class="tier-2">
             <div class="tier-2-item">{{ render_block(6, 2, '母の父') }}</div>
