@@ -13,7 +13,7 @@ section {
     background: white;
     padding: 10px;
     border-radius: 10px;
-    margin-bottom: 20px;
+    margin-bottom: 10px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 table {
@@ -581,8 +581,7 @@ td.col-num{
 .pedigree-cell {
     text-align: center;
     vertical-align: middle; 
-    border: 1px solid #ccc; 
-    padding: 6px;
+    border: 1px solid #ccc;
     min-width: 210px;
 }
 .pedigree-cell-content {
@@ -728,18 +727,15 @@ td.col-num{
     overflow-x: auto;        /* 横スクロールを許可 */
     scroll-snap-type: x mandatory; /* スクロール時にセクション単位でピタッと止める */
     scroll-behavior: smooth; /* スムーズスクロールを有効化 */
-    padding-bottom: 15px;    /* スクロールバー用の余白 */
     -webkit-overflow-scrolling: touch;
 }
 
 .pedigree-section {
-    flex: 0 0 100%;          /* 1つのセクションで表示幅を100%占有させる */
     box-sizing: border-box;
     scroll-snap-align: start; /* スナップ位置をセクションの先頭に合わせる */
     background: #fff;
     border: 2px solid #ddd;
     border-radius: 8px;
-    padding: 15px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.05);
 }
 
@@ -909,7 +905,6 @@ td.col-num{
 }
 .tier-2-item .tier-block {
     min-width: 18em;
-    width: 100%; /* 下のテーブル幅と揃えるために親要素に対して100%にする */
     border: 1px solid #c0c0c0;
     border-radius: 4px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
