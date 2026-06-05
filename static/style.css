@@ -886,10 +886,12 @@ td.col-num{
     margin-bottom: 15px;
 }
 .tier-1 .tier-block {
-    min-width: 210px;
+    min-width: 18em;
+    width: max-content;
     border: 1px solid #c0c0c0;
     border-radius: 4px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+    box-sizing: border-box;
 }
 
 /* 2段目 (Tier 2) */
@@ -901,9 +903,17 @@ td.col-num{
 }
 .tier-2-item {
     flex: 1;
+    display: flex;
+    justify-content: flex-start;
+    min-width: 0; /* 追加: フレックスアイテムが中身によって意図せず広がるのを防ぐ */
+}
+.tier-2-item .tier-block {
+    min-width: 18em;
+    width: 100%; /* 下のテーブル幅と揃えるために親要素に対して100%にする */
     border: 1px solid #c0c0c0;
     border-radius: 4px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+    box-sizing: border-box;
 }
 
 /* 3段目以降のテーブル群 (Tier 3) */
@@ -912,19 +922,18 @@ td.col-num{
     justify-content: space-between;
     gap: 15px;
 }
-
 .tier-3-sub {
     flex: 1;
-    overflow-x: auto; /* スマホ等ではみ出た場合のみスクロール */
+    min-width: 0; /* 追加: 上の2代目の幅に強制的に同調させる魔法の指定 */
+    overflow-x: auto; /* 枠（2代目の幅）を越えたらスクロールさせる */
 }
-
 .sub-pedigree-table {
-    width: 100%;
+    width: max-content;    /* 変更: テーブルの中身が折り返されず本来の幅を保つ */
+    min-width: 100%;       /* 追加: 2代前の幅より中身が小さい場合はピッタリ合わせる */
     border-collapse: collapse;
-    table-layout: fixed;
-    margin: 0; /* デフォルトマージンをリセット */
+    table-layout: auto;
+    margin: 0;
 }
-
 .sub-pedigree-table td.pedigree-cell {
     border: 1px solid #ccc;
     padding: 0;
@@ -1126,36 +1135,58 @@ td.col-num{
     width: 100%;
     margin-top: 10px;
 }
-
-/* --- [修正] 1段目と2段目の馬ブロックのスタイルを共通化し、幅を最適化 --- */
+/* 1段目・2段目のブロック (18em以上確保) */
 .tier-1 .tier-block,
 .tier-2-item .tier-block {
-    min-width: 210px;
-    width: max-content; /* 文字数に応じた幅にする */
+    min-width: 18em;
+    width: 100%;
     border: 1px solid #c0c0c0;
     border-radius: 4px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     box-sizing: border-box;
 }
+.tier-1 .tier-block {
+    width: max-content; /* 1代目は中央配置のため中身に合わせる */
+}
 
-/* --- [修正] 2段目（祖父母）のコンテナ調整 --- */
+/* 2段目 (gap 15pxで並べる) */
 .tier-2 {
     display: flex;
     justify-content: space-between;
-    gap: 15px;
+    gap: 15px; 
     margin-bottom: 15px;
 }
 .tier-2-item {
-    flex: 1; /* 3代目の系統ごとの領域幅と同期させる */
-    /* 不要になった独自の border, border-radius, box-shadow は削除 */
+    flex: 1;
+    min-width: 0; /* 重要：中身の拡張を防ぐ */
     display: flex;
-    justify-content: flex-start; /* 下のテーブルの開始位置（左端）に綺麗に揃える */
+    justify-content: flex-start;
 }
 
-/* --- [修正] 3段目以降のテーブルの自動幅化（引き伸ばしを解除） --- */
+/* 3段目以降のコンテナ (2段目と同じgap 15pxで幅を完全に揃える) */
+.tier-3-container {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px; 
+}
+.tier-3-sub {
+    flex: 1;
+    min-width: 0; /* 重要：2代目と同じ幅に強制 */
+    overflow-x: auto; /* はみ出した分をスクロール */
+    padding-bottom: 10px; /* スクロールバー用の余白 */
+}
+
+/* 3段目以降のテーブル本体 */
 .sub-pedigree-table {
-    width: auto;           /* 100% から auto に変更 */
+    width: max-content; /* 縮ませず本来の幅を保つ */
+    min-width: 100%;    /* 2代前の幅に満たない場合は広げる */
     border-collapse: collapse;
-    table-layout: auto;    /* fixed から auto に変更して、中身の幅に合わせる */
+    table-layout: auto;
     margin: 0;
+}
+
+/* 原因の修正：3段目以降のセルの幅が強制的に210pxになるのを防ぐ */
+.sub-pedigree-table td.pedigree-cell {
+    min-width: 8em; /* 3代前以降のセルは小さくする（適宜調整してください） */
+    padding: 4px;
 }
