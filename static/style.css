@@ -723,9 +723,8 @@ td.col-num{
 .layered-pedigree {
     display: flex;
     flex-direction: row;     /* column から row (横並び) に変更 */
-    gap: 25px;
+    gap: 10px;
     overflow-x: auto;        /* 横スクロールを許可 */
-    scroll-snap-type: x mandatory; /* スクロール時にセクション単位でピタッと止める */
     scroll-behavior: smooth; /* スムーズスクロールを有効化 */
     -webkit-overflow-scrolling: touch;
 }
