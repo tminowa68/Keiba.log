@@ -740,11 +740,10 @@ td.col-num{
 
 /* --- 新しく追加するスタイル --- */
 .pedigree-header {
-    display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 2px solid #eee;
-    margin-bottom: 15px;
+    margin-bottom: 5px;
     padding-bottom: 5px;
 }
 
@@ -844,10 +843,10 @@ td.col-num{
 
 /* 2代前 (Tier 2: 祖父母) - 少し小さく、通常文字 */
 .tier-2 .horse-name {
-    font-size: 14px;
+    font-size: 12px;
 }
 .tier-2 .horse-meta {
-    font-size: 11px;
+    font-size: 10px;
 }
 
 /* 3代前以降のテーブル (Tier 3+) - さらに小さく、通常文字 */
@@ -878,7 +877,7 @@ td.col-num{
 .tier-1 {
     display: flex;
     justify-content: center;
-    margin-bottom: 15px;
+    margin-bottom: 5px;
 }
 .tier-1 .tier-block {
     min-width: 18em;
@@ -893,8 +892,8 @@ td.col-num{
 .tier-2 {
     display: flex;
     justify-content: space-between;
-    gap: 15px;
-    margin-bottom: 15px;
+    gap: 10px;
+    margin-bottom: 5px;
 }
 .tier-2-item {
     flex: 1;
@@ -919,6 +918,7 @@ td.col-num{
 .tier-3-sub {
     flex: 1;
     min-width: 0; /* 追加: 上の2代目の幅に強制的に同調させる魔法の指定 */
+    width: 50px;
     overflow-x: auto; /* 枠（2代目の幅）を越えたらスクロールさせる */
 }
 .sub-pedigree-table {
