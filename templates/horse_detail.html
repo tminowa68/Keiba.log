@@ -50,10 +50,10 @@
                         <img src="{{ url_for('static', filename='images/JPN.png') }}" class="country-flag" alt="日本">
                     {% elif node.birthplace_detail %}
                         {% set flag_map = {
-                            'アメリカ': 'USA', 'カナダ': 'CAN', 'イギリス': 'GB', 'アイルランド': 'IRE',
-                            'フランス': 'FR', 'ドイツ': 'GER', 'イタリア': 'ITR', 'オーストラリア': 'AUS',
-                            'ニュージーランド': 'NZ', 'アルゼンチン': 'ARG', 'チリ': 'CHI',
-                            'ブラジル': 'BRZ', '南アフリカ': 'SAF'
+                            'アメリカ': 'USA', 'カナダ': 'CAN', 
+                            'イギリス': 'GB', 'アイルランド': 'IRE','フランス': 'FR', 'ドイツ': 'GER', 'イタリア': 'ITR', 
+                            'オーストラリア': 'AUS','ニュージーランド': 'NZ', 
+                            'アルゼンチン': 'ARG', 'チリ': 'CHI', 'ブラジル': 'BRZ', 'ウルグアイ': 'URU', '南アフリカ': 'SAF'
                         } %}
                         {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
                         <img src="{{ url_for('static', filename='images/' ~ filename_base ~ '.png') }}" class="country-flag" alt="{{ node.birthplace_detail }}">

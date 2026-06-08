@@ -310,14 +310,16 @@ const locationData = {
     "熊本県": [],
     "海外": [
         "アメリカ", "カナダ", 
-        "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア",
+        "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", 
         "オーストラリア", "ニュージーランド", 
-        "アルゼンチン", "チリ", "ブラジル", "南アフリカ"
+        "アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "南アフリカ"
     ]
 };
 
 // 【南半球産リスト】ここに指定された地域が選ばれた時、7〜12月表示に切り替わります
-const southernHemisphereDetails = ["オーストラリア", "ニュージーランド", "アルゼンチン", "チリ", "ブラジル", "南アフリカ"];
+const southernHemisphereDetails = [
+    "オーストラリア", "ニュージーランド", "アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "南アフリカ"
+];
 
 function initBirthplaceFields(monthSelectId, hasEmptyOption) {
     const regionSelect = document.getElementById('region_select');
