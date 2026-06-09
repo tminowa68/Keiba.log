@@ -540,13 +540,22 @@ document.addEventListener("DOMContentLoaded", function() {
 
         if (validOccurrences.length > 1) {
             let totalPct = 0;
-            let genStrings = [];
+            let genData = []; // M/Fと代数をセットで保持するための配列
             let cells = [];
 
             validOccurrences.forEach(idx => {
                 let node = nodes[idx];
                 totalPct += 100 / Math.pow(2, node.gen);
-                genStrings.push(node.gen);
+                
+                // --- 追加: 祖先が父系(2)か母系(3)かを判定 ---
+                let rootIdx = idx;
+                while (rootIdx > 3) {
+                    rootIdx = Math.floor(rootIdx / 2);
+                }
+                let prefix = (rootIdx === 2) ? 'M' : 'F';
+                // ---------------------------------------------
+                
+                genData.push({ gen: node.gen, label: prefix + node.gen });
                 cells.push(node.cell);
             });
 
@@ -555,13 +564,17 @@ document.addEventListener("DOMContentLoaded", function() {
             confirmedInbreedOccurrences.push(...validOccurrences);
 
             let formattedPct = Number.isInteger(totalPct) ? totalPct : parseFloat(totalPct.toFixed(3));
-            genStrings.sort((a, b) => a - b);
+            
+            // 代数(gen)が浅い順にソートして文字列を結合
+            genData.sort((a, b) => a.gen - b.gen);
+            let genString = genData.map(item => item.label).join(' × ');
+            
             let displayNames = Array.from(group.names).join('、');
 
             inbreedsResult.push({
                 displayNames: displayNames,
                 pct: formattedPct,
-                genString: genStrings.join(' × '),
+                genString: genString, // 結合した文字列（例: M4 × F5）をセット
                 cells: cells
             });
         }
