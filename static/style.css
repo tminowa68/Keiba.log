@@ -580,8 +580,7 @@ td.col-num{
 /* --- horse_detail 用スタイル --- */
 .pedigree-cell {
     text-align: center;
-    vertical-align: middle; 
-    border: 1px solid #ccc;
+    vertical-align: middle;
     min-width: 210px;
 }
 .pedigree-cell-content {
@@ -917,21 +916,26 @@ td.col-num{
 }
 .tier-3-sub {
     flex: 1;
-    min-width: 0; /* 追加: 上の2代目の幅に強制的に同調させる魔法の指定 */
+    min-width: 0;
     width: 50px;
-    overflow-x: auto; /* 枠（2代目の幅）を越えたらスクロールさせる */
+    overflow-x: auto;
 }
 .sub-pedigree-table {
-    width: max-content;    /* 変更: テーブルの中身が折り返されず本来の幅を保つ */
-    min-width: 100%;       /* 追加: 2代前の幅より中身が小さい場合はピッタリ合わせる */
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     table-layout: auto;
     margin: 0;
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
 }
 .sub-pedigree-table td.pedigree-cell {
     border: 1px solid #ccc;
     padding: 0;
     vertical-align: middle;
+}
+.sub-pedigree-table tr:nth-child(5) td {
+    border-top: 2px solid #c0c0c0;
 }
 
 /* レース登録フォームのセクション枠 */
@@ -1134,7 +1138,7 @@ td.col-num{
 .tier-2-item .tier-block {
     min-width: 18em;
     width: 100%;
-    border: 1px solid #c0c0c0;
+    border: 2px solid #c0c0c0;
     border-radius: 4px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     box-sizing: border-box;
@@ -1168,6 +1172,8 @@ td.col-num{
     min-width: 0; /* 重要：2代目と同じ幅に強制 */
     overflow-x: auto; /* はみ出した分をスクロール */
     padding-bottom: 10px; /* スクロールバー用の余白 */
+    border: 2px solid #c0c0c0;
+    border-radius: 4px;
 }
 
 /* 3段目以降のテーブル本体 */
@@ -1179,7 +1185,6 @@ td.col-num{
     margin: 0;
 }
 
-/* 原因の修正：3段目以降のセルの幅が強制的に210pxになるのを防ぐ */
 .sub-pedigree-table td.pedigree-cell {
     min-width: 8em; /* 3代前以降のセルは小さくする（適宜調整してください） */
     padding: 4px;
