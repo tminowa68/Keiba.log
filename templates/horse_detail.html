@@ -128,7 +128,7 @@
         <section id="sire-side" class="pedigree-section sire-side">
             <div class="pedigree-header">
                 <div class="header-spacer"></div>
-                <h3 class="side-title">父系</h3>
+                <h3 class="side-title">父系 (M)</h3>
             </div>
             
             <div class="tier-1">
@@ -173,7 +173,7 @@
         <!-- 母系セクション -->
         <section id="dam-side" class="pedigree-section dam-side">
             <div class="pedigree-header">
-                <h3 class="side-title">母系</h3>
+                <h3 class="side-title">母系 (F)</h3>
                 <div class="header-spacer"></div>
             </div>
             
@@ -547,15 +547,17 @@ document.addEventListener("DOMContentLoaded", function() {
                 let node = nodes[idx];
                 totalPct += 100 / Math.pow(2, node.gen);
                 
-                // --- 追加: 祖先が父系(2)か母系(3)かを判定 ---
                 let rootIdx = idx;
                 while (rootIdx > 3) {
                     rootIdx = Math.floor(rootIdx / 2);
                 }
                 let prefix = (rootIdx === 2) ? 'M' : 'F';
+                
+                let colorCode = (prefix === 'M') ? '#1E88E5' : '#E53935';
+                let coloredLabel = `<span style="color:${colorCode};">${prefix}${node.gen}</span>`;
                 // ---------------------------------------------
                 
-                genData.push({ gen: node.gen, label: prefix + node.gen });
+                genData.push({ gen: node.gen, label: coloredLabel });
                 cells.push(node.cell);
             });
 
@@ -569,7 +571,11 @@ document.addEventListener("DOMContentLoaded", function() {
             genData.sort((a, b) => a.gen - b.gen);
             let genString = genData.map(item => item.label).join(' × ');
             
-            let displayNames = Array.from(group.names).join('、');
+            // 血統表のインデックスが奇数なら牝馬
+            let isFemale = group.occurrences[0] % 2 !== 0; 
+            let femalePrefix = isFemale ? '（牝）' : '';
+            
+            let displayNames = femalePrefix + Array.from(group.names).join('、');
 
             inbreedsResult.push({
                 displayNames: displayNames,
