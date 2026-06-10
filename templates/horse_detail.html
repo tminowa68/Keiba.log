@@ -30,9 +30,21 @@
         {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
     {% endif %}
     </p>
-    <p><strong>厩舎：</strong>
-        {{ horse[5] }}・{{ horse[6] }}
-    </p>
+
+    <div class="stable-info-container">
+        <p><strong>厩舎：</strong>
+            <span id="current-stable-display">{{ horse[5] }}・{{ horse[6] }}</span>
+        </p>
+        <div class="stable-actions">
+        {% if changes_history|length > 0 %}
+            <a href="javascript:void(0)" onclick="openHistoryModal()" class="action-link">[ 転厩履歴 ]</a>
+        {% endif %}
+        {% if session.get('login') %}
+            <a href="javascript:void(0)" onclick="openTransferModal()" class="action-link">[ 転厩 ]</a>
+        {% endif %}
+        </div>
+    </div>
+
     <p><strong>産地：</strong> 
         {% if horse|length > 8 and horse[8] %}{{ horse[8] }}{% endif %}
         {% if horse|length > 9 and horse[9] %}・{{ horse[9] }}{% endif %}
@@ -743,5 +755,225 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     });
 });
+
+function openHistoryModal() {
+    document.getElementById('historyModal').style.display = 'block';
+}
+function closeHistoryModal() {
+    document.getElementById('historyModal').style.display = 'none';
+}
+
+function openTransferModal() {
+    document.getElementById('transferModal').style.display = 'block';
+    const activeKanaBtn = document.querySelector('#transferModal .reg-kana.active');
+    updateTransferStableDropdown('', activeKanaBtn);
+}
+function closeTransferModal() {
+    document.getElementById('transferModal').style.display = 'none';
+}
+
+// --- 転厩用厩舎フィルター処理 ---
+const allStablesTransfer = {{ stables | tojson | safe }};
+let currentTransferArea = '全';
+let currentTransferKana = '';
+
+const rowMapTransfer = {
+    'あ': ['あ', 'い', 'う', 'え', 'お'],
+    'か': ['か', 'き', 'く', 'け', 'こ', 'が', 'ぎ', 'ぐ', 'げ', 'ご'],
+    'さ': ['さ', 'し', 'す', 'せ', 'そ', 'ざ', 'じ', 'ず', 'ぜ', 'ぞ'],
+    'た': ['た', 'ち', 'つ', 'て', 'と', 'だ', 'ぢ', 'づ', 'で', 'ど'],
+    'な': ['な', 'に', 'ぬ', 'ね', 'の'],
+    'は': ['は', 'ひ', 'ふ', 'へ', 'ほ', 'ば', 'び', 'ぶ', 'べ', 'ぼ', 'ぱ', 'ぴ', 'ぷ', 'ぺ', 'ぽ'],
+    'ま': ['ま', 'み', 'む', 'め', 'も'],
+    'や': ['や', 'ゆ', 'よ'],
+    'ら': ['ら', 'り', 'る', 'れ', 'ろ'],
+    'わ': ['わ', 'を', 'ん']
+};
+
+function updateTransferAreaFilter(area, btn) {
+    document.querySelectorAll('#transferModal .area-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTransferArea = area;
+    
+    const activeKanaBtn = document.querySelector('#transferModal .reg-kana.active');
+    updateTransferStableDropdown(currentTransferKana, activeKanaBtn);
+}
+
+function updateTransferStableDropdown(char, btn, isSubChar = false) {
+    if (!isSubChar) {
+        document.querySelectorAll('#transferModal .reg-kana').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        currentTransferKana = char;
+    } else {
+        document.querySelectorAll('#transferModal .sub-kana-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    }
+
+    const select = document.getElementById('transfer_stable_select');
+    const subContainer = document.getElementById('transfer_sub_kana_container');
+    if (!select) return;
+
+    if (!isSubChar) {
+        subContainer.innerHTML = '';
+        if (char && rowMapTransfer[char]) {
+            createTransferSubButtons(char);
+            subContainer.style.display = 'flex';
+        } else {
+            subContainer.style.display = 'none';
+        }
+    }
+
+    const regex = isSubChar ? new RegExp('^' + char) : getTransferRowRegex(char);
+    select.innerHTML = '<option value="">厩舎を選択してください</option>';
+
+    const filtered = allStablesTransfer
+        .filter(s => currentTransferArea === '全' || s.area === currentTransferArea)
+        .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .filter(s => s.capacity !== '技術調教師')
+        .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
+
+    filtered.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.display_name;
+        opt.textContent = s.display_name;
+        select.appendChild(opt);
+    });
+}
+
+function createTransferSubButtons(rowChar) {
+    const subContainer = document.getElementById('transfer_sub_kana_container');
+    const charsInRow = rowMapTransfer[rowChar];
+    
+    const allBtn = document.createElement('span');
+    allBtn.className = 'kana-btn sub-kana-btn active';
+    allBtn.textContent = '全';
+    allBtn.onclick = function() {
+        updateTransferStableDropdown(rowChar, this, false);
+    };
+    subContainer.appendChild(allBtn);
+
+    charsInRow.forEach(c => {
+        const hasData = allStablesTransfer.some(s => s.kana && s.kana.startsWith(c));
+        if (hasData) {
+            const btn = document.createElement('span');
+            btn.className = 'kana-btn sub-kana-btn';
+            btn.textContent = c;
+            btn.onclick = function() {
+                updateTransferStableDropdown(c, this, true);
+            };
+            subContainer.appendChild(btn);
+        }
+    });
+}
+
+function getTransferRowRegex(char) {
+    const kanaMap = {
+        'あ': /^[あ-お]/, 'か': /^[か-こが-ご]/, 'さ': /^[さ-そざ-ぞ]/,
+        'た': /^[た-とだ-ど]/, 'な': /^[な-の]/, 'は': /^[は-ほば-ぼぱ-ぽ]/,
+        'ま': /^[ま-も]/, 'や': /^[や-よ]/, 'ら': /^[ら-ろ]/, 'わ': /^[わをん]/
+    };
+    return kanaMap[char] || /.*/;
+}
+
+function splitTransferStableValue(selectElement) {
+    const fullValue = selectElement.value;
+    const areaInput = document.getElementById('transfer_hidden_area');
+    const stableNameInput = document.getElementById('transfer_hidden_stable_name');
+
+    if (fullValue && fullValue.includes('・')) {
+        const parts = fullValue.split('・');
+        areaInput.value = parts[0];
+        stableNameInput.value = parts[1];
+    } else {
+        areaInput.value = "";
+        stableNameInput.value = "";
+    }
+}
 </script>
+
+<div id="historyModal" class="custom-modal-overlay">
+    <div class="custom-modal-content">
+        <div class="custom-modal-header">転厩履歴</div>
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>年月日</th>
+                    <th>旧厩舎</th>
+                    <th>新厩舎</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for change in changes_history %}
+                <tr>
+                    <td>{{ change['年月日'] }}</td>
+                    <td>{{ change['旧'] }}</td>
+                    <td>{{ change['新'] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <button type="button" onclick="closeHistoryModal()" class="btn-close-modal" style="margin-top:0;">閉じる</button>
+    </div>
+</div>
+
+{% if session.get('login') %}
+<div id="transferModal" class="custom-modal-overlay">
+    <div class="custom-modal-content">
+        <div class="custom-modal-header">転厩情報の入力</div>
+        <form method="POST" action="/transfer_stable" autocomplete="off">
+            <input type="hidden" name="horse_name" value="{{ horse[0] }}">
+            
+            <div class="form-group">
+                <label>年月日 (任意)</label>
+                <div class="transfer-date-group">
+                    <input type="number" name="t_year" placeholder="年"> 年
+                    <select name="t_month">
+                        <option value=""></option>
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select> 月
+                    <select name="t_day">
+                        <option value=""></option>
+                        {% for d in range(1, 32) %}
+                        <option value="{{ d }}">{{ d }}</option>
+                        {% endfor %}
+                    </select> 日
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>新厩舎 (必須)</label>
+                <div class="select-stables" style="margin-bottom: 0;">
+                    <p style="margin-bottom: 5px;">絞り込み：
+                        <span class="kana-btn area-btn active" onclick="updateTransferAreaFilter('全', this)">全</span>
+                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('美浦', this)">美浦</span>
+                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('栗東', this)">栗東</span>
+                    </p>
+                    <div class="kana-buttons">
+                        {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
+                        <span class="kana-btn reg-kana" onclick="updateTransferStableDropdown('{{ char }}', this)">{{ char }}</span>
+                        {% endfor %}
+                        <span class="kana-btn reg-kana active" onclick="updateTransferStableDropdown('', this)">全</span>
+                    </div>
+                    <div id="transfer_sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
+                    </div>
+                    <select id="transfer_stable_select" class="transfer-select" required onchange="splitTransferStableValue(this)">
+                        <option value="">厩舎を選択してください</option>
+                    </select>
+                    
+                    <input type="hidden" name="area" id="transfer_hidden_area" required>
+                    <input type="hidden" name="stable_name" id="transfer_hidden_stable_name" required>
+                </div>
+            </div>
+
+            <div class="modal-btn-group">
+                <button type="submit" class="btn-submit-entry">登録</button>
+                <button type="button" onclick="closeTransferModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {% endblock %}
