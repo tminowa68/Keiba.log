@@ -88,16 +88,22 @@ def login_required(f):
 # 初期設定 (スプレッドシート)
 # ==============================================================================
 try:
-    gc.open(horse_data)
+    sh = gc.open(horse_data)
 except gspread.SpreadsheetNotFound:
     sh = gc.create(horse_data)
     ws1 = sh.sheet1
     ws1.update_title("Horses")
-    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "母父", "所属", "厩舎"])
+    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "所属", "厩舎", "状態", "産地", "地域"]) # 既存のカラム構成に合わせる
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
     ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "馬房数"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
     ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "馬房数"])
+
+try:
+    sh.worksheet("Changes")
+except gspread.WorksheetNotFound:
+    ws_changes = sh.add_worksheet(title="Changes", rows=100, cols=10)
+    ws_changes.append_row(["年月日", "馬名", "項目", "旧", "新"])
 
 # ==============================================================================
 # 共通ヘルパー関数群
@@ -877,6 +883,57 @@ def update_specific_parent():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.route('/transfer_stable', methods=['POST'])
+@login_required
+def transfer_stable():
+    horse_name = request.form.get('horse_name')
+    new_area = request.form.get('area')
+    new_stable_name = request.form.get('stable_name')
+    
+    t_year = request.form.get('t_year')
+    t_month = request.form.get('t_month')
+    t_day = request.form.get('t_day')
+    
+    # 年月日を結合（入力がない場合は空欄にする）
+    date_str = ""
+    if t_year or t_month or t_day:
+        date_str = f"{t_year or ''}/{t_month or ''}/{t_day or ''}".strip('/')
+        
+    try:
+        sh = gc.open(horse_data)
+        ws_horses = sh.worksheet("Horses")
+        horses_data = ws_horses.get_all_values()
+        
+        old_area = ""
+        old_stable = ""
+        target_idx = -1
+        
+        # 該当馬を検索し、行番号と旧厩舎情報を取得
+        for i, row in enumerate(horses_data):
+            if len(row) > 0 and row[0] == horse_name:
+                target_idx = i + 1
+                old_area = row[5] if len(row) > 5 else ""
+                old_stable = row[6] if len(row) > 6 else ""
+                break
+                
+        if target_idx != -1:
+            # Horsesシートの更新 (F列=拠点, G列=厩舎)
+            ws_horses.update(f'F{target_idx}:G{target_idx}', [[new_area, new_stable_name]])
+            
+            # Changesシートに記録
+            ws_changes = sh.worksheet("Changes")
+            old_full = f"{old_area}・{old_stable}" if old_area else old_stable
+            new_full = f"{new_area}・{new_stable_name}"
+            ws_changes.append_row([date_str, horse_name, "転厩", old_full, new_full])
+            
+            flash(f"『{horse_name}』の転厩処理が完了しました。")
+        else:
+            flash("対象の馬が見つかりませんでした。")
+    except Exception as e:
+        flash(f"エラーが発生しました: {e}")
+        
+    return redirect(url_for('horse_detail', name=horse_name))
+
 @app.route('/horse/<name>')
 def horse_detail(name):
     all_horses = get_all_horses()
@@ -960,6 +1017,17 @@ def horse_detail(name):
     except Exception as e:
         print(f"データベースの読み込みエラー: {e}")
 
+    changes_history = []
+    try:
+        sh = gc.open(horse_data)
+        ws_changes = sh.worksheet("Changes")
+        records = ws_changes.get_all_records()
+        for r in records:
+            if str(r.get("馬名", "")) == name and str(r.get("項目", "")) == "転厩":
+                changes_history.append(r)
+    except Exception:
+        pass
+
     sire_info, dam_info = {"line1": "不明", "line2": "不明"}, {"line3": "不明", "line4": "不明"}
     try:
         sh = gc.open(horse_data)
@@ -1005,7 +1073,9 @@ def horse_detail(name):
                            sire_info=sire_info, 
                            dam_info=dam_info, 
                            current_year=datetime.now().year,
-                           pedigree=pedigree_data
+                           pedigree=pedigree_data,
+                           changes_history=changes_history,
+                           stables=get_stables_list()
                            )
 
 @app.route('/edit_horse/<name>')
