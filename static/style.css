@@ -1189,3 +1189,114 @@ td.col-num{
     min-width: 8em; /* 3代前以降のセルは小さくする（適宜調整してください） */
     padding: 4px;
 }
+
+/* --- 厩舎・転厩関連のスタイル --- */
+.stable-info-container {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 10px;
+}
+.stable-info-container p {
+    margin: 0;
+}
+.stable-actions {
+    display: flex;
+    gap: 8px;
+}
+.action-link {
+    font-size: 0.85em;
+    color: #007bff;
+    text-decoration: none;
+    border: 1px solid #007bff;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: #fff;
+    transition: background-color 0.2s, color 0.2s;
+}
+.action-link:hover {
+    background: #007bff;
+    color: #fff;
+}
+
+/* --- 汎用・拡張モーダルのスタイル --- */
+.custom-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 1050;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+.custom-modal-content {
+    background-color: #fff;
+    margin: 5% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    max-height: 85vh;
+    overflow-y: auto;
+}
+.custom-modal-header {
+    border-bottom: 2px solid #4CAF50;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #333;
+}
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+.history-table th, .history-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    font-size: 0.9em;
+}
+.history-table th {
+    background: #f4f4f4;
+    color: #333;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* 転厩入力フォームの調整 */
+.transfer-select {
+    margin-top: 10px;
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+}
+.transfer-date-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.transfer-date-group input, 
+.transfer-date-group select {
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+.transfer-date-group input {
+    width: 70px;
+}
+.transfer-date-group select {
+    width: 60px;
+}
+.modal-btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+.modal-btn-group button {
+    flex: 1;
+}
