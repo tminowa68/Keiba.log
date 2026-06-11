@@ -15,6 +15,14 @@
             <label>馬名：</label>
             <input type="text" name="name" placeholder="馬名" required style="width: 140px; padding:8px; margin-top:5px;">
         </div>
+
+        <div style="margin-bottom:15px;">
+            <label>血統：</label><br>
+            <input type="text" name="sire" placeholder="父" style="width:140px; padding:8px;">
+            ×
+            <input type="text" name="dam" placeholder="母" style="width:140px; padding:8px;">
+        </div>
+
         <div style="margin-bottom: 15px;">
             <label>性別：</label>
             <select name="gender" id="gender_select" onchange="updateGenderColor(this)" required>
@@ -37,23 +45,8 @@
                 <option value="{{ d }}">{{ d }}</option>
                 {% endfor %}
             </select> 日
-            <br>
-            <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
-                <label>産地：</label>
-                <select name="birthplace_region" id="region_select" value="" style="padding:6px;">
-                </select>
-                <select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
-                </select>
-            </div>
         </div>
-
-        <div style="margin-bottom:15px;">
-            <label>血統：</label><br>
-            <input type="text" name="sire" placeholder="父" style="width:140px; padding:8px;">
-            ×
-            <input type="text" name="dam" placeholder="母" style="width:140px; padding:8px;">
-        </div>
-        
+            
         <div class="select-stables">
             <p>厩舎絞り込み：
                 <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
@@ -75,6 +68,16 @@
 
             <input type="hidden" name="area" id="hidden_area">
             <input type="hidden" name="stable_name" id="hidden_stable_name">
+        </div>
+
+        <div>
+            <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+                <label>産地：</label>
+                <select name="birthplace_region" id="region_select" value="" style="padding:6px;">
+                </select>
+                <select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
+                </select>
+            </div>
         </div>
 
         <div style="margin-top:20px; display:flex; gap:10px;">

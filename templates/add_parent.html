@@ -19,6 +19,13 @@
         <input type="hidden" name="p_name" value="{{ p_name }}">
     </div>
 
+    <div style="margin-bottom:15px;">
+        <label>血統：</label><br>
+        <input type="text" name="sire" value="{{ data.sire }}" placeholder="父" style="width:140px; padding:8px;">
+        ×
+        <input type="text" name="dam" value="{{ data.dam }}" placeholder="母" style="width:140px; padding:8px;">
+    </div>
+
     <div style="margin-bottom: 15px;">
         <label>生年月日：</label>
         <input type="number" name="year" value="{{ data.year if data else '' }}" oninput="if(value.length > 4) value = value.slice(0, 4);" style="width:50px; padding:8px;" required>年
@@ -40,7 +47,9 @@
             <option value="{{ d }}" {% if data and d == data.day|int %}selected{% endif %}>{{ d }}</option>
             {% endfor %}
         </select> 日
-        <br>
+    </div>
+    
+    <div>
         <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
             <label>産地：</label>
             <select name="birthplace_region" id="parent_region_select" value="" style="padding:6px;">
@@ -49,13 +58,6 @@
             </select>
         </div>
     </div>
-
-    <div style="margin-bottom:15px;">
-            <label>血統：</label><br>
-            <input type="text" name="sire" value="{{ data.sire }}" placeholder="父" style="width:140px; padding:8px;">
-            ×
-            <input type="text" name="dam" value="{{ data.dam }}" placeholder="母" style="width:140px; padding:8px;">
-        </div>
 
     <div style="margin-top: 20px;">
         <button type="submit" class="btn-save">登録する</button>
