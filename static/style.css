@@ -1136,7 +1136,7 @@ td.col-num{
 /* 1段目・2段目のブロック (18em以上確保) */
 .tier-1 .tier-block,
 .tier-2-item .tier-block {
-    min-width: 18em;
+    min-width: 15em;
     width: 100%;
     border: 2px solid #c0c0c0;
     border-radius: 4px;
