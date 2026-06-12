@@ -1300,3 +1300,56 @@ td.col-num{
 .modal-btn-group button {
     flex: 1;
 }
+
+/* --- 入れ替えUI用スタイル --- */
+.swap-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    margin-bottom: 15px;
+}
+.swap-group label {
+    align-self: flex-start;
+    font-size: 0.9em;
+    color: #555;
+    margin-bottom: 5px;
+}
+.swap-icon {
+    font-size: 1.5em;
+    color: #007bff;
+    cursor: pointer;
+    margin: 10px 0;
+    transition: transform 0.2s;
+    user-select: none;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.swap-icon:hover {
+    transform: scale(1.1);
+    background: #e9ecef;
+}
+
+.owner-info-container {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 10px;
+}
+.owner-info-container p {
+    margin: 0;
+}
+.owner-actions {
+    display: flex;
+    gap: 8px;
+}
