@@ -15,7 +15,6 @@ app.secret_key = 'your_secret_key_here' # セッション用の秘密鍵
 app.permanent_session_lifetime = timedelta(days=30)
 UsersDB= 'users.db'
 horse_data = 'Horse_Data'
-EntryDB = 'entry.db'
 
 # --- スプレッドシート認証設定 ---
 SCOPES = [
@@ -55,25 +54,6 @@ def delete_user(username):
         else:
             print(f"ユーザー {username} が見つかりませんでした。")
 
-def entry_race():
-    with sqlite3.connect(EntryDB) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS race_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                race_date TEXT NOT NULL,
-                venue TEXT NOT NULL,
-                race_num INTEGER NOT NULL,
-                horse_name TEXT NOT NULL,
-                status TEXT,
-                horse_num INTEGER,
-                rank INTEGER,
-                UNIQUE(race_date, venue, race_num, horse_name) -- 同一レースに同じ馬が重複登録されるのを防ぐ
-            )
-        """)
-        conn.commit()
-entry_race()
-
 # --- 認証用デコレータ ---
 def login_required(f):
     @wraps(f)
@@ -93,7 +73,7 @@ except gspread.SpreadsheetNotFound:
     sh = gc.create(horse_data)
     ws1 = sh.sheet1
     ws1.update_title("Horses")
-    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "所属", "厩舎", "状態", "産地", "地域"]) # 既存のカラム構成に合わせる
+    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場"])
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
     ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "馬房数"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
@@ -104,6 +84,12 @@ try:
 except gspread.WorksheetNotFound:
     ws_changes = sh.add_worksheet(title="Changes", rows=100, cols=10)
     ws_changes.append_row(["年月日", "馬名", "項目", "旧", "新"])
+
+try:
+    sh.worksheet("Entry")
+except gspread.WorksheetNotFound:
+    ws_entry = sh.add_worksheet(title="Entry", rows=100, cols=10)
+    ws_entry.append_row(["race_date", "venue", "race_num", "horse_name", "status", "horse_num", "rank"])
 
 # ==============================================================================
 # 共通ヘルパー関数群
@@ -618,30 +604,27 @@ def index():
     results = []
     for h in raw_results:
         horse = list(h)
-        
-        # --- 日付変換処理 ---
         if len(horse) > 2:
             try:
                 horse[2] = datetime.strptime(horse[2], '%Y/%m/%d')
             except (ValueError, TypeError):
-                # 変換できない（空欄など）場合は、計算でエラーにならないよう現在時刻などを入れておく
                 horse[2] = datetime.now()
-        # ------------------
-        
         results.append(horse)
 
     if stable_filter:
-        results = [h for h in results if len(h) > 6 and h[6] == stable_filter]
+        results = [h for h in results if len(h) > 7 and h[7] == stable_filter]
         
     return render_template('index.html', 
                            results=results, 
                            stables=get_stables_list(), 
                            current_year=datetime.now().year)
 
-@app.route('/add_horse_page')
+@app.route('/add_horse')
 @login_required
 def add_horse_page():
-    return render_template('add_horse.html', stables=get_stables_list(), default_year=datetime.now().year - 3)
+    return render_template('add_horse.html', 
+                           stables=get_stables_list(), 
+                           default_year=datetime.now().year - 3)
 
 @app.route('/add_horse', methods=['POST'])
 @login_required
@@ -651,28 +634,31 @@ def add_horse():
         ws = sh.worksheet("Horses")
         name = request.form.get('name')
         y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-        birth_date_str = f"{y}/{m}/{d}" # スプレッドシートには文字列で保存
+        birth_date_str = f"{y}/{m}/{d}"
 
         existing_data = ws.col_values(1)
         if name in existing_data[1:]:
             flash(f"エラー：『{name}』は既に登録されています。")
-            return redirect('/add_horse_page')
+            return redirect('/add_horse')
             
         ws.append_row([
             name,
             request.form.get('gender'),
             birth_date_str, request.form.get('sire'),
-            request.form.get('dam'), request.form.get('area'),
+            request.form.get('dam'), 
+            request.form.get('owner'),
+            request.form.get('area'),
             request.form.get('stable_name'),
             request.form.get('status'),
             request.form.get('birthplace_region'),
-            request.form.get('birthplace_detail')
+            request.form.get('birthplace_detail'),
+            request.form.get('breeder')
         ])
         sort_and_resize_table(ws, sort_col_index=0)
         return redirect(f"/horse/{name}")
     except Exception as e:
         flash(f"エラーが発生しました: {e}")
-        return redirect('/add_horse_page')
+        return redirect('/add_horse')
 
 @app.route('/add_stable', methods=['POST'])
 @login_required
@@ -698,7 +684,7 @@ def add_stable():
             
             if name in existing_names[1:]:
                 flash(f"エラー: {name}厩舎は既に{area}に登録されています。")
-                return redirect('/add_horse_page')
+                return redirect('/add_horse')
 
             sheet.append_row([
                 name,
@@ -711,7 +697,7 @@ def add_stable():
             sort_and_resize_table(sheet, sort_col_index=1)
         except Exception as e:
             flash(f"厩舎の追加に失敗しました: {e}")
-    return redirect('/add_horse_page')
+    return redirect('/add_horse')
 
 @app.route('/add_parent', methods=['GET', 'POST'])
 @login_required
@@ -724,90 +710,62 @@ def add_parent():
                 ws = sh.worksheet(p_type)
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title=p_type, rows=100, cols=10)
-                ws.append_row(["馬名", "生年月日", "父", "母", "産地", "地域"])
+                # 列構造の変更
+                ws.append_row(["馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場"])
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-            
-            # --- 生年月日の保存文字列を作成 ---
-            if y and m and d:
-                birth_date_str = f"{y}/{m}/{d}"
-            elif y:
-                birth_date_str = str(y) # 西暦のみの場合
-            else:
-                birth_date_str = ""
+            birth_date_str = f"{y}/{m}/{d}" if y and m and d else (str(y) if y else "")
 
             data = ws.get_all_values()
-            found_idx = None
-            for i, row in enumerate(data):
-                if len(row) > 0 and row[0] == p_name:
-                    found_idx = i + 1 # 1-indexed
-                    break
+            found_idx = next((i + 1 for i, row in enumerate(data) if len(row) > 0 and row[0] == p_name), None)
             
             if found_idx:
                 ws.update(
-                    f'B{found_idx}:F{found_idx}', 
+                    f'B{found_idx}:H{found_idx}', 
                     [[birth_date_str, 
                     request.form.get('sire'), 
                     request.form.get('dam'),
+                    request.form.get('owner'),
                     request.form.get('birthplace_region'),
-                    request.form.get('birthplace_detail')]]
+                    request.form.get('birthplace_detail'),
+                    request.form.get('breeder')]]
                 )
             else:
                 ws.append_row(
-                    [p_name, 
-                    birth_date_str, 
-                    request.form.get('sire'), 
-                    request.form.get('dam'),
-                    request.form.get('birthplace_region'),
-                    request.form.get('birthplace_detail')]
+                    [p_name, birth_date_str, request.form.get('sire'), request.form.get('dam'),
+                    request.form.get('owner'), request.form.get('birthplace_region'),
+                    request.form.get('birthplace_detail'), request.form.get('breeder')]
                 )
-            
             sort_and_resize_table(ws, sort_col_index=0)
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
         return redirect(f"/horse/{origin}") if origin else redirect('/')
 
-    # --- GETリクエスト時の処理 ---
+    # GET時のデータ復元
     p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
     existing_data = {
-        "year": "",
-        "month": "",
-        "day": "",
-        "sire": "",
-        "dam": "", 
-        "birthplace_region": "",
-        "birthplace_detail": ""
+        "year": "", "month": "", "day": "", "sire": "", "dam": "", 
+        "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": ""
     }
     try:
         sh = gc.open(horse_data)
         ws = sh.worksheet(p_type)
-        data = ws.get_all_values()
-        row = next((r for r in data if len(r)>0 and r[0] == p_name), None)
+        row = next((r for r in ws.get_all_values() if len(r)>0 and r[0] == p_name), None)
         if row:
-            # --- 汎用的な生年月日分解ロジック ---
             if len(row) > 1 and row[1]:
-                dob = row[1].strip()
-                # スラッシュ(/) または ハイフン(-) のいずれでも分割できるように正規表現を使用
-                parts = re.split(r'[-/]', dob)
-                if len(parts) >= 1:
-                    existing_data["year"] = parts[0].strip()
-                if len(parts) >= 2:
-                    existing_data["month"] = parts[1].strip()
-                if len(parts) >= 3:
-                    existing_data["day"] = parts[2].strip()
+                parts = re.split(r'[-/]', row[1].strip())
+                if len(parts) >= 1: existing_data["year"] = parts[0].strip()
+                if len(parts) >= 2: existing_data["month"] = parts[1].strip()
+                if len(parts) >= 3: existing_data["day"] = parts[2].strip()
                     
             if len(row) > 2: existing_data["sire"] = row[2]
             if len(row) > 3: existing_data["dam"] = row[3]
-            if len(row) > 4: existing_data["birthplace_region"] = row[4]
-            if len(row) > 5: existing_data["birthplace_detail"] = row[5]
-    except: 
-        pass
-
-    return render_template('add_parent.html', 
-                           p_type=p_type, 
-                           p_name=p_name, 
-                           origin=request.args.get('origin', ''), 
-                           data=existing_data)
+            if len(row) > 4: existing_data["owner"] = row[4]
+            if len(row) > 5: existing_data["birthplace_region"] = row[5]
+            if len(row) > 6: existing_data["birthplace_detail"] = row[6]
+            if len(row) > 7: existing_data["breeder"] = row[7]
+    except: pass
+    return render_template('add_parent.html', p_type=p_type, p_name=p_name, origin=request.args.get('origin', ''), data=existing_data)
 
 @app.route('/update_horse', methods=['POST'])
 @login_required
@@ -824,20 +782,85 @@ def update_horse():
         for i, row in enumerate(data):
             if len(row) > 0 and row[0] == request.form.get('old_name'):
                 update_values = [[
-                    new_name, request.form.get('gender'),
-                    birth_date_str,
-                    request.form.get('sire'),
-                    request.form.get('dam'),
-                    request.form.get('location'),
-                    request.form.get('stable_name'),
-                    request.form.get('birthplace_region'),
-                    request.form.get('birthplace_detail')
+                    new_name, request.form.get('gender'), birth_date_str,
+                    request.form.get('sire'), request.form.get('dam'),
+                    request.form.get('owner'), request.form.get('location'),
+                    request.form.get('stable_name'), request.form.get('status'),
+                    request.form.get('birthplace_region'), request.form.get('birthplace_detail'),
+                    request.form.get('breeder')
                 ]]
-                ws.update(f'A{i+1}:G{i+1}', update_values)
+                # 12列分更新
+                ws.update(f'A{i+1}:L{i+1}', update_values)
                 break
         return redirect(f"/horse/{new_name}")
     except Exception as e:
         return f"エラーが発生しました: {e}", 400
+    
+@app.route('/save_change', methods=['POST'])
+@login_required
+def save_change():
+    horse_name = request.form.get('horse_name')
+    change_type = request.form.get('change_type')
+    
+    t_year = request.form.get('t_year')
+    t_month = request.form.get('t_month')
+    t_day = request.form.get('t_day')
+    date_str = f"{t_year or ''}/{t_month or ''}/{t_day or ''}".strip('/') if (t_year or t_month or t_day) else ""
+        
+    old_val = request.form.get('old_val', '')
+    new_val = request.form.get('new_val', '')
+        
+    try:
+        sh = gc.open(horse_data)
+        ws_horses = sh.worksheet("Horses")
+        horses_data = ws_horses.get_all_values()
+        
+        target_idx = next((i + 1 for i, row in enumerate(horses_data) if len(row) > 0 and row[0] == horse_name), -1)
+                
+        if target_idx != -1:
+            if change_type == "転厩":
+                parts = new_val.split('・')
+                new_area = parts[0] if len(parts) > 1 else ""
+                new_stable = parts[1] if len(parts) > 1 else new_val
+                ws_horses.update(f'G{target_idx}:H{target_idx}', [[new_area, new_stable]])
+            elif change_type == "馬主変更":
+                ws_horses.update(f'F{target_idx}', [[new_val]])
+            
+            ws_changes = sh.worksheet("Changes")
+            ws_changes.append_row([date_str, horse_name, change_type, old_val, new_val])
+            
+            # ソート処理 (年月日昇順、空欄は最後、その後馬名昇順)
+            data = ws_changes.get_all_values()
+            if len(data) > 1:
+                headers = data[0]
+                rows = data[1:]
+                
+                def get_sort_key(r):
+                    d = str(r[0]).strip() if len(r) > 0 else ""
+                    name = str(r[1]).strip() if len(r) > 1 else ""
+                    if not d:
+                        d_sort = "9999/99/99"
+                    else:
+                        d_sort = d.replace('-', '/')
+                        parts = d_sort.split('/')
+                        if len(parts) == 3:
+                            try:
+                                d_sort = f"{int(parts[0]):04d}/{int(parts[1]):02d}/{int(parts[2]):02d}"
+                            except ValueError:
+                                pass
+                    return (d_sort, name)
+                    
+                rows.sort(key=get_sort_key)
+                ws_changes.clear()
+                ws_changes.update(range_name='A1', values=[headers] + rows)
+            
+            flash(f"『{horse_name}』の{change_type}処理が完了しました。")
+        else:
+            flash("対象の馬が見つかりませんでした。")
+    except Exception as e:
+        flash(f"エラーが発生しました: {e}")
+        
+    return redirect(url_for('horse_detail', name=horse_name))
 
 @app.route('/update_specific_parent', methods=['POST'])
 @login_required
@@ -944,78 +967,88 @@ def horse_detail(name):
     race_master_cache_by_year = {}
     
     try:
-        with sqlite3.connect(EntryDB) as conn:
-            conn.row_factory = sqlite3.Row 
-            cursor = conn.cursor()
+        sh = gc.open(horse_data)
+        ws_entry = sh.worksheet("Entry")
+        records = ws_entry.get_all_values()
+        
+        entry_rows = []
+        if len(records) > 1:
+            # 対象の馬のデータだけを抽出
+            for row in records[1:]:
+                if len(row) >= 4 and row[3] == name:
+                    entry_rows.append({
+                        'race_date': row[0],
+                        'venue': row[1],
+                        'race_num': int(row[2]) if row[2].isdigit() else 0,
+                        'status': row[4] if len(row) > 4 else "-",
+                        'horse_num': row[5] if len(row) > 5 else "-",
+                        'rank': row[6] if len(row) > 6 else "-"
+                    })
+        
+        # SQLiteの "ORDER BY race_date DESC, race_num DESC" と同じようにソート
+        entry_rows.sort(key=lambda x: (x['race_date'], x['race_num']), reverse=True)
+        
+        for row in entry_rows:
+            r_date = row['race_date']
+            r_venue = row['venue']
+            r_num = int(row['race_num'])
+            target_year = r_date[:4]
             
-            cursor.execute("""
-                SELECT race_date, venue, race_num, status, horse_num, rank 
-                FROM race_entries 
-                WHERE horse_name = ? 
-                ORDER BY race_date DESC, race_num DESC
-            """, (name,))
+            if target_year not in schedule_cache:
+                _, v_data_map, _, _ = get_schedule_data(target_year)
+                schedule_cache[target_year] = v_data_map
             
-            for row in cursor.fetchall():
-                r_date = row['race_date']
-                r_venue = row['venue']
-                r_num = int(row['race_num'])
-                target_year = r_date[:4]
-                
-                if target_year not in schedule_cache:
-                    _, v_data_map, _, _ = get_schedule_data(target_year)
-                    schedule_cache[target_year] = v_data_map
-                
-                v_data_map = schedule_cache[target_year]
-                
-                if target_year not in race_master_cache_by_year:
-                    race_master_data = {}
-                    try:
-                        rm_sh = gc.open(f"{target_year}_Race_Data")
-                        for sheet in rm_sh.worksheets():
-                            race_master_data[sheet.title] = sheet.get_all_values()
-                    except Exception: 
-                        pass
-                    race_master_cache_by_year[target_year] = race_master_data
-
-                r_name, r_condition, r_course = "-", "-", "-"
-                
-                v_info = v_data_map.get(r_date, {}).get(r_venue)
-                
-                if v_info:
-                    m_sheet_name = f"{v_info['id']}回{r_venue}"
-                    search_text = f"{v_info['id']}回{r_venue}{v_info['day']}日"
-                    
-                    if m_sheet_name in race_master_cache_by_year[target_year]:
-                        race_info_cache = get_race_info_from_sheet(
-                            race_master_cache_by_year[target_year][m_sheet_name], 
-                            search_text
-                        )
-                        if r_num in race_info_cache:
-                            r_name = race_info_cache[r_num].get('name', '-')
-                            r_condition = race_info_cache[r_num].get('condition', '-')
-                            r_course = race_info_cache[r_num].get('course', '-')
-
-                display_date = r_date
+            v_data_map = schedule_cache[target_year]
+            
+            if target_year not in race_master_cache_by_year:
+                race_master_data = {}
                 try:
-                    dt = datetime.strptime(r_date, '%Y-%m-%d')
-                    display_date = f"{dt.strftime('%Y年%m月%d日')}({['月','火','水','木','金','土','日'][dt.weekday()]})"
-                except Exception:
+                    rm_sh = gc.open(f"{target_year}_Race_Data")
+                    for sheet in rm_sh.worksheets():
+                        race_master_data[sheet.title] = sheet.get_all_values()
+                except Exception: 
                     pass
+                race_master_cache_by_year[target_year] = race_master_data
 
-                horse_races.append({
-                    'sort_date': r_date, 
-                    'date_label': display_date, 
-                    'venue': r_venue, 
-                    'num': r_num,
-                    'name': r_name,
-                    'condition': r_condition,
-                    'course': r_course,
-                    'status': row['status'] if row['status'] else "-", 
-                    'rank': row['rank'] if row['rank'] else "-"
-                })
+            r_name, r_condition, r_course = "-", "-", "-"
+            
+            v_info = v_data_map.get(r_date, {}).get(r_venue)
+            
+            if v_info:
+                m_sheet_name = f"{v_info['id']}回{r_venue}"
+                search_text = f"{v_info['id']}回{r_venue}{v_info['day']}日"
+                
+                if m_sheet_name in race_master_cache_by_year[target_year]:
+                    race_info_cache = get_race_info_from_sheet(
+                        race_master_cache_by_year[target_year][m_sheet_name], 
+                        search_text
+                    )
+                    if r_num in race_info_cache:
+                        r_name = race_info_cache[r_num].get('name', '-')
+                        r_condition = race_info_cache[r_num].get('condition', '-')
+                        r_course = race_info_cache[r_num].get('course', '-')
+
+            display_date = r_date
+            try:
+                dt = datetime.strptime(r_date, '%Y/%m/%d')
+                display_date = f"{dt.strftime('%Y年%m月%d日')}({['月','火','水','木','金','土','日'][dt.weekday()]})"
+            except Exception:
+                pass
+
+            horse_races.append({
+                'sort_date': r_date, 
+                'date_label': display_date, 
+                'venue': r_venue, 
+                'num': r_num,
+                'name': r_name,
+                'condition': r_condition,
+                'course': r_course,
+                'status': row['status'] if row['status'] else "-", 
+                'rank': row['rank'] if row['rank'] else "-"
+            })
                 
     except Exception as e:
-        print(f"データベースの読み込みエラー: {e}")
+        print(f"スプレッドシート(Entry)の読み込みエラー: {e}")
 
     changes_history = []
     try:
@@ -1023,7 +1056,8 @@ def horse_detail(name):
         ws_changes = sh.worksheet("Changes")
         records = ws_changes.get_all_records()
         for r in records:
-            if str(r.get("馬名", "")) == name and str(r.get("項目", "")) == "転厩":
+            # 該当馬の変更履歴をすべて取得（馬主変更・転厩含む）
+            if str(r.get("馬名", "")) == name:
                 changes_history.append(r)
     except Exception:
         pass
@@ -1291,26 +1325,44 @@ def save_entry():
     race_num = int(data.get('race_num'))
     horse_name = data.get('horse_name')
     entry_type = data.get('entry_type')
-    horse_num = data.get('horse_num') or None
-    horse_rank = data.get('horse_rank') or None
+    horse_num = data.get('horse_num') or ""
+    horse_rank = data.get('horse_rank') or ""
 
     status_label = {"estimated": "想定", "special": "特別", "final": "確定"}.get(entry_type, "想定")
     
-    with sqlite3.connect(EntryDB) as conn:
-        cursor = conn.cursor()
-        # すでに登録されていれば上書き（UPDATE）、なければ新規登録（INSERT）
-        cursor.execute("""
-            INSERT INTO race_entries (race_date, venue, race_num, horse_name, status, horse_num, rank)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(race_date, venue, race_num, horse_name) 
-            DO UPDATE SET 
-                status = excluded.status,
-                horse_num = excluded.horse_num,
-                rank = excluded.rank
-        """, (race_date, venue, race_num, horse_name, status_label, horse_num, horse_rank))
-        conn.commit()
+    try:
+        sh = gc.open(horse_data)
+        ws_entry = sh.worksheet("Entry")
+        records = ws_entry.get_all_values()
+        
+        found_idx = -1
+        # 重複チェック (race_date, venue, race_num, horse_name が一致する行を探す)
+        if len(records) > 1:
+            for i, row in enumerate(records[1:], start=2): # ヘッダーが1行目のため start=2
+                if len(row) >= 4:
+                    r_date = row[0]
+                    r_venue = row[1]
+                    try:
+                        r_num = int(row[2])
+                    except ValueError:
+                        r_num = 0
+                    h_name = row[3]
+                    
+                    if r_date == race_date and r_venue == venue and r_num == race_num and h_name == horse_name:
+                        found_idx = i
+                        break
 
-    return {"status": "success"}, 200
+        if found_idx != -1:
+            # 既に存在する場合はステータス、馬番、着順のみ更新
+            ws_entry.update(f'E{found_idx}:G{found_idx}', [[status_label, horse_num, horse_rank]])
+        else:
+            # 存在しない場合は新規行として追加
+            ws_entry.append_row([race_date, venue, race_num, horse_name, status_label, horse_num, horse_rank])
+
+        return {"status": "success"}, 200
+    except Exception as e:
+        print(f"Entry save error: {e}")
+        return {"status": "error", "message": str(e)}, 500
 
 @app.route('/api/available_races')
 def api_available_races():
