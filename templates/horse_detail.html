@@ -8,10 +8,6 @@
 </div>
 
 <section id="profile" class="entry-section active">
-    {% if session.get('login') %}
-    <hr>
-    <a href="/edit_horse/{{ horse[0] }}" class="btn-edit">情報を編集する</a>
-    {% endif %}
     <p>
         <strong>性別・馬齢：</strong> 
         <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
