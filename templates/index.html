@@ -27,17 +27,17 @@
             <option value="">厩舎を選択してください</option>
         </select>
 
-        <p id="stable_basic_info" style="display: none; margin-top: 5px; padding-left: 10px;">
+        <p id="stable_basic_info" style="display: none; margin: 5px; padding-left: 10px;">
             <span id="stable_age"></span>歳・<span id="stable_years"></span>
+        </p>
+
+        <p id="stable_status_info" style="margin: 5px; padding-left: 10px;">
+            所属頭数：<span id="total_horses"></span>頭、 
+            入厩頭数 / 馬房数：<span id="active_horses"></span> / <span id="stable_capacity"></span>
         </p>
     </div>
 
     <div id="tables_area">
-        <p id="stable_status_info" style="display: none; margin-bottom: 5px; font-weight: bold;">
-            所属頭数：<span id="total_horses"></span>頭、 
-            入厩頭数 / 馬房数：<span id="active_horses"></span> / <span id="stable_capacity"></span>
-        </p>
-        
         <table id="horseTable">
             <thead>
                 <tr>
@@ -52,7 +52,7 @@
             <tbody>
                 {% for horse in results %}
                 <tr>
-                    <td class="col-status">{{ horse[7] if horse|length > 7 else '在厩' }}</td>
+                    <td class="col-status">{{ horse[8] if horse|length > 8 else '在厩' }}</td>
                     <td class="col-name"><a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a></td>
                     <td class="col-gender {% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</td>
                     <td class="col-age">
@@ -61,7 +61,7 @@
                         {% else %}-{% endif %}
                     </td>
                     <td class="col-sire">{{ horse[3] }}</td>
-                    <td>{{ horse[5] }}・{{ horse[6] }}</td>
+                    <td>{{ horse[6] }}・{{ horse[7] }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -77,9 +77,9 @@ const allHorsesData = [
         gender: "{{ horse[1] }}",
         age: {% if horse[2] %}{{ current_year - horse[2].year }}{% else %}null{% endif %},
         sire: "{{ horse[3] }}",
-        stable: "{{ horse[5] }}・{{ horse[6] }}",
+        stable: "{{ horse[6] }}・{{ horse[7] }}",
         // 状態データを追加 (無い場合は仮に'在厩'とする)
-        status: "{{ horse[7] if horse|length > 7 else '在厩' }}"
+        status: "{{ horse[8] if horse|length > 8 else '在厩' }}"
     },
     {% endfor %}
 ];

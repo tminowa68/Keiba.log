@@ -8,7 +8,7 @@
 </div>
 
 <section id="profile" class="entry-section active">
-    {% if session.get('logged_in') %}
+    {% if session.get('login') %}
     <hr>
     <a href="/edit_horse/{{ horse[0] }}" class="btn-edit">情報を編集する</a>
     {% endif %}
@@ -31,13 +31,24 @@
     {% endif %}
     </p>
 
+    <div class="owner-info-container">
+        <p><strong>馬主名：</strong>
+            <span id="current-owner-display">{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}</span>
+        </p>
+        {% if session.get('login') %}
+        <div class="owner-actions">
+            <a href="javascript:void(0)" onclick="openOwnerModal()" class="action-link">[ 変更 ]</a>
+        </div>
+        {% endif %}
+    </div>
+
     <div class="stable-info-container">
         <p><strong>厩舎：</strong>
-            <span id="current-stable-display">{{ horse[5] }}・{{ horse[6] }}</span>
+            <span id="current-stable-display">{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}</span>
         </p>
         <div class="stable-actions">
         {% if changes_history|length > 0 %}
-            <a href="javascript:void(0)" onclick="openHistoryModal()" class="action-link">[ 転厩履歴 ]</a>
+            <a href="javascript:void(0)" onclick="openHistoryModal()" class="action-link">[ 変更履歴 ]</a>
         {% endif %}
         {% if session.get('login') %}
             <a href="javascript:void(0)" onclick="openTransferModal()" class="action-link">[ 転厩 ]</a>
@@ -46,8 +57,12 @@
     </div>
 
     <p><strong>産地：</strong> 
-        {% if horse|length > 8 and horse[8] %}{{ horse[8] }}{% endif %}
-        {% if horse|length > 9 and horse[9] %}・{{ horse[9] }}{% endif %}
+        {% if horse|length > 9 and horse[9] %}{{ horse[9] }}{% endif %}
+        {% if horse|length > 10 and horse[10] %}・{{ horse[10] }}{% endif %}
+    </p>
+
+    <p><strong>生産牧場：</strong> 
+        {% if horse|length > 11 and horse[11] %}{{ horse[11] }}{% endif %}
     </p>
 
 {% macro render_inner(node, node_id, role='') %}
@@ -136,8 +151,6 @@
 
 <p><strong>血統表（5代）</strong></p>
     <div class="layered-pedigree">
-
-        <!-- 父系セクション -->
         <section id="sire-side" class="pedigree-section sire-side">
             <div class="pedigree-header">
                 <div class="header-spacer"></div>
@@ -183,7 +196,6 @@
         </div>
     </section>
 
-        <!-- 母系セクション -->
         <section id="dam-side" class="pedigree-section dam-side">
             <div class="pedigree-header">
                 <h3 class="side-title">母系 (F)</h3>
@@ -291,23 +303,176 @@
     </div>
 </section>
 
-<!-- 同名馬選択用モーダル (初期状態は非表示) -->
 <div id="candidateModal" class="candidate-modal-overlay">
     <div class="candidate-modal-content">
         <h3 id="candidateModalTitle" style="margin-top:0;">同名馬の選択</h3>
         <p>正しい親馬を選択してください。</p>
-        <ul id="candidateModalList" class="candidate-list">
-            <!-- JavaScriptでここに候補リストが生成されます -->
-        </ul>
+        <ul id="candidateModalList" class="candidate-list"></ul>
         <button type="button" onclick="closeCandidateModal()" class="btn-close-modal">閉じる</button>
     </div>
 </div>
+
+<div id="historyModal" class="custom-modal-overlay">
+    <div class="custom-modal-content">
+        <div class="custom-modal-header">変更履歴</div>
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>年月日</th>
+                    <th>項目</th>
+                    <th>旧</th>
+                    <th>新</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for change in changes_history %}
+                <tr>
+                    <td>{{ change.get('年月日', '') }}</td>
+                    <td>{{ change.get('項目', '') }}</td>
+                    <td>{{ change.get('旧', '') }}</td>
+                    <td>{{ change.get('新', '') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <button type="button" onclick="closeHistoryModal()" class="btn-close-modal" style="margin-top:0;">閉じる</button>
+    </div>
+</div>
+
+{% if session.get('login') %}
+<div id="ownerModal" class="custom-modal-overlay">
+    <div class="custom-modal-content">
+        <div class="custom-modal-header">馬主変更情報の入力</div>
+        <form method="POST" action="/save_change" autocomplete="off">
+            <input type="hidden" name="horse_name" value="{{ horse[0] }}">
+            <input type="hidden" name="change_type" value="馬主変更">
+            
+            <div class="form-group">
+                <label>年月日 (任意)</label>
+                <div class="transfer-date-group">
+                    <input type="number" name="t_year" placeholder="年"> 年
+                    <select name="t_month">
+                        <option value=""></option>
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select> 月
+                    <select name="t_day">
+                        <option value=""></option>
+                        {% for d in range(1, 32) %}
+                        <option value="{{ d }}">{{ d }}</option>
+                        {% endfor %}
+                    </select> 日
+                </div>
+            </div>
+
+            <div class="form-group swap-group">
+                <label>旧馬主名</label>
+                <input type="text" id="owner_old_val" name="old_val" value="{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}" style="width:100%; padding:8px;" required>
+                
+                <div class="swap-icon" onclick="swapValues('owner_old_val', 'owner_new_val')" aria-label="入れ替え">⇅</div>
+                
+                <label>新馬主名</label>
+                <input type="text" id="owner_new_val" name="new_val" style="width:100%; padding:8px;" required>
+            </div>
+
+            <div class="modal-btn-group">
+                <button type="submit" class="btn-submit-entry">登録</button>
+                <button type="button" onclick="closeOwnerModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="transferModal" class="custom-modal-overlay">
+    <div class="custom-modal-content">
+        <div class="custom-modal-header">転厩情報の入力</div>
+        <form method="POST" action="/save_change" autocomplete="off">
+            <input type="hidden" name="horse_name" value="{{ horse[0] }}">
+            <input type="hidden" name="change_type" value="転厩">
+            
+            <div class="form-group">
+                <label>年月日 (任意)</label>
+                <div class="transfer-date-group">
+                    <input type="number" name="t_year" placeholder="年"> 年
+                    <select name="t_month">
+                        <option value=""></option>
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select> 月
+                    <select name="t_day">
+                        <option value=""></option>
+                        {% for d in range(1, 32) %}
+                        <option value="{{ d }}">{{ d }}</option>
+                        {% endfor %}
+                    </select> 日
+                </div>
+            </div>
+
+            <div class="form-group swap-group">
+                <label>旧厩舎</label>
+                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" style="width:100%; padding:8px;" required>
+                
+                <div class="swap-icon" onclick="swapValues('transfer_old_val', 'transfer_new_val')" aria-label="入れ替え">⇅</div>
+                
+                <label>新厩舎</label>
+                <input type="text" id="transfer_new_val" name="new_val" style="width:100%; padding:8px;" required>
+                
+                <div class="select-stables" style="margin-top: 10px; width:100%; padding: 10px; box-sizing: border-box;">
+                    <p style="margin-bottom: 5px;">絞り込み：
+                        <span class="kana-btn area-btn active" onclick="updateTransferAreaFilter('全', this)">全</span>
+                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('美浦', this)">美浦</span>
+                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('栗東', this)">栗東</span>
+                    </p>
+                    <div class="kana-buttons">
+                        {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
+                        <span class="kana-btn reg-kana" onclick="updateTransferStableDropdown('{{ char }}', this)">{{ char }}</span>
+                        {% endfor %}
+                        <span class="kana-btn reg-kana active" onclick="updateTransferStableDropdown('', this)">全</span>
+                    </div>
+                    <div id="transfer_sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
+                    </div>
+                    <select id="transfer_stable_select" class="transfer-select" onchange="document.getElementById('transfer_new_val').value = this.value">
+                        <option value="">厩舎を選択してください</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="modal-btn-group">
+                <button type="submit" class="btn-submit-entry">登録</button>
+                <button type="button" onclick="closeTransferModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 
 <div class="back-link-container">
     <a href="/">一覧に戻る</a>
 </div>
 
 <script>
+// --- 入れ替え機能 ---
+function swapValues(id1, id2) {
+    const el1 = document.getElementById(id1);
+    const el2 = document.getElementById(id2);
+    const temp = el1.value;
+    el1.value = el2.value;
+    el2.value = temp;
+}
+
+function openOwnerModal() { document.getElementById('ownerModal').style.display = 'block'; }
+function closeOwnerModal() { document.getElementById('ownerModal').style.display = 'none'; }
+function openHistoryModal() { document.getElementById('historyModal').style.display = 'block'; }
+function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
+function openTransferModal() {
+    document.getElementById('transferModal').style.display = 'block';
+    const activeKanaBtn = document.querySelector('#transferModal .reg-kana.active');
+    updateTransferStableDropdown('', activeKanaBtn);
+}
+function closeTransferModal() { document.getElementById('transferModal').style.display = 'none'; }
+
 // モーダル間で受け渡すための一時変数
 let currentChildName = '';
 let currentParentCol = '';
@@ -891,90 +1056,4 @@ function splitTransferStableValue(selectElement) {
     }
 }
 </script>
-
-<div id="historyModal" class="custom-modal-overlay">
-    <div class="custom-modal-content">
-        <div class="custom-modal-header">転厩履歴</div>
-        <table class="history-table">
-            <thead>
-                <tr>
-                    <th>年月日</th>
-                    <th>旧厩舎</th>
-                    <th>新厩舎</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for change in changes_history %}
-                <tr>
-                    <td>{{ change['年月日'] }}</td>
-                    <td>{{ change['旧'] }}</td>
-                    <td>{{ change['新'] }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <button type="button" onclick="closeHistoryModal()" class="btn-close-modal" style="margin-top:0;">閉じる</button>
-    </div>
-</div>
-
-{% if session.get('login') %}
-<div id="transferModal" class="custom-modal-overlay">
-    <div class="custom-modal-content">
-        <div class="custom-modal-header">転厩情報の入力</div>
-        <form method="POST" action="/transfer_stable" autocomplete="off">
-            <input type="hidden" name="horse_name" value="{{ horse[0] }}">
-            
-            <div class="form-group">
-                <label>年月日 (任意)</label>
-                <div class="transfer-date-group">
-                    <input type="number" name="t_year" placeholder="年"> 年
-                    <select name="t_month">
-                        <option value=""></option>
-                        {% for m in range(1, 13) %}
-                        <option value="{{ m }}">{{ m }}</option>
-                        {% endfor %}
-                    </select> 月
-                    <select name="t_day">
-                        <option value=""></option>
-                        {% for d in range(1, 32) %}
-                        <option value="{{ d }}">{{ d }}</option>
-                        {% endfor %}
-                    </select> 日
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label>新厩舎 (必須)</label>
-                <div class="select-stables" style="margin-bottom: 0;">
-                    <p style="margin-bottom: 5px;">絞り込み：
-                        <span class="kana-btn area-btn active" onclick="updateTransferAreaFilter('全', this)">全</span>
-                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('美浦', this)">美浦</span>
-                        <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('栗東', this)">栗東</span>
-                    </p>
-                    <div class="kana-buttons">
-                        {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
-                        <span class="kana-btn reg-kana" onclick="updateTransferStableDropdown('{{ char }}', this)">{{ char }}</span>
-                        {% endfor %}
-                        <span class="kana-btn reg-kana active" onclick="updateTransferStableDropdown('', this)">全</span>
-                    </div>
-                    <div id="transfer_sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
-                    </div>
-                    <select id="transfer_stable_select" class="transfer-select" required onchange="splitTransferStableValue(this)">
-                        <option value="">厩舎を選択してください</option>
-                    </select>
-                    
-                    <input type="hidden" name="area" id="transfer_hidden_area" required>
-                    <input type="hidden" name="stable_name" id="transfer_hidden_stable_name" required>
-                </div>
-            </div>
-
-            <div class="modal-btn-group">
-                <button type="submit" class="btn-submit-entry">登録</button>
-                <button type="button" onclick="closeTransferModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
-            </div>
-        </form>
-    </div>
-</div>
-{% endif %}
-
 {% endblock %}

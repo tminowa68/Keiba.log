@@ -19,7 +19,7 @@
         <a href="/races" class="{% if request.path == '/races' or request.path == '/edit_race' %}active{% endif %}">
             <span>レース</span><span>情報</span>
         </a>
-        <a href="/add_horse_page" class="{% if request.path == '/add_horse_page' or request.path == '/add_parent' %}active{% endif %}">
+        <a href="/add_horse" class="{% if request.path == '/add_horse' or request.path == '/add_parent' %}active{% endif %}">
             <span>データ</span><span>登録</span>
         </a>
         
@@ -50,6 +50,9 @@
         </a>
         <a href="https://www.jbis.or.jp/" target="_blank" rel="noopener noreferrer">
             <img src="{{ url_for('static', filename='images/logo_jbis.png') }}" alt="JBISサーチへ">
+        </a>
+        <a href="https://www.jairs.jp/" target="_blank" rel="noopener noreferrer">
+            <img src="{{ url_for('static', filename='images/logo_StudBook.jpg') }}" alt="スタッドブックへ">
         </a>
     </div>
     <p class="copyright">&copy; 2026 keiba.log All Rights Reserved.</p>

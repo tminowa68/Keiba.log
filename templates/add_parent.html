@@ -48,15 +48,23 @@
             {% endfor %}
         </select> 日
     </div>
+
+    <div style="margin-bottom:15px;">
+        <label>馬主名：</label>
+        <input type="text" name="owner" value="{{ data.owner }}" placeholder="馬主" style="width: 200px; padding:8px; margin-top:5px;">
+    </div>
     
-    <div>
-        <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
-            <label>産地：</label>
-            <select name="birthplace_region" id="parent_region_select" value="" style="padding:6px;">
-            </select>
-            <select name="birthplace_detail" id="parent_detail_select" value="" style="padding:6px; display: none;">
-            </select>
-        </div>
+    <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+        <label>産地：</label>
+        <select name="birthplace_region" id="parent_region_select" value="" style="padding:6px;">
+        </select>
+        <select name="birthplace_detail" id="parent_detail_select" value="" style="padding:6px; display: none;">
+        </select>
+    </div>
+
+    <div style="margin-bottom:15px; margin-top: 15px;">
+        <label>生産牧場：</label>
+        <input type="text" name="breeder" value="{{ data.breeder }}" placeholder="生産牧場" style="width: 200px; padding:8px; margin-top:5px;">
     </div>
 
     <div style="margin-top: 20px;">

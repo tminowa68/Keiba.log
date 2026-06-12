@@ -46,6 +46,11 @@
                 {% endfor %}
             </select> 日
         </div>
+
+        <div style="margin-bottom:15px;">
+            <label>馬主名：</label>
+            <input type="text" name="owner" placeholder="馬主" style="width: 200px; padding:8px; margin-top:5px;">
+        </div>
             
         <div class="select-stables">
             <p>厩舎絞り込み：
@@ -70,14 +75,17 @@
             <input type="hidden" name="stable_name" id="hidden_stable_name">
         </div>
 
-        <div>
-            <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
-                <label>産地：</label>
-                <select name="birthplace_region" id="region_select" value="" style="padding:6px;">
-                </select>
-                <select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
-                </select>
-            </div>
+        <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+            <label>産地：</label>
+            <select name="birthplace_region" id="region_select" value="" style="padding:6px;">
+            </select>
+            <select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
+            </select>
+        </div>
+
+        <div style="margin-bottom:15px; margin-top: 15px;">
+            <label>生産牧場：</label>
+            <input type="text" name="breeder" placeholder="生産牧場" style="width: 200px; padding:8px; margin-top:5px;">
         </div>
 
         <div style="margin-top:20px; display:flex; gap:10px;">
