@@ -29,7 +29,15 @@
 
     <div class="owner-info-container">
         <p><strong>馬主名：</strong>
-            <span id="current-owner-display">{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}</span>
+            <span id="current-owner-display">
+                {% if horse|length > 5 and horse[5] %}
+                    {{ horse[5] }}
+                {% else %}
+                    {% if session.get('login') %}
+                        <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+                    {% endif %}    
+                {% endif %}
+            </span>
         </p>
         {% if session.get('login') %}
         <div class="owner-actions">
@@ -40,7 +48,11 @@
 
     <div class="stable-info-container">
         <p><strong>厩舎：</strong>
-            <span id="current-stable-display">{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}</span>
+            <span id="current-stable-display">
+                {% if horse|length > 7 and horse[6] and horse[7] %}
+                    {{ horse[6] }}・{{ horse[7] }}
+                {% endif %}
+            </span>
         </p>
         <div class="stable-actions">
         {% if changes_history|length > 0 %}
@@ -53,12 +65,28 @@
     </div>
 
     <p><strong>産地：</strong> 
-        {% if horse|length > 9 and horse[9] %}{{ horse[9] }}{% endif %}
-        {% if horse|length > 10 and horse[10] %}・{{ horse[10] }}{% endif %}
+        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
+            {% if horse|length > 9 and horse[9] %}
+                {{ horse[9] }}
+            {% endif %}
+            {% if horse|length > 10 and horse[10] %}
+                ・{{ horse[10] }}
+            {% endif %}
+        {% else %}
+            {% if session.get('login') %}
+                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+            {% endif %}
+        {% endif %}
     </p>
 
     <p><strong>生産牧場：</strong> 
-        {% if horse|length > 11 and horse[11] %}{{ horse[11] }}{% endif %}
+        {% if horse|length > 11 and horse[11] %}
+            {{ horse[11] }}
+        {% else %}
+            {% if session.get('login') %}
+                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+            {% endif %}
+        {% endif %}
     </p>
 
 {% macro render_inner(node, node_id, role='') %}
@@ -120,7 +148,7 @@
                 </div>
             {% endif %}
         {% else %}
-            <span class="unknown-horse">不明</span>
+            <span class="unknown-horse">未登録</span>
         {% endif %}
     </div>
 {% endmacro %}

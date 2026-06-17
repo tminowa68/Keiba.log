@@ -1,116 +1,384 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ horse[0] }} - 編集</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
+{% extends "layout.html" %}
+{% block title %}プロフィール編集 - keiba.log{% endblock %}
+{% block content %}
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    <form method="POST" action="/update_horse" autocomplete="off">
+        <h2>競走馬プロフィールの編集</h2>
+        <div style="margin-bottom:15px;">    
+            <!-- 変更前の馬名をhiddenで送信 -->
+            <input type="hidden" name="old_name" value="{{ horse[0] }}">
+            <label>馬名：</label>
+            <input type="text" name="name" placeholder="馬名" value="{{ horse[0] }}" style="width: 140px; padding:8px; margin-top:5px;" required>
+        </div>
 
-<body>
-<h1>馬情報の編集: {{ horse[0] }}</h1>
-
-<section>
-    <form method="POST" action="/update_horse" onsubmit="return splitStableValue(document.getElementById('reg_stable_select'))">
-        <input type="hidden" name="old_name" value="{{ horse[0] }}">
         <div style="margin-bottom:15px;">
-        <label>馬名：</label><br>
-        <input type="text" name="name" placeholder="馬名" value="{{ horse[0] }}" required style="width: 210px; padding:8px; margin-top:5px;">
-    </div>
+            <label>血統：</label><br>
+            <input type="text" name="sire" placeholder="父" value="{{ horse[3] if horse|length > 3 else '' }}" style="width:140px; padding:8px;">
+            ×
+            <input type="text" name="dam" placeholder="母" value="{{ horse[4] if horse|length > 4 else '' }}" style="width:140px; padding:8px;">
+        </div>
 
-    <div style="margin-bottom:15px;">
-        <label>性別：</label>
-        <select name="gender">
-            <option value="牡" {% if horse[1] == '牡' %}selected{% endif %}>牡</option>
-            <option value="牝" {% if horse[1] == '牝' %}selected{% endif %}>牝</option>
-            <option value="せん" {% if horse[1] == 'せん' %}selected{% endif %}>せん</option>
-        </select>
-        &nbsp;&nbsp;
-        <label>生年月日：</label>
-        <input type="number" name="year" value="{{ horse[2].year }}" required style="width:50px; padding:8px;">年
-        <select name="month" required style="padding:8px;">
-            {% for m in range(1, 7) %}
-            <option value="{{ m }}" {% if m == horse[2].month %}selected{% endif %}>{{ m }}</option>
-            {% endfor %}
-        </select> 月
-        <select name="day" required style="padding:8px;">
-            {% for d in range(1, 32) %}
-            <option value="{{ d }}" {% if d == horse[2].day %}selected{% endif %}>{{ d }}</option>
-            {% endfor %}
-        </select> 日
-    </div>
+        <div style="margin-bottom: 15px;">
+            <label>性別：</label>
+            <select name="gender" id="gender_select" onchange="updateGenderColor(this)" required>
+                <option value="牡" {% if horse[1] == '牡' %}selected{% endif %}>牡</option>
+                <option value="牝" {% if horse[1] == '牝' %}selected{% endif %}>牝</option>
+                <option value="せん" {% if horse[1] == 'せん' %}selected{% endif %}>せん</option>
+            </select>
+        </div>
 
-    <div style="margin-bottom:15px;">
-        <label>血統：</label><br>
-        父：<input type="text" name="sire" placeholder="父" value="{{ horse[3] }}" style="width:210px; padding:8px;">
-        ×
-        母：<input type="text" name="dam" placeholder="母" value="{{ horse[4] }}" style="width:210px; padding:8px;">
-    </div>
+        <div style="margin-bottom:15px;">
+            <label>生年月日：</label>
+                {% set birth_year = horse[2].year if horse[2].year is defined else (horse[2][:4] if horse[2] is string else '') %}
+                {% set birth_month = horse[2].month if horse[2].month is defined else (horse[2][5:7] if horse[2] is string else '') %}
+                {% set birth_day = horse[2].day if horse[2].day is defined else (horse[2][8:10] if horse[2] is string else '') %}
+            <input type="number" name="year" value="{{ birth_year }}" style="width:50px; padding:8px;" required>年
+            <select name="month" id="horse_month" style="padding:8px;" required>
+                {% for m in range(1, 7) %}
+                <option value="{{ m }}" {% if m|string == birth_month|string %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select> 月
+            <select name="day" style="padding:8px;" required>
+                {% for d in range(1, 32) %}
+                <option value="{{ d }}" {% if d|string == birth_day|string %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+            </select> 日
+        </div>
 
-    <p>厩舎選択：</p>
-    <div class="kana-buttons">
-        {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
-        <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
-        {% endfor %}
-        <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
-    </div>
-    <select id="reg_stable_select" name="stable" style="width: 230px; padding:8px;" required>
-        <option value="{{ horse[6] }}・{{ horse[7] }}" selected>{{ horse[6] }}・{{ horse[7] }}</option>
-    </select>
+        <div style="margin-bottom:15px;">
+            <label>馬主名：</label>
+            <input type="text" name="owner" placeholder="馬主名" value="{{ horse[5] if horse|length > 5 else '' }}" style="width: 200px; padding:8px; margin-top:5px;">
+        </div>
+            
+        <div class="select-stables">
+            <p>厩舎絞り込み：
+                <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
+                <span class="kana-btn area-btn" onclick="updateAreaFilter('美浦', this)">美浦</span>
+                <span class="kana-btn area-btn" onclick="updateAreaFilter('栗東', this)">栗東</span>
+                <button type="button" class="btn-reset" onclick="resetFilter()">リセット</button>
+            </p>
+            <div class="kana-buttons">
+                {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
+                <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+                {% endfor %}
+                <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+            </div>
+            <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
+            </div>
+            <select id="reg_stable_select" required onchange="splitStableValue(this)" style="margin-top: 10px;">
+                <option value="{{ horse[6] if horse|length > 6 else '' }}・{{ horse[7] if horse|length > 7 else '' }}">厩舎を選択してください</option>
+            </select>
 
-    <input type="hidden" id="location" name="location">
-    <input type="hidden" id="stable_name" name="stable_name">
+            <input type="hidden" name="area" id="hidden_area">
+            <input type="hidden" name="stable_name" id="hidden_stable_name">
+        </div>
 
-    <div style="margin-top:20px;">
-        <button type="submit" style="background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">更新を保存</button>
-        <a href="/horse/{{ horse[0] }}" style="margin-left:10px;">キャンセル</a>
-    </div>
+        <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
+            <label>産地：</label>
+            <select name="birthplace_region" id="region_select" value="{{ horse[9] if horse|length > 9 else '' }}" style="padding:6px;">
+            </select>
+            <select name="birthplace_detail" id="detail_select" value="{{ horse[10] if horse|length > 10 else '' }}" style="padding:6px; display: none;">
+            </select>
+        </div>
+
+        <div style="margin-bottom:15px; margin-top: 15px;">
+            <label>生産牧場：</label>
+            <input type="text" name="breeder" placeholder="生産牧場" value="{{ horse[11] if horse|length > 11 else '' }}" style="width: 200px; padding:8px; margin-top:5px;">
+        </div>
+
+        <div style="margin-top:20px; display:flex; gap:10px;">
+            <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">競走馬を登録</button>
+            <a href="/" style="background:#ccc; color:black; padding:10px 20px; text-decoration:none; border-radius:4px;">ホームへ戻る</a>
+        </div>
     </form>
 </section>
 
 <script>
-const stablesData = {{ stables | tojson | safe }};
-const currentStable = "{{ horse[6] }}・{{ horse[7] }}";
+const allStables = {{ stables | tojson | safe }};
 
-function updateStableDropdown(type, char, btn) {
-    document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
+let currentArea = '全';
+let currentKana = '';
+
+function updateAreaFilter(area, btn) {
+    document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentArea = area;
+    
+    // 現在の五十音選択状態を維持してドロップダウンを更新
+    const activeKanaBtn = document.querySelector('.kana-group .reg-kana.active');
+    updateStableDropdown('reg', currentKana, activeKanaBtn);
+}
+
+function resetFilter() {
+    const select = document.getElementById('reg_stable_select');
+    // 「全」ボタンの要素を取得してリセット
+    const allKanaBtn = document.querySelector('.kana-group:last-child .reg-kana:last-child');
+    
+    updateStableDropdown('reg', '', allKanaBtn);
+    select.value = "";
+}
+
+const rowMap = {
+    'あ': ['あ', 'い', 'う', 'え', 'お'],
+    'か': ['か', 'き', 'く', 'け', 'こ', 'が', 'ぎ', 'ぐ', 'げ', 'ご'],
+    'さ': ['さ', 'し', 'す', 'せ', 'そ', 'ざ', 'じ', 'ず', 'ぜ', 'ぞ'],
+    'た': ['た', 'ち', 'つ', 'て', 'と', 'だ', 'ぢ', 'づ', 'で', 'ど'],
+    'な': ['な', 'に', 'ぬ', 'ね', 'の'],
+    'は': ['は', 'ひ', 'ふ', 'へ', 'ほ', 'ば', 'び', 'ぶ', 'べ', 'ぼ', 'ぱ', 'ぴ', 'ぷ', 'ぺ', 'ぽ'],
+    'ま': ['ま', 'み', 'む', 'め', 'も'],
+    'や': ['や', 'ゆ', 'よ'],
+    'ら': ['ら', 'り', 'る', 'れ', 'ろ'],
+    'わ': ['わ', 'を', 'ん']
+};
+
+function toggleCapacity(checkbox) {
+    const capacityInput = document.getElementById('capacity_input');
+    if (checkbox.checked) {
+        capacityInput.value = "0";
+        capacityInput.readOnly = true;
+        capacityInput.style.backgroundColor = "#e9ecef";
+    } else {
+        capacityInput.value = "20";
+        capacityInput.readOnly = false;
+        capacityInput.style.backgroundColor = "";
+    }
+}
+
+function updateStableDropdown(type, char, btn, isSubChar = false) {
+    if (!isSubChar) {
+        document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    } else {
+        document.querySelectorAll('.sub-kana-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    }
 
     const select = document.getElementById('reg_stable_select');
-    select.innerHTML = '<option value="" disabled>厩舎を選択してください</option>';
+    const subContainer = document.getElementById('sub_kana_container');
+    if (!select) return;
 
+    if (!isSubChar) {
+        subContainer.innerHTML = '';
+        if (char && rowMap[char]) {
+            createSubButtons(char);
+            subContainer.style.display = 'flex';
+        } else {
+            subContainer.style.display = 'none';
+        }
+    }
+
+    const regex = isSubChar ? new RegExp('^' + char) : getRowRegex(char);
+
+    select.innerHTML = '<option value="">厩舎を選択してください</option>';
+
+    const filtered = allStables
+        .filter(s => currentArea === '全' || s.area === currentArea)
+        .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .filter(s => s.capacity !== '技術調教師')
+        .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
+
+    filtered.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.display_name;
+        opt.textContent = s.display_name;
+        select.appendChild(opt);
+    });
+
+    // onStableChange();
+}
+
+function createSubButtons(rowChar) {
+    const subContainer = document.getElementById('sub_kana_container');
+    const charsInRow = rowMap[rowChar];
+    
+    // 「全」ボタンの作成
+    const allBtn = document.createElement('span');
+    allBtn.className = 'kana-btn sub-kana-btn active';
+    allBtn.textContent = '全';
+    allBtn.onclick = function() {
+        updateStableDropdown('reg', rowChar, this, false);
+    };
+    subContainer.appendChild(allBtn);
+
+    // 登録がある文字だけボタンを作成
+    charsInRow.forEach(c => {
+        const hasData = allStables.some(s => s.kana && s.kana.startsWith(c));
+        if (hasData) {
+            const btn = document.createElement('span');
+            btn.className = 'kana-btn sub-kana-btn';
+            btn.textContent = c;
+            btn.onclick = function() {
+                updateStableDropdown('reg', c, this, true);
+            };
+            subContainer.appendChild(btn);
+        }
+    });
+}
+
+function getRowRegex(char) {
     const kanaMap = {
         'あ': /^[あ-お]/, 'か': /^[か-こが-ご]/, 'さ': /^[さ-そざ-ぞ]/,
         'た': /^[た-とだ-ど]/, 'な': /^[な-の]/, 'は': /^[は-ほば-ぼぱ-ぽ]/,
         'ま': /^[ま-も]/, 'や': /^[や-よ]/, 'ら': /^[ら-ろ]/, 'わ': /^[わをん]/
     };
-
-    stablesData.forEach(s => {
-        if (!char || (s.kana && kanaMap[char].test(s.kana))) {
-            const opt = document.createElement('option');
-            opt.value = s.display_name;
-            opt.textContent = s.display_name;
-            if(s.display_name === currentStable) opt.selected = true;
-            select.appendChild(opt);
-        }
-    });
+    return kanaMap[char] || /.*/;
 }
-
-window.onload = function() {
-    updateStableDropdown('reg', '', document.querySelector('.reg-kana.active'));
-};
 
 function splitStableValue(selectElement) {
     const fullValue = selectElement.value;
+    const areaInput = document.getElementById('hidden_area');
+    const stableNameInput = document.getElementById('hidden_stable_name');
+
     if (fullValue && fullValue.includes('・')) {
         const parts = fullValue.split('・');
-        document.getElementById('location').value = parts[0];
-        document.getElementById('stable_name').value = parts[1];
-        return true; // 送信実行
+        areaInput.value = parts[0];
+        stableNameInput.value = parts[1];
     } else {
-        alert("厩舎を選択してください");
-        return false; // 送信中止
+        areaInput.value = "";
+        stableNameInput.value = "";
     }
 }
+
+function updateGenderColor(selectElement) {
+        // 選択された値が「牝」の場合は female-text クラスを適用、それ以外は除去
+        if (selectElement.value === '牝') {
+            selectElement.classList.add('female-text');
+        } else {
+            selectElement.classList.remove('female-text');
+        }
+    }
+
+    // ページ読み込み時に、初期値が「牝」なら色を変える（修正画面などで開いた場合）
+    window.addEventListener('load', function() {
+        const genderSelect = document.getElementById('gender_select');
+        if (genderSelect) {
+            updateGenderColor(genderSelect);
+        }
+    });
+
+// 【産地データ定義】ここを編集することでいつでも選択肢を追加・変更できます
+const locationData = {
+    "北海道": [
+        "安平町", "浦河町", "えりも町", "荻伏町", "帯広市", 
+        "様似町", "士幌町", "白老町", "新ひだか町", "大樹町", 
+        "伊達市", "千歳市", "洞爺湖町", "苫小牧市", "豊浦町", 
+        "新冠町", "登別市", "日高町", "平取町", "むかわ町", 
+        "室蘭市", "森町", "門別町"
+    ],
+    "青森県": [],
+    "熊本県": [],
+    "宮崎県": [],
+    "海外": [
+        "アメリカ", "カナダ", 
+        "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", 
+        "オーストラリア", "ニュージーランド", 
+        "アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー", 
+        "南アフリカ"
+    ]
+};
+
+// 【南半球産リスト】ここに指定された地域が選ばれた時、7〜12月表示に切り替わります
+const southernHemisphereDetails = [
+    "オーストラリア", "ニュージーランド", 
+    "アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー", 
+    "南アフリカ"
+];
+
+function initBirthplaceFields(monthSelectId, hasEmptyOption) {
+    const regionSelect = document.getElementById('region_select');
+    const detailSelect = document.getElementById('detail_select');
+    if (!regionSelect || !detailSelect) return;
+
+    // 産地（第1階層）の選択肢を動的に生成
+    regionSelect.innerHTML = '';
+    for (const region in locationData) {
+        const opt = document.createElement('option');
+        opt.value = region;
+        opt.textContent = region;
+        regionSelect.appendChild(opt);
+    }
+
+    // 産地変更時の連動処理
+    regionSelect.addEventListener('change', function() {
+        const selectedRegion = this.value;
+        const details = locationData[selectedRegion] || [];
+
+        detailSelect.innerHTML = '';
+
+        // 詳細データがある場合（北海道・海外）のみ表示し、それ以外は隠す
+        if (details.length > 0) {
+            details.forEach(detail => {
+                const opt = document.createElement('option');
+                opt.value = detail;
+                opt.textContent = detail;
+                detailSelect.appendChild(opt);
+            });
+            detailSelect.style.display = 'inline-block';
+        } else {
+            detailSelect.style.display = 'none';
+        }
+
+        // 月の選択肢を更新
+        updateMonthByLocation(monthSelectId, detailSelect.value, hasEmptyOption);
+    });
+
+    // 詳細地域変更時の処理
+    detailSelect.addEventListener('change', function() {
+        updateMonthByLocation(monthSelectId, this.value, hasEmptyOption);
+    });
+
+    // 初期表示を実行
+    regionSelect.dispatchEvent(new Event('change'));
+}
+
+function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
+    const select = document.getElementById(monthSelectId);
+    if (!select) return;
+    
+    const currentValue = select.value;
+    select.innerHTML = '';
+
+    if (hasEmptyOption) {
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        select.appendChild(emptyOpt);
+    }
+
+    // 南半球判定
+    const isSouthern = southernHemisphereDetails.includes(detailValue);
+    const start = isSouthern ? 7 : 1;
+    const end = isSouthern ? 12 : 6;
+
+    for (let i = start; i <= end; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i;
+        select.appendChild(opt);
+    }
+
+    // 選択されていた値が新しい範囲内にあれば復元
+    if (currentValue && [...select.options].some(o => o.value === currentValue)) {
+        select.value = currentValue;
+    }
+}
+
+// --- ページ読み込み時の初期化処理 ---
+document.addEventListener('DOMContentLoaded', function() {
+    // 1. 産地フォームの初期化（他の処理より先に実行して安全に生成する）
+    initBirthplaceFields('horse_month', false);
+
+    // 2. 厩舎の五十音フィルター初期化
+    const activeKana = document.querySelector('.reg-kana.active');
+    try {
+        updateStableDropdown('reg', '', activeKana);
+    } catch (e) {
+        console.error("厩舎フィルターの初期化エラー:", e);
+    }
+
+    // 3. フラッシュメッセージ（エラー時など）のフォーム表示切り替え
+    {% if get_flashed_messages() %}
+        if (typeof toggleStableForm === "function") toggleStableForm();
+    {% endif %}
+});
 </script>
-</body>
-</html>
+{% endblock %}
