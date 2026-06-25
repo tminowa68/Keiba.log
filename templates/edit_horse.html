@@ -29,9 +29,11 @@
 
         <div style="margin-bottom:15px;">
             <label>生年月日：</label>
-                {% set birth_year = horse[2].year if horse[2].year is defined else (horse[2][:4] if horse[2] is string else '') %}
-                {% set birth_month = horse[2].month if horse[2].month is defined else (horse[2][5:7] if horse[2] is string else '') %}
-                {% set birth_day = horse[2].day if horse[2].day is defined else (horse[2][8:10] if horse[2] is string else '') %}
+                {# スプレッドシートからは "2022/3/15" や "2022-03-15" 形式の文字列で届く #}
+                {% set birth_parts = horse[2].replace('-', '/').split('/') if horse[2] is string else [] %}
+                {% set birth_year = birth_parts[0] if birth_parts|length > 0 else '' %}
+                {% set birth_month = birth_parts[1]|int if birth_parts|length > 1 else '' %}
+                {% set birth_day = birth_parts[2]|int if birth_parts|length > 2 else '' %}
             <input type="number" name="year" value="{{ birth_year }}" style="width:50px; padding:8px;" required>年
             <select name="month" id="horse_month" style="padding:8px;" required>
                 {% for m in range(1, 7) %}
@@ -66,8 +68,12 @@
             <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
             </div>
             <select id="reg_stable_select" required onchange="splitStableValue(this)" style="margin-top: 10px;">
-                <option value="{{ horse[6] if horse|length > 6 else '' }}・{{ horse[7] if horse|length > 7 else '' }}">厩舎を選択してください</option>
+                <option value="">厩舎を選択してください</option>
             </select>
+            {# 現在登録されている厩舎値（ドロップダウン構築後に選択復元するため）#}
+            <script>
+                const currentStableValue = "{{ (horse[6] ~ '・' ~ horse[7]) if horse|length > 7 and horse[6] and horse[7] else '' }}";
+            </script>
 
             <input type="hidden" name="area" id="hidden_area">
             <input type="hidden" name="stable_name" id="hidden_stable_name">
@@ -374,6 +380,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const activeKana = document.querySelector('.reg-kana.active');
     try {
         updateStableDropdown('reg', '', activeKana);
+        // 現在登録されている厩舎を選択状態に復元する
+        if (currentStableValue) {
+            const select = document.getElementById('reg_stable_select');
+            const matchOpt = [...select.options].find(o => o.value === currentStableValue);
+            if (matchOpt) {
+                select.value = currentStableValue;
+            } else {
+                // フィルターで絞られて見つからない場合は全件表示して再試行
+                updateStableDropdown('reg', '', activeKana);
+                select.value = currentStableValue;
+            }
+            // hidden フィールドにも初期値をセット
+            splitStableValue(select);
+        }
     } catch (e) {
         console.error("厩舎フィルターの初期化エラー:", e);
     }
