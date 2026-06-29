@@ -843,6 +843,7 @@ td.col-num{
 /* 2代前 (Tier 2: 祖父母) - 少し小さく、通常文字 */
 .tier-2 .horse-name {
     font-size: 12px;
+    font-weight: bold;
 }
 .tier-2 .horse-meta {
     font-size: 10px;
@@ -1352,4 +1353,120 @@ td.col-num{
 .owner-actions {
     display: flex;
     gap: 8px;
+}
+
+/* --- Edit / Add Horse Form Styles --- */
+.form-container {
+    max-width: 700px;
+    margin: 20px auto;
+    padding: 30px;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.form-title {
+    font-size: 1.4rem;
+    margin-bottom: 25px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #2e7d32;
+    color: #333;
+}
+
+.entry-form .form-group {
+    margin-bottom: 20px;
+}
+
+.entry-form label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #444;
+}
+
+.entry-form input[type="text"],
+.entry-form input[type="number"],
+.entry-form select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+}
+
+.entry-form input[type="text"]:focus,
+.entry-form input[type="number"]:focus,
+.entry-form select:focus {
+    border-color: #2e7d32;
+    outline: none;
+}
+
+.row-group {
+    display: flex;
+    gap: 20px;
+}
+
+.half-group {
+    flex: 1;
+}
+
+.date-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.date-inputs input[type="number"] {
+    width: 90px;
+}
+
+.date-inputs select {
+    width: 70px;
+}
+
+.required-mark {
+    color: #e53935;
+    margin-left: 4px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 15px;
+    margin-top: 30px;
+}
+
+.btn-submit {
+    background-color: #2e7d32;
+    color: #ffffff;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 4px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+    flex: 2;
+    text-align: center;
+    transition: background-color 0.2s;
+}
+
+.btn-submit:hover {
+    background-color: #1b5e20;
+}
+
+.btn-cancel {
+    color: #ffffff;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    text-decoration: none;
+    flex: 1;
+    text-align: center;
+    transition: background-color 0.2s;
+}
+
+.btn-cancel:hover {
+    background-color: #616161;
 }
