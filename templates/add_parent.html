@@ -205,5 +205,13 @@ function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
 window.addEventListener('DOMContentLoaded', function() {
     initParentBirthplaceFields('parent_month', true);
 });
+
+// 登録完了後に horse_detail で該当セルへスクロールするため馬名を保存
+document.querySelector('form[action="/add_parent"]').addEventListener('submit', function() {
+    const pName = document.querySelector('input[name="p_name"]').value;
+    if (pName) {
+        sessionStorage.setItem('scrollToParent', pName);
+    }
+});
 </script>
 {% endblock %}

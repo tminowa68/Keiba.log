@@ -1079,5 +1079,32 @@ function splitTransferStableValue(selectElement) {
         stableNameInput.value = "";
     }
 }
+
+// 親馬登録後のスクロール＆ハイライト処理
+(function () {
+    const target = sessionStorage.getItem('scrollToParent');
+    if (!target) return;
+    sessionStorage.removeItem('scrollToParent');
+
+    function scrollToParent() {
+        // プロフィールタブをアクティブにする
+        if (typeof switchHorseTab === 'function') {
+            switchHorseTab('profile');
+        }
+        // data-name 属性で対象セルを検索
+        const cell = document.querySelector('.pedigree-cell[data-name="' + CSS.escape(target) + '"]');
+        if (!cell) return;
+        setTimeout(function () {
+            cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            cell.classList.add('highlight-new-parent');
+        }, 150);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scrollToParent);
+    } else {
+        scrollToParent();
+    }
+})();
 </script>
 {% endblock %}
