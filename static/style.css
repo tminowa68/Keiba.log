@@ -1470,3 +1470,13 @@ td.col-num{
 .btn-cancel:hover {
     background-color: #616161;
 }
+/* --- 親馬登録後ハイライト --- */
+@keyframes highlightParent {
+    0%   { box-shadow: 0 0 0 4px rgba(255, 200, 0, 0.9), 0 0 16px 4px rgba(255, 200, 0, 0.5); }
+    70%  { box-shadow: 0 0 0 4px rgba(255, 200, 0, 0.7), 0 0 16px 4px rgba(255, 200, 0, 0.3); }
+    100% { box-shadow: none; }
+}
+.highlight-new-parent {
+    animation: highlightParent 2.5s ease-out forwards;
+    border-radius: 4px;
+}
