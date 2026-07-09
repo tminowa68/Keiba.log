@@ -79,7 +79,7 @@
 const locationData = {
     "北海道": [
         "厚真町", "安平町", "池田町", "浦河町", "えりも町", 
-        "追分町", "荻伏町", "帯広市", "様似町", "静内町", 
+        "追分町", "荻伏村", "帯広市", "様似町", "静内町", 
         "士幌町", "白老町", "新ひだか町", "大樹町", "伊達市", 
         "千歳市", "洞爺湖町", "洞爺村", "苫小牧市", "豊浦町", 
         "新冠町", "登別市", "早来町", "日高町", "平取町", 
@@ -109,6 +109,76 @@ const southernHemisphereDetails = [
     "南アフリカ"
 ];
 
+// 【市町村の存続期間データ】市町村合併・市制施行等により名称が変わった産地の
+// 「存在していた期間」を管理します。start=誕生日（合併・市制施行日など）、
+// end=消滅日（次の合併等でその名称が無くなった日）。null は無期限（起源が古く
+// 制限不要、または現在も存続中）を意味します。ここに無い名称は無条件で選択可能です。
+// 例：静内町・三石町は2006/3/31に合併し「新ひだか町」になったため、
+// 　　静内町・三石町は2006/3/31以降、新ひだか町は2006/3/31より前は選べません。
+const municipalityValidity = {
+    "静内町":     { start: null,          end: "2006-03-31" },
+    "三石町":     { start: null,          end: "2006-03-31" },
+    "新ひだか町": { start: "2006-03-31", end: null },
+    "早来町":     { start: null,          end: "2006-03-27" },
+    "追分町":     { start: null,          end: "2006-03-27" },
+    "安平町":     { start: "2006-03-27", end: null },
+    "鵡川町":     { start: null,          end: "2006-03-27" },
+    "むかわ町":   { start: "2006-03-27", end: null },
+    "洞爺村":     { start: null,          end: "2006-03-27" },
+    "洞爺湖町":   { start: "2006-03-27", end: null },
+    // 門別町は2006/3/1に（旧）日高町と合体し新設合併したが、新町名も「日高町」を
+    // 継承したため、日高町自体には存続制限を設けない（門別町のみ2006/3/1以降不可）
+    "門別町":     { start: null,          end: "2006-03-01" },
+    // 荻伏町（村）は1902/4/1発足、1956/9/30に浦河町へ編入され消滅
+    "荻伏村":     { start: "1902-04-01", end: "1956-09-30" },
+    "伊達市":     { start: "1972-04-01", end: null },
+    "千歳市":     { start: "1958-07-01", end: null },
+    "苫小牧市":   { start: "1948-04-01", end: null },
+    "登別市":     { start: "1970-04-01", end: null },
+    "室蘭市":     { start: "1922-08-01", end: null },
+    "帯広市":     { start: "1933-04-01", end: null }
+};
+
+function _parseISODate(str) {
+    if (!str) return null;
+    const p = str.split('-').map(Number);
+    return new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+}
+
+// 入力された生年月日から「その馬が生まれた期間」の幅を計算する。
+// 日まで入力→その1日だけ／月まで入力→その月全体／年のみ→その年全体、として厳密さを調整する。
+function _computeBirthPeriod(yearVal, monthVal, dayVal) {
+    const y = parseInt(yearVal, 10);
+    if (!y) return null;
+    if (monthVal && dayVal) {
+        const m = parseInt(monthVal, 10), d = parseInt(dayVal, 10);
+        if (!m || !d) return null;
+        const start = new Date(Date.UTC(y, m - 1, d));
+        const end = new Date(Date.UTC(y, m - 1, d + 1));
+        return { start, end };
+    } else if (monthVal) {
+        const m = parseInt(monthVal, 10);
+        if (!m) return null;
+        const start = new Date(Date.UTC(y, m - 1, 1));
+        const end = new Date(Date.UTC(y, m, 1));
+        return { start, end };
+    } else {
+        const start = new Date(Date.UTC(y, 0, 1));
+        const end = new Date(Date.UTC(y + 1, 0, 1));
+        return { start, end };
+    }
+}
+
+// 指定した産地名が、算出した生年期間に実在していたかどうかを判定する
+function isMunicipalityAvailable(name, birthPeriod) {
+    const v = municipalityValidity[name];
+    if (!v) return true; // 存続期間データが無い（制限不要）ものは常に選択可
+    if (!birthPeriod) return true; // 生年未入力の間は絞り込まない
+    const vStart = v.start ? _parseISODate(v.start) : new Date(Date.UTC(1, 0, 1));
+    const vEnd = v.end ? _parseISODate(v.end) : new Date(Date.UTC(9999, 0, 1));
+    return birthPeriod.start < vEnd && birthPeriod.end > vStart;
+}
+
 function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     const regionSelect = document.getElementById('parent_region_select');
     const detailSelect = document.getElementById('parent_detail_select');
@@ -128,10 +198,27 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
         regionSelect.appendChild(opt);
     }
 
+    // フォーム内の生年月日入力欄を取得（存続期間の判定に使用）
+    const parentForm = regionSelect.closest('form');
+    const birthYearInput = parentForm ? parentForm.querySelector('input[name="year"]') : null;
+    const birthDaySelect = parentForm ? parentForm.querySelector('select[name="day"]') : null;
+
+    function getCurrentBirthPeriod() {
+        const monthSelectEl = document.getElementById(monthSelectId);
+        return _computeBirthPeriod(
+            birthYearInput ? birthYearInput.value : '',
+            monthSelectEl ? monthSelectEl.value : '',
+            birthDaySelect ? birthDaySelect.value : ''
+        );
+    }
+
     // 産地変更時の連動処理
     regionSelect.addEventListener('change', function() {
         const selectedRegion = this.value;
-        const details = locationData[selectedRegion] || [];
+        const rawDetails = locationData[selectedRegion] || [];
+        const birthPeriod = getCurrentBirthPeriod();
+        // 生年月日から見て、廃止済み・制定前の市町村は選択肢から除外する
+        const details = rawDetails.filter(d => isMunicipalityAvailable(d, birthPeriod));
 
         detailSelect.innerHTML = '';
 
@@ -154,6 +241,36 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     detailSelect.addEventListener('change', function() {
         updateMonthByLocation(monthSelectId, this.value, hasEmptyOption);
     });
+
+    // 生年月日が変更されたら、産地（詳細）の選択肢を生年月日に合わせて再計算する。
+    // それまでの選択が引き続き有効な場合は選択状態を維持し、無効になった場合のみ解除される。
+    function refreshDetailAvailability() {
+        const currentDetailValue = detailSelect.value;
+        
+        // 【追加】現在選択されている月の値を一時的に退避しておく
+        const monthSelectEl = document.getElementById(monthSelectId);
+        const currentMonthValue = monthSelectEl ? monthSelectEl.value : '';
+
+        regionSelect.dispatchEvent(new Event('change'));
+        
+        if (currentDetailValue) {
+            const stillAvailable = [...detailSelect.options].some(o => o.value === currentDetailValue);
+            if (stillAvailable) {
+                detailSelect.value = currentDetailValue;
+                // 選択を復元したので、月の選択肢（南半球判定含む）もその値に合わせて再計算する
+                updateMonthByLocation(monthSelectId, detailSelect.value, hasEmptyOption);
+                
+                // 【追加】退避しておいた月の値を復元する
+                if (currentMonthValue && [...monthSelectEl.options].some(o => o.value === currentMonthValue)) {
+                    monthSelectEl.value = currentMonthValue;
+                }
+            }
+        }
+    }
+    if (birthYearInput) birthYearInput.addEventListener('input', refreshDetailAvailability);
+    const monthSelectForListener = document.getElementById(monthSelectId);
+    if (monthSelectForListener) monthSelectForListener.addEventListener('change', refreshDetailAvailability);
+    if (birthDaySelect) birthDaySelect.addEventListener('change', refreshDetailAvailability);
 
     // 初期データのマッピング処理
     if (initialRegion && locationData[initialRegion]) {
