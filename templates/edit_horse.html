@@ -266,7 +266,7 @@ function updateGenderColor(selectElement) {
 const locationData = {
     "北海道": [
         "厚真町", "安平町", "池田町", "浦河町", "えりも町", 
-        "追分町", "荻伏町", "帯広市", "様似町", "静内町", 
+        "追分町", "荻伏村", "帯広市", "様似町", "静内町", 
         "士幌町", "白老町", "新ひだか町", "大樹町", "伊達市", 
         "千歳市", "洞爺湖町", "洞爺村", "苫小牧市", "豊浦町", 
         "新冠町", "登別市", "早来町", "日高町", "平取町", 
@@ -318,7 +318,7 @@ const municipalityValidity = {
     // 継承したため、日高町自体には存続制限を設けない（門別町のみ2006/3/1以降不可）
     "門別町":     { start: null,          end: "2006-03-01" },
     // 荻伏町（村）は1902/4/1発足、1956/9/30に浦河町へ編入され消滅
-    "荻伏町":     { start: "1902-04-01", end: "1956-09-30" },
+    "荻伏村":     { start: "1902-04-01", end: "1956-09-30" },
     "伊達市":     { start: "1972-04-01", end: null },
     "千歳市":     { start: "1958-07-01", end: null },
     "苫小牧市":   { start: "1948-04-01", end: null },
@@ -431,7 +431,13 @@ function initBirthplaceFields(monthSelectId, hasEmptyOption) {
     // それまでの選択が引き続き有効な場合は選択状態を維持し、無効になった場合のみ解除される。
     function refreshDetailAvailability() {
         const currentDetailValue = detailSelect.value;
+        
+        // 【追加】現在選択されている月の値を一時的に退避しておく
+        const monthSelectEl = document.getElementById(monthSelectId);
+        const currentMonthValue = monthSelectEl ? monthSelectEl.value : '';
+
         regionSelect.dispatchEvent(new Event('change'));
+        
         if (currentDetailValue) {
             const stillAvailable = [...detailSelect.options].some(o => o.value === currentDetailValue);
             if (stillAvailable) {
