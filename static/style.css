@@ -26,7 +26,6 @@ th, td {
     border: 1px solid #ddd;
     padding: 6px 8px;
     text-align: left;
-    font-size: 0.9em;
 }
 th {
     background: #4CAF50;
@@ -1480,3 +1479,46 @@ td.col-num{
     animation: highlightParent 2.5s ease-out forwards;
     border-radius: 4px;
 }
+
+/* プロフィール情報テーブル用 */
+.profile-info-table {
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+.profile-info-table td {
+    width: 50%;
+    vertical-align: top;
+    padding: 10px;
+    border: 1px solid #ddd;
+}
+/* タブボタンをリンクとしてスタイル調整 */
+.tab-btn {
+    display: inline-block;
+    padding: 10px 20px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    background-color: #eee;
+    text-decoration: none;
+    color: #333;
+}
+.tab-btn.active {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #4CAF50;
+}
+/* ユーティリティ・モーダル・インブリード表示用 */
+.mt-5 { margin-top: 5px; }
+.mt-0 { margin-top: 0; }
+.mb-5 { margin-bottom: 5px; }
+.m-0 { margin: 0; }
+.age-note { font-size: 0.9em; color: #555; margin-top: 5px; }
+.full-width-input { width: 100%; padding: 8px; box-sizing: border-box; }
+.btn-cancel { background-color: #6c757d !important; }
+.select-stables-modal { margin-top: 10px; width: 100%; padding: 10px; box-sizing: border-box; }
+#transfer_sub_kana_container { margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc; }
+.candidate-parents { font-size: 11px; color: #666; }
+.sire-color { color: #1E88E5; }
+.dam-color { color: #E53935; }
+.inbreed-highlight, .inbreed-horse { color: #E53935; font-weight: bold; }
+.inbreed-title { display: block; margin-bottom: 8px; }
+.inbreed-none { color: #888; }
