@@ -958,7 +958,14 @@ def transfer_stable():
     return redirect(url_for('horse_detail', name=horse_name))
 
 @app.route('/horse/<name>')
-def horse_detail(name):
+def horse_detail_redirect(name):
+    # デフォルトはプロフィールタブへリダイレクト
+    return redirect(url_for('horse_detail', name=name, active_tab='profile'))
+
+@app.route('/horse/<name>/<active_tab>')
+def horse_detail(name, active_tab):
+    if active_tab not in ['profile', 'races']:
+        return redirect(url_for('horse_detail', name=name, active_tab='profile'))
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and h[0] == name), None)
     horse_races = []
@@ -1109,7 +1116,8 @@ def horse_detail(name):
                            current_year=datetime.now().year,
                            pedigree=pedigree_data,
                            changes_history=changes_history,
-                           stables=get_stables_list()
+                           stables=get_stables_list(),
+                           active_tab=active_tab
                            )
 
 @app.route('/edit_horse/<name>')
