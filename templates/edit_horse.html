@@ -262,17 +262,33 @@ function updateGenderColor(selectElement) {
         }
     });
 
-// 【産地データ定義】ここを編集することでいつでも選択肢を追加・変更できます
+// 【産地データ定義】
 const locationData = {
-    "北海道": [
-        "厚真町", "安平町", "池田町", "浦河町", "えりも町", 
-        "追分町", "荻伏村", "帯広市", "様似町", "静内町", 
-        "士幌町", "白老町", "新ひだか町", "大樹町", "伊達市", 
-        "伊達町", "千歳市", "洞爺湖町", "洞爺村", "苫小牧市", 
-        "豊浦町", "新冠町", "登別市", "早来町", "日高町", 
-        "平取町", "三石町", "むかわ町", "鵡川町", "室蘭市", 
-        "森町", "門別町"
-    ],
+    "北海道": {
+        "日高振興局": [
+            "浦河町", "えりも町", "荻伏村", "様似町", "様似村", 
+            "静内町", "新ひだか町", "新冠町", "新冠村", "日高町", 
+            "日高村", "平取町", "幌泉町", "幌泉村", "三石町", 
+            "三石村", "門別町"
+        ],
+        "胆振総合振興局": [
+            "厚真町", "安平町", "安平村", "虻田町", "追分町", 
+            "追分村", "白老町", "白老村", "伊達市", "伊達町", 
+            "洞爺湖町", "洞爺村", "苫小牧市", "豊浦町", "登別市", 
+            "登別町", "早来町", "早来村", "穂別町", "穂別村", 
+            "幌別町", "幌別村", "むかわ町", "鵡川町", "鵡川村", 
+            "室蘭市"
+        ],
+        "十勝総合振興局": [
+            "池田町", "帯広市", "士幌町", "士幌村", "大樹町", "大樹村", "幕別町", "幕別村"
+        ],
+        "石狩振興局": [
+            "千歳市"
+        ],
+        "渡島総合振興局": [
+            "森町"
+        ]
+    },
     "青森県": [],
     "茨城県": [],
     "栃木県": [],
@@ -280,14 +296,13 @@ const locationData = {
     "熊本県": [],
     "宮崎県": [],
     "鹿児島県": [],
-    "海外": [
-        "アメリカ", "カナダ", 
-        "イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", 
-        "デンマーク", "スウェーデン", 
-        "オーストラリア", "ニュージーランド", 
-        "アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー", 
-        "南アフリカ"
-    ]
+    "海外": {
+        "北米": ["アメリカ", "カナダ"],
+        "欧州": ["イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", "デンマーク", "スウェーデン"],
+        "オセアニア": ["オーストラリア", "ニュージーランド"],
+        "南米": ["アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー"],
+        "アフリカ": ["南アフリカ"]
+    }
 };
 
 // 【南半球産リスト】ここに指定された地域が選ばれた時、7〜12月表示に切り替わります
@@ -304,28 +319,69 @@ const southernHemisphereDetails = [
 // 例：静内町・三石町は2006/3/31に合併し「新ひだか町」になったため、
 // 　　静内町・三石町は2006/3/31以降、新ひだか町は2006/3/31より前は選べません。
 const municipalityValidity = {
-    "静内町":     { start: null,          end: "2006-03-31" },
-    "三石町":     { start: null,          end: "2006-03-31" },
-    "新ひだか町": { start: "2006-03-31", end: null },
-    "早来町":     { start: null,          end: "2006-03-27" },
-    "追分町":     { start: null,          end: "2006-03-27" },
-    "安平町":     { start: "2006-03-27", end: null },
-    "鵡川町":     { start: null,          end: "2006-03-27" },
-    "むかわ町":   { start: "2006-03-27", end: null },
+    "浦河町":     { start: "1915-04-01",  end: null },
+    "荻伏村":     { start: "1902-04-01",  end: "1956-09-30" },
+    "えりも町":   { start: "1970-10-01",  end: null },
+    "幌泉町":     { start: "1959-01-01",  end: "1970-10-01" },
+    "幌泉村":     { start: "1906-04-01",  end: "1959-01-01" },
+    "様似町":     { start: "1952-04-01",  end: null },
+    "様似村":     { start: "1906-04-01",  end: "1952-04-01" },
+    "新ひだか町": { start: "2006-03-31",  end: null },
+    "静内町":     { start: "1931-04-01",  end: "2006-03-31" },
+    "三石町":     { start: "1951-04-01",  end: "2006-03-31" },
+    "三石村":     { start: "1906-04-01",  end: "1951-04-01" },
+    "新冠町":     { start: "1961-09-01",  end: null },
+    "新冠村":     { start: "1923-04-01",  end: "1961-09-01" },
+    "日高町":     { start: "1962-11-01",  end: null },
+    "日高村":     { start: "1943-04-01",  end: "1962-11-01" },
+    "門別町":     { start: "1952-04-01",  end: "2006-03-01" },
+    "門別村":     { start: "1909-04-01",  end: "1952-04-01" },
+    "平取町":     { start: "1954-11-01",  end: null },
+    "平取村":     { start: "1923-04-01",  end: "1954-11-01" },
+
+    "厚真町":     { start: "1960-01-01",  end: null },
+    "厚真村":     { start: "1906-04-01",  end: "1960-01-01" },
+    "安平町":     { start: "2006-03-27",  end: null },
+    "早来町":     { start: "1957-01-01",  end: "2006-03-27" },
+    "早来村":     { start: "1954-10-01",  end: "1957-01-01" },
+    "追分町":     { start: "1953-10-01",  end: "2006-03-27" },
+    "追分村":     { start: "1952-08-01",  end: "1953-10-01" },
+    "安平村":     { start: "1906-04-01",  end: "1954-10-01" },
+    "白老町":     { start: "1954-11-01",  end: null },
+    "白老村":     { start: "1919-07-01",  end: "1954-11-01" },
+    "伊達市":     { start: "1972-04-01",  end: null },
+    "伊達町":     { start: "1925-08-01",  end: "1972-04-01" },
+    "洞爺湖町":   { start: "2006-03-27",  end: null },
+    "虻田町":     { start: null,          end: "2006-03-27" },
     "洞爺村":     { start: null,          end: "2006-03-27" },
-    "洞爺湖町":   { start: "2006-03-27", end: null },
-    // 門別町は2006/3/1に（旧）日高町と合体し新設合併したが、新町名も「日高町」を
-    // 継承したため、日高町自体には存続制限を設けない（門別町のみ2006/3/1以降不可）
-    "門別町":     { start: null,          end: "2006-03-01" },
-    // 荻伏町（村）は1902/4/1発足、1956/9/30に浦河町へ編入され消滅
-    "荻伏村":     { start: "1902-04-01", end: "1956-09-30" },
-    "伊達市":     { start: "1972-04-01", end: null },
-    "伊達町":     { start: "1925-08-01", end: "1972-04-01" },
-    "千歳市":     { start: "1958-07-01", end: null },
-    "苫小牧市":   { start: "1948-04-01", end: null },
-    "登別市":     { start: "1970-04-01", end: null },
-    "室蘭市":     { start: "1922-08-01", end: null },
-    "帯広市":     { start: "1933-04-01", end: null }
+    "苫小牧市":   { start: "1948-04-01",  end: null },
+    "苫小牧町":   { start: "1918-04-01",  end: "1948-04-01" },
+    "豊浦町":     { start: "1947-08-01",  end: null },
+    "豊浦村":     { start: "1932-06-01",  end: "1947-08-01" },
+    "登別市":     { start: "1970-08-01",  end: null },
+    "登別町":     { start: "1961-04-01",  end: "1970-08-01" },
+    "幌別町":     { start: "1951-04-01",  end: "1961-04-01" },
+    "幌別村":     { start: "1919-04-01",  end: "1951-04-01" },
+    "むかわ町":   { start: "2006-03-27",  end: null },
+    "鵡川町":     { start: "1953-04-01",  end: "2006-03-27" },
+    "鵡川村":     { start: "1915-04-01",  end: "1953-04-01" },
+    "穂別町":     { start: "1962-01-01",  end: "2006-03-27" },
+    "穂別村":     { start: "1929-10-01",  end: "1962-01-01" },
+    "室蘭市":     { start: "1922-08-01",  end: null },
+
+    "池田町":     { start: "1926-07-01",  end: null },
+    "帯広市":     { start: "1933-04-01",  end: null },
+    "士幌町":     { start: "1962-11-01",  end: null },
+    "士幌村":     { start: "1926-06-01",  end: "1962-11-01" },
+    "大樹町":     { start: "1951-04-01",  end: null },
+    "大樹村":     { start: "1928-10-01",  end: "1951-04-01" },
+    "幕別町":     { start: "1946-09-15",  end: null },
+    "幕別村":     { start: "1906-04-01",  end: "1946-09-15" },
+    
+    "千歳市":     { start: "1958-07-01",  end: null },
+    "千歳町":     { start: "1939-04-01",  end: "1958-07-01" },
+
+    "森町":       { start: "1921-04-01",  end: null }
 };
 
 function _parseISODate(str) {
@@ -399,24 +455,53 @@ function initBirthplaceFields(monthSelectId, hasEmptyOption) {
     // 産地変更時の連動処理
     regionSelect.addEventListener('change', function() {
         const selectedRegion = this.value;
-        const rawDetails = locationData[selectedRegion] || [];
+        const regionData = locationData[selectedRegion];
         const birthPeriod = getCurrentBirthPeriod();
-        // 生年月日から見て、廃止済み・制定前の市町村は選択肢から除外する
-        const details = rawDetails.filter(d => isMunicipalityAvailable(d, birthPeriod));
 
-        detailSelect.innerHTML = '';
+        // 毎回リセットし、初期選択肢を追加
+        detailSelect.innerHTML = '<option value="" disabled selected>-- 産地を選択してください --</option>';
+        
+        let hasDetails = false;
+
+        if (Array.isArray(regionData)) {
+            // 今まで通り配列の場合（青森県などの空配列を想定）
+            const details = regionData.filter(d => isMunicipalityAvailable(d, birthPeriod));
+            if (details.length > 0) {
+                hasDetails = true;
+                details.forEach(detail => {
+                    const opt = document.createElement('option');
+                    opt.value = detail;
+                    opt.textContent = detail;
+                    detailSelect.appendChild(opt);
+                });
+            }
+        } else if (typeof regionData === 'object' && regionData !== null) {
+            // オブジェクト（グループ分け）の場合
+            for (const groupName in regionData) {
+                const details = regionData[groupName].filter(d => isMunicipalityAvailable(d, birthPeriod));
+                // そのグループに表示できる市町村が1つでもあれば optgroup を作成
+                if (details.length > 0) {
+                    hasDetails = true;
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = groupName; // ここが見出しになります
+                    
+                    details.forEach(detail => {
+                        const opt = document.createElement('option');
+                        opt.value = detail;
+                        opt.textContent = detail;
+                        optgroup.appendChild(opt);
+                    });
+                    detailSelect.appendChild(optgroup);
+                }
+            }
+        }
 
         // 詳細データがある場合（北海道・海外）のみ表示し、それ以外は隠す
-        if (details.length > 0) {
-            details.forEach(detail => {
-                const opt = document.createElement('option');
-                opt.value = detail;
-                opt.textContent = detail;
-                detailSelect.appendChild(opt);
-            });
+        if (hasDetails) {
             detailSelect.style.display = 'inline-block';
         } else {
             detailSelect.style.display = 'none';
+            detailSelect.innerHTML = ''; // 非表示の場合は中身を完全に空にする
         }
 
         // 月の選択肢を更新
