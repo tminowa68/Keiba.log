@@ -69,7 +69,7 @@
 
     <div style="margin-top: 20px;">
         <button type="submit" class="btn-save">登録する</button>
-        <a href="{{ url_for('horse_detail', name=origin) if origin else '/' }}" class="btn-cancel">キャンセル</a>
+        <a href="{{ url_for('horse_detail', name=origin, active_tab='profile') if origin else '/' }}" class="btn-cancel">キャンセル</a>
     </div>
 </form>
 </section>
