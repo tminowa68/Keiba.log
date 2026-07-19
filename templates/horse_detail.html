@@ -3,91 +3,117 @@
 {% block content %}
 <h1>馬名：{{ horse[0] }}</h1>
 <div class="entry-tabs mt-20">
-    <div class="tab-btn active" onclick="switchHorseTab('profile')">プロフィール</div>
-    <div class="tab-btn" onclick="switchHorseTab('races')">出走レース</div>
+    <a href="/horse/{{ horse[0] }}/profile" class="tab-btn {% if active_tab == 'profile' %}active{% endif %}">プロフィール</a>
+    <a href="/horse/{{ horse[0] }}/races" class="tab-btn {% if active_tab == 'races' %}active{% endif %}">出走レース</a>
 </div>
 
+{% if active_tab == 'profile' %}
 <section id="profile" class="entry-section active">
-    <p>
-        <strong>性別・馬齢：</strong> 
-        <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
-        {% if horse[2] is string %}
-            {{ current_year - horse[2][:4]|int }}歳
-        {% else %}
-            {{ current_year - horse[2].year }}歳
-        {% endif %}
-    </p>
-    <p>
-    <strong>生年月日：</strong>
-    {% if horse[2] is string %}
-        {% set d = horse[2].replace('-', '/').split('/') %}
-        {{ d[0] }}年 {{ d[1] }}月 {{ d[2] }}日
-    {% else %}
-        {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
-    {% endif %}
-    </p>
-
-    <div class="owner-info-container">
-        <p><strong>馬主名：</strong>
-            <span id="current-owner-display">
-                {% if horse|length > 5 and horse[5] %}
-                    {{ horse[5] }}
-                {% else %}
-                    {% if session.get('login') %}
-                        <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
-                    {% endif %}    
-                {% endif %}
-            </span>
-        </p>
-        {% if session.get('login') %}
-        <div class="owner-actions">
-            <a href="javascript:void(0)" onclick="openOwnerModal()" class="action-link">[ 変更 ]</a>
-        </div>
-        {% endif %}
-    </div>
-
-    <div class="stable-info-container">
-        <p><strong>厩舎：</strong>
-            <span id="current-stable-display">
-                {% if horse|length > 7 and horse[6] and horse[7] %}
-                    {{ horse[6] }}・{{ horse[7] }}
-                {% endif %}
-            </span>
-        </p>
-        <div class="stable-actions">
-        {% if changes_history|length > 0 %}
-            <a href="javascript:void(0)" onclick="openHistoryModal()" class="action-link">[ 変更履歴 ]</a>
-        {% endif %}
-        {% if session.get('login') %}
-            <a href="javascript:void(0)" onclick="openTransferModal()" class="action-link">[ 転厩 ]</a>
-        {% endif %}
-        </div>
-    </div>
-
-    <p><strong>産地：</strong> 
-        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
-            {% if horse|length > 9 and horse[9] %}
-                {{ horse[9] }}
-            {% endif %}
-            {% if horse|length > 10 and horse[10] %}
-                ・{{ horse[10] }}
-            {% endif %}
-        {% else %}
-            {% if session.get('login') %}
-                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
-            {% endif %}
-        {% endif %}
-    </p>
-
-    <p><strong>生産牧場：</strong> 
-        {% if horse|length > 11 and horse[11] %}
-            {{ horse[11] }}
-        {% else %}
-            {% if session.get('login') %}
-                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
-            {% endif %}
-        {% endif %}
-    </p>
+    <!-- 2列3行のテーブル構造に変更 -->
+    <table class="profile-info-table">
+        <tbody>
+            <tr>
+                <!-- 1列目: 性別・馬齢 -->
+                <td>
+                    <p class="m-0">
+                        <strong>性別・馬齢：</strong> 
+                        <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
+                        {% if horse[2] is string %}
+                            {{ current_year - horse[2][:4]|int }}歳
+                        {% else %}
+                            {{ current_year - horse[2].year }}歳
+                        {% endif %}
+                    </p>
+                </td>
+                <!-- 2列目: 厩舎 -->
+                <td>
+                    <div class="stable-info-container m-0">
+                        <p class="m-0"><strong>厩舎：</strong>
+                            <span id="current-stable-display">
+                                {% if horse|length > 7 and horse[6] and horse[7] %}
+                                    {{ horse[6] }}・{{ horse[7] }}
+                                {% endif %}
+                            </span>
+                        </p>
+                        <div class="stable-actions">
+                        {% if changes_history|length > 0 %}
+                            <a href="javascript:void(0)" onclick="openHistoryModal()" class="action-link">[ 変更履歴 ]</a>
+                        {% endif %}
+                        {% if session.get('login') %}
+                            <a href="javascript:void(0)" onclick="openTransferModal()" class="action-link">[ 転厩 ]</a>
+                        {% endif %}
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <!-- 1列目: 生年月日 -->
+                <td>
+                    <p class="m-0">
+                    <strong>生年月日：</strong>
+                    {% if horse[2] is string %}
+                        {% set d = horse[2].replace('-', '/').split('/') %}
+                        {{ d[0] }}年 {{ d[1] }}月 {{ d[2] }}日
+                    {% else %}
+                        {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
+                    {% endif %}
+                    </p>
+                </td>
+                <!-- 2列目: 産地 -->
+                <td>
+                    <p class="m-0"><strong>産地：</strong> 
+                        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
+                            {% if horse|length > 9 and horse[9] %}
+                                {{ horse[9] }}
+                            {% endif %}
+                            {% if horse|length > 10 and horse[10] %}
+                                ・{{ horse[10] }}
+                            {% endif %}
+                        {% else %}
+                            {% if session.get('login') %}
+                                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+                            {% endif %}
+                        {% endif %}
+                    </p>
+                </td>
+            </tr>
+            <tr>
+                <!-- 1列目: 馬主名 -->
+                <td>
+                    <div class="owner-info-container m-0">
+                        <p class="m-0"><strong>馬主名：</strong>
+                            <span id="current-owner-display">
+                                {% if horse|length > 5 and horse[5] %}
+                                    {{ horse[5] }}
+                                {% else %}
+                                    {% if session.get('login') %}
+                                        <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+                                    {% endif %}    
+                                {% endif %}
+                            </span>
+                        </p>
+                        {% if session.get('login') %}
+                        <div class="owner-actions">
+                            <a href="javascript:void(0)" onclick="openOwnerModal()" class="action-link">[ 変更 ]</a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </td>
+                <!-- 2列目: 生産牧場 -->
+                <td>
+                    <p class="m-0"><strong>生産牧場：</strong> 
+                        {% if horse|length > 11 and horse[11] %}
+                            {{ horse[11] }}
+                        {% else %}
+                            {% if session.get('login') %}
+                                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+                            {% endif %}
+                        {% endif %}
+                    </p>
+                </td>
+            </tr>
+        </tbody>
+    </table>
 
 {% macro render_inner(node, node_id, role='') %}
     <div class="horse-content">
@@ -266,12 +292,14 @@
         </div>
     </section>
 </div>
-    <p style="font-size: 0.9em; color: #555; margin-top: 5px;">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
+    <p class="age-note">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
 
     <div id="inbreed-results"></div>
 </section>
+{% endif %}
 
-<section id="races" class="entry-section">
+{% if active_tab == 'races' %}
+<section id="races" class="entry-section active">
     <div class="horse-status-container">
         <div>現在のクラス： <span id="current-class" class="status-highlight">計算中...</span></div>
         <div>合計収得賞金： <span id="total-prize">0</span> 万円</div>
@@ -327,10 +355,12 @@
         <div id="available-races-section" class="available-races-section"></div>
     </div>
 </section>
+{% endif %}
 
+<!-- モーダル関連のスタイル除去 -->
 <div id="candidateModal" class="candidate-modal-overlay">
     <div class="candidate-modal-content">
-        <h3 id="candidateModalTitle" style="margin-top:0;">同名馬の選択</h3>
+        <h3 id="candidateModalTitle" class="modal-title mt-0">同名馬の選択</h3>
         <p>正しい親馬を選択してください。</p>
         <ul id="candidateModalList" class="candidate-list"></ul>
         <button type="button" onclick="closeCandidateModal()" class="btn-close-modal">閉じる</button>
@@ -360,7 +390,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        <button type="button" onclick="closeHistoryModal()" class="btn-close-modal" style="margin-top:0;">閉じる</button>
+        <button type="button" onclick="closeHistoryModal()" class="btn-close-modal mt-0">閉じる</button>
     </div>
 </div>
 
@@ -372,38 +402,16 @@
             <input type="hidden" name="horse_name" value="{{ horse[0] }}">
             <input type="hidden" name="change_type" value="馬主変更">
             
-            <div class="form-group">
-                <label>年月日 (任意)</label>
-                <div class="transfer-date-group">
-                    <input type="number" name="t_year" placeholder="年"> 年
-                    <select name="t_month">
-                        <option value=""></option>
-                        {% for m in range(1, 13) %}
-                        <option value="{{ m }}">{{ m }}</option>
-                        {% endfor %}
-                    </select> 月
-                    <select name="t_day">
-                        <option value=""></option>
-                        {% for d in range(1, 32) %}
-                        <option value="{{ d }}">{{ d }}</option>
-                        {% endfor %}
-                    </select> 日
-                </div>
-            </div>
-
             <div class="form-group swap-group">
                 <label>旧馬主名</label>
-                <input type="text" id="owner_old_val" name="old_val" value="{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}" style="width:100%; padding:8px;" required>
-                
+                <input type="text" id="owner_old_val" name="old_val" value="{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}" class="full-width-input" required>
                 <div class="swap-icon" onclick="swapValues('owner_old_val', 'owner_new_val')" aria-label="入れ替え">⇅</div>
-                
                 <label>新馬主名</label>
-                <input type="text" id="owner_new_val" name="new_val" style="width:100%; padding:8px;" required>
+                <input type="text" id="owner_new_val" name="new_val" class="full-width-input" required>
             </div>
-
             <div class="modal-btn-group">
                 <button type="submit" class="btn-submit-entry">登録</button>
-                <button type="button" onclick="closeOwnerModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
+                <button type="button" onclick="closeOwnerModal()" class="btn-close-modal btn-cancel mt-0">キャンセル</button>
             </div>
         </form>
     </div>
@@ -437,15 +445,13 @@
 
             <div class="form-group swap-group">
                 <label>旧厩舎</label>
-                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" style="width:100%; padding:8px;" required>
-                
+                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" class="full-width-input" required>
                 <div class="swap-icon" onclick="swapValues('transfer_old_val', 'transfer_new_val')" aria-label="入れ替え">⇅</div>
-                
                 <label>新厩舎</label>
-                <input type="text" id="transfer_new_val" name="new_val" style="width:100%; padding:8px;" required>
+                <input type="text" id="transfer_new_val" name="new_val" class="full-width-input" required>
                 
-                <div class="select-stables" style="margin-top: 10px; width:100%; padding: 10px; box-sizing: border-box;">
-                    <p style="margin-bottom: 5px;">絞り込み：
+                <div class="select-stables select-stables-modal">
+                    <p class="mb-5">絞り込み：
                         <span class="kana-btn area-btn active" onclick="updateTransferAreaFilter('全', this)">全</span>
                         <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('美浦', this)">美浦</span>
                         <span class="kana-btn area-btn" onclick="updateTransferAreaFilter('栗東', this)">栗東</span>
@@ -456,17 +462,16 @@
                         {% endfor %}
                         <span class="kana-btn reg-kana active" onclick="updateTransferStableDropdown('', this)">全</span>
                     </div>
-                    <div id="transfer_sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
                     </div>
+                    <div id="transfer_sub_kana_container" class="kana-buttons"></div>
                     <select id="transfer_stable_select" class="transfer-select" onchange="document.getElementById('transfer_new_val').value = this.value">
                         <option value="">厩舎を選択してください</option>
                     </select>
                 </div>
             </div>
-
             <div class="modal-btn-group">
                 <button type="submit" class="btn-submit-entry">登録</button>
-                <button type="button" onclick="closeTransferModal()" class="btn-close-modal" style="margin-top: 0; background-color:#6c757d;">キャンセル</button>
+                <button type="button" onclick="closeTransferModal()" class="btn-close-modal btn-cancel mt-0">キャンセル</button>
             </div>
         </form>
     </div>
@@ -529,7 +534,7 @@ function openCandidateModal(btnElement) {
         <li>
             <div class="candidate-info">
                 <strong>${c['馬名']}</strong> (${birthYear}生 / ${region})<br>
-                <span style="font-size: 11px; color: #666;">父: ${c['父']} / 母: ${dam}</span>
+                <span class="candidate-parents">父: ${c['父']} / 母: ${dam}</span>
             </div>
             <button class="btn-submit-entry" 
                 onclick="selectCorrectParent('${safeName}', '${safeDam}', '${birthYear}')">これを選択</button>
@@ -574,13 +579,6 @@ function selectCorrectParent(parentName, damName, birthYear) {
 
 function closeCandidateModal() {
     document.getElementById('candidateModal').style.display = 'none';
-}
-
-function switchHorseTab(tabId) {
-    document.querySelectorAll('.entry-section').forEach(s => s.style.display = 'none');
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById(tabId).style.display = 'block';
-    event.currentTarget.classList.add('active');
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -755,10 +753,8 @@ document.addEventListener("DOMContentLoaded", function() {
                     rootIdx = Math.floor(rootIdx / 2);
                 }
                 let prefix = (rootIdx === 2) ? 'M' : 'F';
-                
-                let colorCode = (prefix === 'M') ? '#1E88E5' : '#E53935';
-                let coloredLabel = `<span style="color:${colorCode};">${prefix}${node.gen}</span>`;
-                // ---------------------------------------------
+                let colorClass = (prefix === 'M') ? 'sire-color' : 'dam-color';
+                let coloredLabel = `<span class="${colorClass}">${prefix}${node.gen}</span>`;
                 
                 genData.push({ gen: node.gen, label: coloredLabel });
                 cells.push(node.cell);
@@ -798,8 +794,8 @@ document.addEventListener("DOMContentLoaded", function() {
         let inbreedsHTML = [];
         inbreedsResult.forEach(inbreed => {
             inbreedsHTML.push(
-                `<div style="margin-bottom: 5px;">
-                    <span style="color:#E53935; font-weight:bold;">
+                `<div class="mb-5">
+                    <span class="inbreed-horse">
                         ${inbreed.displayNames}
                     </span>
                     ：${inbreed.pct}% ＝ ${inbreed.genString}
@@ -809,16 +805,15 @@ document.addEventListener("DOMContentLoaded", function() {
             inbreed.cells.forEach(cell => {
                 const nameDiv = cell.querySelector('.horse-name');
                 if (nameDiv) {
-                    nameDiv.style.color = '#E53935';
-                    nameDiv.style.fontWeight = 'bold';
+                    nameDiv.classList.add('inbreed-highlight');
                 }
             });
         });
         
-        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong>' + inbreedsHTML.join('');
+        resultDiv.innerHTML = '<strong class="inbreed-title">5代前までに発生したクロス（インブリード）</strong>' + inbreedsHTML.join('');
         resultDiv.style.display = 'block';
     } else {
-        resultDiv.innerHTML = '<strong style="display:block; margin-bottom:8px;">5代前までに発生したクロス（インブリード）</strong><span style="color:#888;">なし</span>';
+        resultDiv.innerHTML = '<strong class="inbreed-title">5代前までに発生したクロス（インブリード）</strong><span class="inbreed-none">なし</span>';
         resultDiv.style.display = 'block';
     }
 });
