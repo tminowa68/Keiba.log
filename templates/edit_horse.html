@@ -74,7 +74,7 @@
             </div>
             <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
             </div>
-            <select name="stable" id="reg_stable_select" onchange="onStableChange()"  style="margin-top: 10px;" required>
+            <select name="stable" id="reg_stable_select" onchange="splitStableValue(this)"  style="margin-top: 10px;" required>
                 <option value="">厩舎を選択してください</option>
             </select>
             {# 現在登録されている厩舎値（ドロップダウン構築後に選択復元するため）#}
@@ -197,7 +197,8 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         select.appendChild(opt);
     });
 
-    // onStableChange();
+    // ドロップダウン更新時にhiddenの拠点・厩舎名も合わせる
+    splitStableValue(select);
 }
 
 function createSubButtons(rowChar) {

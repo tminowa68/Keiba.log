@@ -32,7 +32,7 @@
         </p>
 
         <p id="stable_status_info" style="margin: 5px; padding-left: 10px;">
-            所属頭数：<span id="total_horses"></span>頭、 
+            所属頭数：<span id="total_horses"></span>頭<br>
             入厩頭数 / 馬房数：<span id="active_horses"></span> / <span id="stable_capacity"></span>
         </p>
     </div>
@@ -206,15 +206,15 @@ function onStableChange() {
     
     const stableInfo = allStables.find(s => s.display_name === selectedStable);
     if (stableInfo) {
-        const currentYear = new Date().getFullYear();
-        
-        // 1. 年齢と何年目かの計算・反映
+        // 1. 年齢と何年目かの反映
         const age = calculateAge(stableInfo.birth_date);
+        
         let yearsText = '-';
         if (stableInfo.capacity === '技術調教師') {
             yearsText = '技術調教師';
-        } else if (stableInfo.license_year) {
-            yearsText = (currentYear - parseInt(stableInfo.license_year)) + '年目';
+        } else if (stableInfo.years_active) {
+            // Python側で既に「〇年目」と計算済みの値をそのまま使う
+            yearsText = stableInfo.years_active;
         }
         
         const elAge = document.getElementById('stable_age');

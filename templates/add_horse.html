@@ -74,7 +74,7 @@
             </div>
             <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
             </div>
-            <select name="stable" id="reg_stable_select" onchange="onStableChange()"  style="margin-top: 10px;" required>
+            <select name="stable" id="reg_stable_select" onchange="splitStableValue(this)"  style="margin-top: 10px;" required>
                 <option value="">厩舎を選択してください</option>
             </select>
 
@@ -133,18 +133,22 @@
         </div>
         <div style="margin-bottom: 15px;">
             <label>免許取得年：</label>
-            <input type="number" name="license_year" style="width: 50px;" required>年
+            <input type="number" name="license_year" style="width: 60px;" required>年
         </div>
         <div style="margin-bottom: 15px;">
-            <label>免許取得年：</label>
-            <input type="number" name="license_year" style="width: 50px;" required>年
+            <label>開業年月日：</label>
+            <input type="text" name="opening" placeholder="例: 2010/03/01" style="width: 120px; padding:8px;">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label>引退予定 ：</label>
+            <input type="text" name="retirement" placeholder="例: 2030/02/28" style="width: 120px; padding:8px;">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label>臨時貸付 ：</label>
+            <input type="number" name="temp_loan" value="0" style="width: 60px; padding:8px;"> 馬房
         </div>
         <div style="margin-bottom: 15px;">
             <label>馬房数：</label>
-            <input type="number" name="capacity" id="capacity_input" value="20" step="2" style="width: 45px;" required>
-            <label style="margin-left: 15px; cursor: pointer;">
-                <input type="checkbox" name="is_technical" id="is_technical" onchange="toggleCapacity(this)"> 技術調教師
-            </label>
         </div>
         <div style="margin-top:20px; display:flex; gap:10px;">
             <button type="submit" style="background:#9C27B0; color:white; border:none; padding:10px 12px; border-radius:4px; cursor:pointer;">厩舎を登録</button>
@@ -244,7 +248,8 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         select.appendChild(opt);
     });
 
-    // onStableChange();
+    // ドロップダウン更新時にhiddenの拠点・厩舎名も合わせる
+    splitStableValue(select);
 }
 
 function createSubButtons(rowChar) {

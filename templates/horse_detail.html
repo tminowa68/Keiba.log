@@ -293,8 +293,10 @@
         </div>
     </section>
 </div>
-    <p class="age-note">※ 馬齢は仔が出生した時の馬齢を表示しています。</p>
-    <p class="age-note">※ 国旗は現在のものを表示しています。</p>
+    <p class="age-note">
+        ※ 馬齢は仔が出生した時の馬齢を表示しています。<br>
+        ※ 国旗は現在のものを表示しています。
+    </p>
 
     <div id="inbreed-results"></div>
 </section>
@@ -464,19 +466,18 @@
                         {% endfor %}
                         <span class="kana-btn reg-kana active" onclick="updateTransferStableDropdown('', this)">全</span>
                     </div>
-                    </div>
-                    <div id="transfer_sub_kana_container" class="kana-buttons"></div>
-                    <select id="transfer_stable_select" class="transfer-select" onchange="document.getElementById('transfer_new_val').value = this.value">
-                        <option value="">厩舎を選択してください</option>
-                    </select>
                 </div>
-            </div>
-            <div class="modal-btn-group">
-                <button type="submit" class="btn-submit-entry">登録</button>
-                <button type="button" onclick="closeTransferModal()" class="btn-close-modal btn-cancel mt-0">キャンセル</button>
-            </div>
-        </form>
+                <div id="transfer_sub_kana_container" class="kana-buttons"></div>
+                <select id="transfer_stable_select" class="transfer-select" onchange="document.getElementById('transfer_new_val').value = this.value">
+                    <option value="">厩舎を選択してください</option>
+                </select>
+        </div>
     </div>
+    <div class="modal-btn-group">
+        <button type="submit" class="btn-submit-entry">登録</button>
+        <button type="button" onclick="closeTransferModal()" class="btn-close-modal btn-cancel mt-0">キャンセル</button>
+    </div>
+    </form>
 </div>
 {% endif %}
 
