@@ -75,9 +75,9 @@ except gspread.SpreadsheetNotFound:
     ws1.update_title("Horses")
     ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場"])
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
-    ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "馬房数"])
+    ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
-    ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "馬房数"])
+    ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付"])
 
 try:
     sh.worksheet("Changes")
@@ -110,19 +110,58 @@ def get_stables_list():
     try:
         sh = gc.open(horse_data)
         all_stables = []
+        current_year = datetime.now().year # 現在の年を取得
+        
         for sheet_name in ["美浦", "栗東"]:
             try:
                 sheet = sh.worksheet(sheet_name)
                 data = sheet.get_all_values()
                 for row in data[1:]:
                     if len(row) >= 2 and row[0] and row[1]:
+                        # 列インデックスの更新 (E:開業[4], F:引退[5], G:馬房数[6], H:臨時貸付[7])
+                        opening = row[4] if len(row) > 4 else ""
+                        retirement = row[5] if len(row) > 5 else ""
+                        capacity_str = row[6] if len(row) > 6 else "0"
+                        temp_loan_str = row[7] if len(row) > 7 else "0"
+                        
+                        # --- 〇年目の計算（開業の年月日の西暦から数える） ---
+                        years_active = ""
+                        if opening:
+                            try:
+                                # YYYY/MM/DD や YYYY-MM-DD から西暦部分を抽出
+                                open_y = int(opening.split('/')[0]) if '/' in opening else int(opening[:4])
+                                years_active = f"{current_year - open_y + 1}年目"
+                            except ValueError:
+                                pass
+                                
+                        # --- 馬房数と臨時貸付の合計・文字装飾 ---
+                        display_capacity = capacity_str
+                        if capacity_str != "技術調教師":
+                            try:
+                                cap_val = int(capacity_str) if capacity_str else 0
+                                temp_val = int(temp_loan_str) if temp_loan_str else 0
+                                total_stalls = cap_val + temp_val
+                                
+                                # 臨時貸付がある場合は「〇 (臨時：〇)」を追加
+                                if temp_val > 0:
+                                    display_capacity = f"{total_stalls}（臨時：{temp_val}）"
+                                else:
+                                    display_capacity = f"{total_stalls}"
+                            except ValueError:
+                                display_capacity = capacity_str
+
                         all_stables.append({
                             'display_name': f"{sheet_name}・{row[0]}", 
                             'kana': row[1],
                             'area': sheet_name,
                             'birth_date': row[2] if len(row) > 2 else "",
                             'license_year': row[3] if len(row) > 3 else "",
-                            'capacity': row[4] if len(row) > 4 else "0"
+                            'opening': opening,
+                            'years_active': years_active,
+                            'retirement': retirement,
+                            'capacity': display_capacity,
+                            'raw_capacity': capacity_str,
+                            'temp_loan': temp_loan_str
                         })
             except gspread.WorksheetNotFound:
                 continue
@@ -671,6 +710,12 @@ def add_stable():
     day = request.form.get('day')
     birth_date_str = f"{year}/{month}/{day}" if year and month and day else ""
     license_year = request.form.get('license_year')
+    
+    # --- 新規追加項目 ---
+    opening = request.form.get('opening')
+    retirement = request.form.get('retirement')
+    temp_loan = request.form.get('temp_loan') or "0"
+    
     capacity = request.form.get('capacity')
     is_technical = request.form.get('is_technical')
     if is_technical:
@@ -686,13 +731,17 @@ def add_stable():
                 flash(f"エラー: {name}厩舎は既に{area}に登録されています。")
                 return redirect('/add_horse')
 
+            # スプレッドシートへ書き込む列の順番を変更
             sheet.append_row([
                 name,
                 kana_to_hira(re.sub(r'\s+', '', kana)),
                 birth_date_str,
                 license_year,
-                capacity
-                ])
+                opening,      # E列: 開業
+                retirement,   # F列: 引退
+                capacity,     # G列: 馬房数
+                temp_loan     # H列: 臨時貸付
+            ])
 
             sort_and_resize_table(sheet, sort_col_index=1)
         except Exception as e:
@@ -860,7 +909,7 @@ def save_change():
     except Exception as e:
         flash(f"エラーが発生しました: {e}")
         
-    return redirect(url_for('horse_detail', name=horse_name))
+    return redirect(url_for('horse_detail', name=horse_name, active_tab='profile'))
 
 @app.route('/update_specific_parent', methods=['POST'])
 @login_required
@@ -908,7 +957,7 @@ def update_specific_parent():
 
 @app.route('/transfer_stable', methods=['POST'])
 @login_required
-def transfer_stable():
+def transfer_stable(name):
     horse_name = request.form.get('horse_name')
     new_area = request.form.get('area')
     new_stable_name = request.form.get('stable_name')
@@ -955,7 +1004,7 @@ def transfer_stable():
     except Exception as e:
         flash(f"エラーが発生しました: {e}")
         
-    return redirect(url_for('horse_detail', name=horse_name))
+    return redirect(url_for('horse_detail', name=name, active_tab='profile'))
 
 @app.route('/horse/<name>')
 def horse_detail_redirect(name):
