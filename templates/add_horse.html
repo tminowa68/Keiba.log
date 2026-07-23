@@ -60,14 +60,21 @@
                 <button type="button" class="btn-reset" onclick="resetFilter()">リセット</button>
             </p>
             <div class="kana-buttons">
-                {% for char in ['あ','か','さ','た','な','は','ま','や','ら','わ'] %}
-                <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
-                {% endfor %}
-                <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+                <div class="kana-group">
+                    {% for char in ['あ','か','さ','た','な'] %}
+                    <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+                    {% endfor %}
+                </div>
+                <div class="kana-group">
+                    {% for char in ['は','ま','や','ら','わ'] %}
+                    <span class="kana-btn reg-kana" onclick="updateStableDropdown('reg', '{{ char }}', this)">{{ char }}</span>
+                    {% endfor %}
+                    <span class="kana-btn reg-kana active" onclick="updateStableDropdown('reg', '', this)">全</span>
+                </div>
             </div>
             <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
             </div>
-            <select id="reg_stable_select" required onchange="splitStableValue(this)" style="margin-top: 10px;">
+            <select name="stable" id="reg_stable_select" onchange="onStableChange()"  style="margin-top: 10px;" required>
                 <option value="">厩舎を選択してください</option>
             </select>
 
