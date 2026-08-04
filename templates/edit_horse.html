@@ -88,9 +88,10 @@
 
         <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
             <label>産地：</label>
-            <select name="birthplace_region" id="region_select" value="{{ horse[9] if horse|length > 9 else '' }}" style="padding:6px;">
+            <!-- value を data-initial に変更 -->
+            <select name="birthplace_region" id="region_select" data-initial="{{ horse[9] if horse|length > 9 else '' }}" style="padding:6px;">
             </select>
-            <select name="birthplace_detail" id="detail_select" value="{{ horse[10] if horse|length > 10 else '' }}" style="padding:6px; display: none;">
+            <select name="birthplace_detail" id="detail_select" data-initial="{{ horse[10] if horse|length > 10 else '' }}" style="padding:6px; display: none;">
             </select>
         </div>
 
@@ -188,6 +189,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         .filter(s => currentArea === '全' || s.area === currentArea)
         .filter(s => !char || (s.kana && regex.test(s.kana)))
         .filter(s => s.capacity !== '技術調教師')
+        .filter(s => !s.retirement)
         .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
 
     filtered.forEach(s => {
@@ -555,7 +557,20 @@ function initBirthplaceFields(monthSelectId, hasEmptyOption) {
     if (birthDaySelect) birthDaySelect.addEventListener('change', refreshDetailAvailability);
 
     // 初期表示を実行
+    const initialRegion = regionSelect.getAttribute('data-initial');
+    if (initialRegion) {
+        regionSelect.value = initialRegion;
+    }
+    // regionSelect の変更イベントを発火させ、detailSelect の選択肢を生成する
     regionSelect.dispatchEvent(new Event('change'));
+
+    // 生成された detailSelect の選択肢に対して初期値をセット
+    const initialDetail = detailSelect.getAttribute('data-initial');
+    if (initialDetail && [...detailSelect.options].some(o => o.value === initialDetail)) {
+        detailSelect.value = initialDetail;
+        // 月の再計算などのために change イベントを発火
+        detailSelect.dispatchEvent(new Event('change'));
+    }
 }
 
 function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
