@@ -162,6 +162,7 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
     const filtered = allStables
         .filter(s => currentArea === '全' || s.area === currentArea)
         .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .filter(s => !s.retirement)
         .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
 
     filtered.forEach(s => {
