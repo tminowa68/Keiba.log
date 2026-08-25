@@ -51,9 +51,17 @@
             </thead>
             <tbody>
                 {% for horse in results %}
+{% set has_alert = false %}
+                {% if horse|length > 5 and (horse[5] is none or horse[5]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 9 and (horse[9] is none or horse[9]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 10 and (horse[10] is none or horse[10]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 11 and (horse[11] is none or horse[11]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 <tr>
                     <td class="col-status">{{ horse[8] if horse|length > 8 else '在厩' }}</td>
-                    <td class="col-name"><a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a></td>
+                    <td class="col-name">
+                        {% if has_alert %}<span class="alert-mark">!</span>{% endif %}
+                        <a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a>
+                    </td>
                     <td class="col-gender {% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</td>
                     <td class="col-age">
                         {% if horse[2] %}
@@ -72,6 +80,11 @@
 <script>
 const allHorsesData = [
     {% for horse in results %}
+    {% set has_alert = false %}
+                {% if horse|length > 5 and (horse[5] is none or horse[5]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 9 and (horse[9] is none or horse[9]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 10 and (horse[10] is none or horse[10]|string|trim == '') %}{% set has_alert = true %}{% endif %}
+                {% if horse|length > 11 and (horse[11] is none or horse[11]|string|trim == '') %}{% set has_alert = true %}{% endif %}
     {
         name: "{{ horse[0] }}",
         gender: "{{ horse[1] }}",
@@ -79,7 +92,8 @@ const allHorsesData = [
         sire: "{{ horse[3] }}",
         stable: "{{ horse[6] }}・{{ horse[7] }}",
         // 状態データを追加 (無い場合は仮に'在厩'とする)
-        status: "{{ horse[8] if horse|length > 8 else '在厩' }}"
+        status: "{{ horse[8] if horse|length > 8 else '在厩' }}",
+        hasAlert: {{ 'true' if has_alert else 'false' }}
     },
     {% endfor %}
 ];
@@ -350,7 +364,10 @@ function renderAgeTables() {
                         return `
                         <tr>
                             <td>${h.status}</td>
-                            <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
+                            <td class="col-name">
+                                ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
+                                <a href="/horse/${h.name}">${h.name}</a>
+                            </td>
                             <td class="col-gender ${genderClass}">${h.gender}</td>
                             <td class="col-age">${h.age || '-'}歳</td>
                             <td class="col-sire">${h.sire}</td>
@@ -397,7 +414,10 @@ function renderAgeTables() {
                             return `
                             <tr>
                                 <td>${h.status}</td>
-                                <td class="col-name"><a href="/horse/${h.name}">${h.name}</a></td>
+                                <td class="col-name">
+                                    ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
+                                    <a href="/horse/${h.name}">${h.name}</a>
+                                </td>
                                 <td class="col-gender ${genderClass}">${h.gender}</td>
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
                                 <td class="col-sire">${h.sire}</td>

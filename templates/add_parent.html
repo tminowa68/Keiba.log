@@ -56,10 +56,9 @@
     
     <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
         <label>産地：</label>
-        <select name="birthplace_region" id="parent_region_select" value="" style="padding:6px;">
+        <select name="birthplace_region" id="region_select" data-initial="{{ data[5] if data and data|length > 5 else '' }}" style="padding:6px;">
         </select>
-        <select name="birthplace_detail" id="parent_detail_select" value="" style="padding:6px; display: none;">
-            <option value="" disabled selected>-- 産地を選択してください --</option>
+        <select name="birthplace_detail" id="detail_select" data-initial="{{ data[6] if data and data|length > 6 else '' }}" style="padding:6px; display: none;">
         </select>
     </div>
 
@@ -94,7 +93,7 @@ const locationData = {
             "室蘭市"
         ],
         "十勝総合振興局": [
-            "池田町", "帯広市", "士幌町", "士幌村", "大樹町", "大樹村", "幕別町", "幕別村"
+            "池田町", "帯広市", "清水町", "清水村", "士幌町", "士幌村", "大樹町", "大樹村", "幕別町", "幕別村"
         ],
         "石狩振興局": [
             "千歳市"
@@ -188,6 +187,8 @@ const municipalityValidity = {
 
     "池田町":     { start: "1926-07-01",  end: null },
     "帯広市":     { start: "1933-04-01",  end: null },
+    "清水町":     { start: "1936-01-01",  end: null },
+    "清水村":     { start: "1927-09-25",  end: "1936-01-01" },
     "士幌町":     { start: "1962-11-01",  end: null },
     "士幌村":     { start: "1926-06-01",  end: "1962-11-01" },
     "大樹町":     { start: "1951-04-01",  end: null },
@@ -242,13 +243,12 @@ function isMunicipalityAvailable(name, birthPeriod) {
 }
 
 function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
-    const regionSelect = document.getElementById('parent_region_select');
-    const detailSelect = document.getElementById('parent_detail_select');
+    // IDをHTMLに合わせる
+    const regionSelect = document.getElementById('region_select');
+    const detailSelect = document.getElementById('detail_select');
     if (!regionSelect || !detailSelect) return;
 
-    // Jinja2テンプレートから既存データを受け取る（なければ空文字）
-    const initialRegion = "{{ data.birthplace_region if data and data.birthplace_region else '' }}";
-    const initialDetail = "{{ data.birthplace_detail if data and data.birthplace_detail else '' }}";
+    // Jinja2テンプレートから南半球判定のみ受け取る
     const isSH = {{ 'true' if is_sh else 'false' }};
 
     // 産地（第1階層）の選択肢を生成
@@ -365,22 +365,26 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     if (monthSelectForListener) monthSelectForListener.addEventListener('change', refreshDetailAvailability);
     if (birthDaySelect) birthDaySelect.addEventListener('change', refreshDetailAvailability);
 
-    // 初期データのマッピング処理
-    if (initialRegion && locationData[initialRegion]) {
+    // 初期データのマッピング処理 (data-initial属性を利用)
+    const initialRegion = regionSelect.getAttribute('data-initial');
+    
+    if (initialRegion) {
         regionSelect.value = initialRegion;
-        regionSelect.dispatchEvent(new Event('change'));
-        if (initialDetail && locationData[initialRegion].includes(initialDetail)) {
-            detailSelect.value = initialDetail;
-            detailSelect.dispatchEvent(new Event('change'));
-        }
     } else if (isSH) {
-        // 産地データはないが月データから南半球（7〜12月）と判定できる場合の初期表示
+        // 産地データはないが月データから南半球と判定できる場合
         regionSelect.value = "海外";
-        regionSelect.dispatchEvent(new Event('change'));
+    }
+
+    // イベントを発火させて詳細(detailSelect)の選択肢を生成
+    regionSelect.dispatchEvent(new Event('change'));
+
+    const initialDetail = detailSelect.getAttribute('data-initial');
+    if (initialDetail && [...detailSelect.options].some(o => o.value === initialDetail)) {
+        detailSelect.value = initialDetail;
+        detailSelect.dispatchEvent(new Event('change'));
+    } else if (!initialRegion && isSH) {
         detailSelect.value = "オーストラリア";
         detailSelect.dispatchEvent(new Event('change'));
-    } else {
-        regionSelect.dispatchEvent(new Event('change'));
     }
 }
 
