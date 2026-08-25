@@ -1522,3 +1522,20 @@ td.col-num{
 .inbreed-highlight, .inbreed-horse { color: #E53935; font-weight: bold; }
 .inbreed-title { display: block; margin-bottom: 8px; }
 .inbreed-none { color: #888; }
+
+/* --- 警告マークのスタイル --- */
+.alert-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.2em;
+    height: 1.2em;
+    background-color: #FFFF00; /* 黄色の背景 */
+    color: #000000;
+    border: 2px solid #000000; /* 黒縁 */
+    border-radius: 50%; /* 丸 */
+    font-weight: bold;
+    font-size: 0.9em;
+    margin-right: 5px;
+    vertical-align: middle;
+}
