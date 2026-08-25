@@ -56,9 +56,9 @@
     
     <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
         <label>産地：</label>
-        <select name="birthplace_region" id="region_select" data-initial="{{ data[5] if data and data|length > 5 else '' }}" style="padding:6px;">
+        <select name="birthplace_region" id="region_select" data-initial="{{ data.birthplace_region if data and data.birthplace_region else '' }}" style="padding:6px;">
         </select>
-        <select name="birthplace_detail" id="detail_select" data-initial="{{ data[6] if data and data|length > 6 else '' }}" style="padding:6px; display: none;">
+        <select name="birthplace_detail" id="detail_select" data-initial="{{ data.birthplace_detail if data and data.birthplace_detail else '' }}" style="padding:6px; display: none;">
         </select>
     </div>
 

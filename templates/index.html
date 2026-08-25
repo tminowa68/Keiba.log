@@ -51,7 +51,7 @@
             </thead>
             <tbody>
                 {% for horse in results %}
-{% set has_alert = false %}
+                {% set has_alert = false %}
                 {% if horse|length > 5 and (horse[5] is none or horse[5]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 {% if horse|length > 9 and (horse[9] is none or horse[9]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 {% if horse|length > 10 and (horse[10] is none or horse[10]|string|trim == '') %}{% set has_alert = true %}{% endif %}
@@ -83,7 +83,6 @@ const allHorsesData = [
     {% set has_alert = false %}
                 {% if horse|length > 5 and (horse[5] is none or horse[5]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 {% if horse|length > 9 and (horse[9] is none or horse[9]|string|trim == '') %}{% set has_alert = true %}{% endif %}
-                {% if horse|length > 10 and (horse[10] is none or horse[10]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 {% if horse|length > 11 and (horse[11] is none or horse[11]|string|trim == '') %}{% set has_alert = true %}{% endif %}
     {
         name: "{{ horse[0] }}",
