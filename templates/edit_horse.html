@@ -2,8 +2,23 @@
 {% block title %}プロフィール編集 - keiba.log{% endblock %}
 {% block content %}
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+            <div style="color: red; padding: 10px; font-size:0.9em;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
     <form method="POST" action="/update_horse" autocomplete="off">
         <h2>競走馬プロフィールの編集</h2>
+
+        <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>JRAのURL：</label><br>
+            <input type="text" id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus style="width: 340px; padding:8px; margin-top:5px;">
+            <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+            <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
+
         <div style="margin-bottom:15px;">    
             <!-- 変更前の馬名をhiddenで送信 -->
             <input type="hidden" name="old_name" value="{{ horse[0] }}">
@@ -251,6 +266,180 @@ function splitStableValue(selectElement) {
     } else {
         areaInput.value = "";
         stableNameInput.value = "";
+    }
+}
+
+// 【JRAページ取得】入力されたJRAのURLから競走馬情報を取得し、フォームへ自動入力する
+function setSelectValueRobust(selectEl, value) {
+    if (!selectEl || value === undefined || value === null || value === '') return;
+    value = String(value);
+    const exists = [...selectEl.options].some(o => o.value === value);
+    if (!exists) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+}
+
+// 「名前（所属）」形式の文字列を { name, area } に分解する
+function parseTrainerField(text) {
+    const m = text.match(/^(.+?)[（(]\s*(.+?)\s*[）)]\s*$/);
+    if (m) {
+        return { name: m[1].trim(), area: m[2].trim() };
+    }
+    return { name: text.trim(), area: '' };
+}
+
+// 所属・調教師名から、登録済み厩舎の選択肢の中から一致するものを探す
+function findStableMatch(area, trainerName) {
+    const candidates = allStables.filter(s => !area || s.area === area);
+    // 完全一致を優先
+    let match = candidates.find(s => {
+        const stableName = s.display_name.split('・').slice(1).join('・');
+        return stableName === trainerName;
+    });
+    if (match) return match;
+    // 部分一致（姓のみの登録など、表記ゆれを考慮）
+    match = candidates.find(s => {
+        const stableName = s.display_name.split('・').slice(1).join('・');
+        return stableName && (trainerName.includes(stableName) || stableName.includes(trainerName));
+    });
+    return match || null;
+}
+
+// JRAの「産地」表記を、産地（詳細）→産地（第1階層）→海外（略称変換）の優先順位で
+// locationData と突き合わせ、{ region, detail } を返す。一致しなければ null。
+const OVERSEAS_ABBREVIATION_MAP = {
+    '米国': 'アメリカ',
+    '加国': 'カナダ',
+    '英国': 'イギリス',
+    '愛国': 'アイルランド',
+    '仏国': 'フランス',
+    '独国': 'ドイツ',
+    '豪国': 'オーストラリア',
+    '新国': 'ニュージーランド',
+    '亜国': 'アルゼンチン'
+};
+
+function findBirthplaceMatch(raw) {
+    if (!raw) return null;
+    const text = raw.trim();
+
+    // 1. 産地（詳細：市区町村・国名など）に一致するか探す
+    for (const region in locationData) {
+        const regionData = locationData[region];
+        if (Array.isArray(regionData)) {
+            if (regionData.includes(text)) {
+                return { region, detail: text };
+            }
+        } else if (regionData && typeof regionData === 'object') {
+            for (const group in regionData) {
+                if (regionData[group].includes(text)) {
+                    return { region, detail: text };
+                }
+            }
+        }
+    }
+
+    // 2. 産地（第1階層）そのものに一致するか
+    if (Object.prototype.hasOwnProperty.call(locationData, text)) {
+        return { region: text, detail: null };
+    }
+
+    // 3. 海外の略称（米国・加国など）を正式名称に変換して「海外」から選ぶ
+    if (OVERSEAS_ABBREVIATION_MAP[text]) {
+        return { region: '海外', detail: OVERSEAS_ABBREVIATION_MAP[text] };
+    }
+
+    return null;
+}
+
+async function fetchFromJra() {
+    const urlInput = document.getElementById('jra_url_input');
+    const statusEl = document.getElementById('jra_fetch_status');
+    const url = urlInput.value.trim();
+
+    if (!url) {
+        statusEl.textContent = 'URLを入力してください。';
+        statusEl.style.color = 'red';
+        return;
+    }
+
+    statusEl.textContent = '取得中...';
+    statusEl.style.color = '#666';
+
+    try {
+        const res = await fetch('/api/fetch_jra_horse?url=' + encodeURIComponent(url));
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+            statusEl.textContent = data.error || '取得に失敗しました。';
+            statusEl.style.color = 'red';
+            return;
+        }
+
+        const nameInput = document.querySelector('input[name="name"]');
+        const sireInput = document.querySelector('input[name="sire"]');
+        const damInput = document.querySelector('input[name="dam"]');
+        const genderSelect = document.getElementById('gender_select');
+        const yearInput = document.querySelector('input[name="year"]');
+        const monthSelect = document.getElementById('horse_month');
+        const daySelect = document.querySelector('select[name="day"]');
+        const ownerInput = document.querySelector('input[name="owner"]');
+        const breederInput = document.querySelector('input[name="breeder"]');
+        const stableSelect = document.getElementById('reg_stable_select');
+
+        if (data.name && nameInput) nameInput.value = data.name;
+        if (data.sire && sireInput) sireInput.value = data.sire;
+        if (data.dam && damInput) damInput.value = data.dam;
+        if (data.owner && ownerInput) ownerInput.value = data.owner;
+        if (data.breeder && breederInput) breederInput.value = data.breeder;
+
+        if (data.gender && genderSelect) {
+            setSelectValueRobust(genderSelect, data.gender);
+            updateGenderColor(genderSelect);
+        }
+
+        if (data.birth_year && yearInput) {
+            yearInput.value = data.birth_year;
+            // 産地の選択肢（南半球判定など）を最新の生年に合わせて更新
+            yearInput.dispatchEvent(new Event('input'));
+        }
+
+        if (data.birth_month && monthSelect) setSelectValueRobust(monthSelect, data.birth_month);
+        if (data.birth_day && daySelect) setSelectValueRobust(daySelect, data.birth_day);
+
+        if (data.trainer_raw && stableSelect) {
+            const { name: trainerName, area: trainerArea } = parseTrainerField(data.trainer_raw);
+            const match = findStableMatch(trainerArea, trainerName);
+            if (match) {
+                setSelectValueRobust(stableSelect, match.display_name);
+                splitStableValue(stableSelect);
+            }
+        }
+
+        if (data.birthplace) {
+            const regionSelect = document.getElementById('region_select');
+            const detailSelect = document.getElementById('detail_select');
+            const bp = findBirthplaceMatch(data.birthplace);
+            if (bp && regionSelect && detailSelect) {
+                setSelectValueRobust(regionSelect, bp.region);
+                // 選択した産地（第1階層）に応じて、産地（詳細）の選択肢を再構築させる
+                regionSelect.dispatchEvent(new Event('change'));
+                if (bp.detail) {
+                    setSelectValueRobust(detailSelect, bp.detail);
+                    detailSelect.dispatchEvent(new Event('change'));
+                }
+            }
+        }
+
+        statusEl.textContent = '情報を取得しました。内容を確認してください。';
+        statusEl.style.color = 'green';
+    } catch (e) {
+        statusEl.textContent = '通信エラーが発生しました。';
+        statusEl.style.color = 'red';
     }
 }
 
