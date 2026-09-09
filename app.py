@@ -1,8 +1,10 @@
 import sqlite3
 import re, os
 import json
+import requests
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 
@@ -73,7 +75,7 @@ except gspread.SpreadsheetNotFound:
     sh = gc.create(horse_data)
     ws1 = sh.sheet1
     ws1.update_title("Horses")
-    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場"])
+    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場", "URL"])
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
     ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
@@ -97,6 +99,117 @@ except gspread.WorksheetNotFound:
 
 def kana_to_hira(text):
     return "".join([chr(ord(c) - 96) if "ァ" <= c <= "ヶ" else c for c in text])
+
+# --- JRA競走馬情報ページ取得・解析 ---
+JRA_ALLOWED_HOSTS = ("jra.go.jp", "jra.jp")
+
+def _dt_dd_text(soup, label):
+    """<dt>label</dt> の次にある <dd> のテキストを取得する"""
+    dt = soup.find('dt', string=lambda s: s and s.strip() == label)
+    if not dt:
+        return None
+    dd = dt.find_next_sibling('dd')
+    if not dd:
+        dd = dt.find_next('dd')
+    if dd:
+        return dd.get_text(strip=True)
+    return None
+
+def _text_after(element):
+    """要素の直後（その要素自身の子孫は含まない）に現れる、最初の空でないテキストを取得する"""
+    for sib in element.next_siblings:
+        if isinstance(sib, str):
+            text = sib.strip()
+            if text:
+                return text
+        else:
+            text = sib.get_text(strip=True)
+            if text:
+                return text
+    # 同階層に見つからない場合は、親要素より後を辿る
+    if element.parent is not None:
+        return _text_after(element.parent)
+    return None
+
+def fetch_jra_horse_info(url):
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not any(
+        parsed.netloc.endswith(host) for host in JRA_ALLOWED_HOSTS
+    ):
+        raise ValueError("JRA公式サイト（jra.go.jp / jra.jp）のURLを入力してください。")
+
+    resp = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; keiba.log/1.0)"},
+        timeout=10
+    )
+    resp.raise_for_status()
+    # JRAサイトはShift_JIS(CP932)系のエンコーディングのため明示的に指定する
+    resp.encoding = resp.apparent_encoding or 'cp932'
+    try:
+        soup = BeautifulSoup(resp.content, 'html.parser', from_encoding='cp932')
+    except Exception:
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+    result = {}
+
+    # 馬名：<span class="opt">競走馬情報</span> の次の値
+    # （spanタグ自身の子テキストを拾ってしまわないよう、兄弟要素以降だけを探索する）
+    opt_span = soup.find('span', class_='opt', string=lambda s: s and '競走馬情報' in s)
+    if opt_span:
+        name = _text_after(opt_span)
+        if name:
+            result['name'] = name
+
+    sire = _dt_dd_text(soup, '父')
+    if sire:
+        result['sire'] = sire
+
+    dam = _dt_dd_text(soup, '母')
+    if dam:
+        # 「産駒」の文字が含まれる場合は取り除く（括弧付きの場合も考慮）
+        dam = re.sub(r'[（(]?産駒[）)]?', '', dam).strip()
+        result['dam'] = dam
+
+    gender_text = _dt_dd_text(soup, '性別')
+    if gender_text:
+        if 'せん' in gender_text or 'セン' in gender_text:
+            result['gender'] = 'せん'
+        elif '牝' in gender_text:
+            result['gender'] = '牝'
+        elif '牡' in gender_text:
+            result['gender'] = '牡'
+
+    birth_text = _dt_dd_text(soup, '生年月日')
+    if birth_text:
+        m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', birth_text)
+        if m:
+            result['birth_year'] = m.group(1)
+            result['birth_month'] = str(int(m.group(2)))
+            result['birth_day'] = str(int(m.group(3)))
+
+    owner = _dt_dd_text(soup, '馬主名')
+    if owner:
+        result['owner'] = owner
+
+    # 調教師名：「名前（所属）」形式で取得されるため、そのまま渡してフロント側で
+    # 「所属・名前」形式に変換し、厩舎の選択肢から一致するものを選ぶ
+    trainer_raw = _dt_dd_text(soup, '調教師名')
+    if trainer_raw:
+        result['trainer_raw'] = trainer_raw
+
+    breeder = _dt_dd_text(soup, '生産牧場')
+    if breeder:
+        result['breeder'] = breeder
+
+    # 産地：フロント側で birthplace_detail → birthplace_region → 海外(略称変換) の
+    # 優先順位でマッチングするため、生データをそのまま渡す
+    birthplace = _dt_dd_text(soup, '産地')
+    if birthplace:
+        result['birthplace'] = birthplace
+
+    return result
 
 def get_all_horses():
     try:
@@ -658,6 +771,24 @@ def index():
                            stables=get_stables_list(), 
                            current_year=datetime.now().year)
 
+@app.route('/api/fetch_jra_horse')
+@login_required
+def api_fetch_jra_horse():
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({"error": "URLを入力してください。"}), 400
+    try:
+        data = fetch_jra_horse_info(url)
+        if not data:
+            return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
+        return jsonify(data), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"ページの取得に失敗しました: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"解析中にエラーが発生しました: {e}"}), 500
+
 @app.route('/add_horse')
 @login_required
 def add_horse_page():
@@ -691,7 +822,8 @@ def add_horse():
             request.form.get('status'),
             request.form.get('birthplace_region'),
             request.form.get('birthplace_detail'),
-            request.form.get('breeder')
+            request.form.get('breeder'),
+            request.form.get('jra_url')
         ])
         sort_and_resize_table(ws, sort_col_index=0)
         return redirect(f"/horse/{name}")
@@ -760,7 +892,7 @@ def add_parent():
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title=p_type, rows=100, cols=10)
                 # 列構造の変更
-                ws.append_row(["馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場"])
+                ws.append_row(["馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "URL"])
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
             birth_date_str = f"{y}/{m}/{d}" if y and m and d else (str(y) if y else "")
@@ -770,21 +902,29 @@ def add_parent():
             
             if found_idx:
                 ws.update(
-                    f'B{found_idx}:H{found_idx}', 
+                    f'B{found_idx}:I{found_idx}', 
                     [[birth_date_str, 
                     request.form.get('sire'), 
                     request.form.get('dam'),
                     request.form.get('owner'),
                     request.form.get('birthplace_region'),
                     request.form.get('birthplace_detail'),
-                    request.form.get('breeder')]]
+                    request.form.get('breeder'),
+                    request.form.get('jra_url')
+                    ]]
                 )
             else:
-                ws.append_row(
-                    [p_name, birth_date_str, request.form.get('sire'), request.form.get('dam'),
-                    request.form.get('owner'), request.form.get('birthplace_region'),
-                    request.form.get('birthplace_detail'), request.form.get('breeder')]
-                )
+                ws.append_row([
+                    p_name, 
+                    birth_date_str, 
+                    request.form.get('sire'), 
+                    request.form.get('dam'), 
+                    request.form.get('owner'), 
+                    request.form.get('birthplace_region'), 
+                    request.form.get('birthplace_detail'), 
+                    request.form.get('breeder'),
+                    request.form.get('jra_url')
+                ])
             sort_and_resize_table(ws, sort_col_index=0)
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
@@ -794,7 +934,7 @@ def add_parent():
     p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
     existing_data = {
         "year": "", "month": "", "day": "", "sire": "", "dam": "", 
-        "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": ""
+        "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": "", "URL": ""
     }
     try:
         sh = gc.open(horse_data)
@@ -813,6 +953,7 @@ def add_parent():
             if len(row) > 5: existing_data["birthplace_region"] = row[5]
             if len(row) > 6: existing_data["birthplace_detail"] = row[6]
             if len(row) > 7: existing_data["breeder"] = row[7]
+            if len(row) > 8: existing_data["URL"] = row[8]
     except: pass
     return render_template('add_parent.html', p_type=p_type, p_name=p_name, origin=request.args.get('origin', ''), data=existing_data)
 
@@ -836,10 +977,11 @@ def update_horse():
                     request.form.get('owner'), request.form.get('location'),
                     request.form.get('stable_name'), request.form.get('status'),
                     request.form.get('birthplace_region'), request.form.get('birthplace_detail'),
-                    request.form.get('breeder')
+                    request.form.get('breeder'),
+                    request.form.get('jra_url')
                 ]]
                 # 12列分更新
-                ws.update(f'A{i+1}:L{i+1}', update_values)
+                ws.update(f'A{i+1}:M{i+1}', update_values)
                 break
         return redirect(f"/horse/{new_name}")
     except Exception as e:
