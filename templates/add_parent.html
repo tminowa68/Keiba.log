@@ -23,7 +23,7 @@
 
     <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
         <label>JRAのURL：</label><br>
-        <input type="text" id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." style="width: 340px; padding:8px; margin-top:5px;">
+        <input type="text" id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus style="width: 340px; padding:8px; margin-top:5px;">
         <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
         <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
     </div>
@@ -36,7 +36,7 @@
 
     <div style="margin-bottom:15px;">
         <label>血統：</label><br>
-        <input type="text" name="sire" value="{{ data.sire }}" placeholder="父" autofocus style="width:140px; padding:8px;">
+        <input type="text" name="sire" value="{{ data.sire }}" placeholder="父" style="width:140px; padding:8px;">
         ×
         <input type="text" name="dam" value="{{ data.dam }}" placeholder="母" style="width:140px; padding:8px;">
     </div>
@@ -107,15 +107,15 @@ function setSelectValueRobust(selectEl, value) {
 // JRAの「産地」表記を、産地（詳細）→産地（第1階層）→海外（略称変換）の優先順位で
 // locationData と突き合わせ、{ region, detail } を返す。一致しなければ null。
 const OVERSEAS_ABBREVIATION_MAP = {
-    '米国': 'アメリカ',
-    '加国': 'カナダ',
-    '英国': 'イギリス',
-    '愛国': 'アイルランド',
-    '仏国': 'フランス',
-    '独国': 'ドイツ',
-    '豪国': 'オーストラリア',
-    '新国': 'ニュージーランド',
-    '亜国': 'アルゼンチン'
+    '米': 'アメリカ',
+    '加': 'カナダ',
+    '英': 'イギリス',
+    '愛': 'アイルランド',
+    '仏': 'フランス',
+    '独': 'ドイツ',
+    '豪': 'オーストラリア',
+    '新': 'ニュージーランド',
+    '亜': 'アルゼンチン'
 };
 
 function findBirthplaceMatch(raw) {
