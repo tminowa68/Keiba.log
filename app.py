@@ -145,12 +145,9 @@ def fetch_jra_horse_info(url):
         timeout=10
     )
     resp.raise_for_status()
-    # JRAサイトはShift_JIS(CP932)系のエンコーディングのため明示的に指定する
-    resp.encoding = resp.apparent_encoding or 'cp932'
-    try:
-        soup = BeautifulSoup(resp.content, 'html.parser', from_encoding='cp932')
-    except Exception:
-        soup = BeautifulSoup(resp.text, 'html.parser')
+
+    html_text = resp.content.decode('cp932', errors='replace')
+    soup = BeautifulSoup(html_text, 'html.parser')
 
     result = {}
 
@@ -199,7 +196,7 @@ def fetch_jra_horse_info(url):
     if trainer_raw:
         result['trainer_raw'] = trainer_raw
 
-    breeder = _dt_dd_text(soup, '生産牧場')
+    breeder = _dt_dd_text(soup, '生産牧場') or _dt_dd_text(soup, '生産者')
     if breeder:
         result['breeder'] = breeder
 
