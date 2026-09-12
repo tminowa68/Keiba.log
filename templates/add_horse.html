@@ -14,21 +14,21 @@
 
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>JRAのURL：</label><br>
-            <input type="text" id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus style="width: 340px; padding:8px; margin-top:5px;" >
+            <textarea id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;"></textarea>
             <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
             <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
 
         <div style="margin-bottom:15px;">
             <label>馬名：</label>
-            <input type="text" name="name" placeholder="馬名" style="width: 140px; padding:8px; margin-top:5px;" required>
+            <textarea name="name" placeholder="馬名" rows="1" class="auto-grow-textarea" style="width: 20ch; margin-top:5px;" required></textarea>
         </div>
 
         <div style="margin-bottom:15px;">
             <label>血統：</label><br>
-            <input type="text" name="sire" placeholder="父" style="width:140px; padding:8px;">
+            <textarea name="sire" placeholder="父" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;"></textarea>
             ×
-            <input type="text" name="dam" placeholder="母" style="width:140px; padding:8px;">
+            <textarea name="dam" placeholder="母" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;"></textarea>
         </div>
 
         <div style="margin-bottom: 15px;">
@@ -57,7 +57,7 @@
 
         <div style="margin-bottom:15px;">
             <label>馬主名：</label>
-            <input type="text" name="owner" placeholder="馬主名" style="width: 200px; padding:8px; margin-top:5px;">
+            <textarea name="owner" placeholder="馬主名" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;"></textarea>
         </div>
             
         <div class="select-stables">
@@ -90,17 +90,17 @@
             <input type="hidden" name="stable_name" id="hidden_stable_name">
         </div>
 
-        <div style="margin-top: 8px; display: inline-flex; gap: 5px; align-items: center;">
-            <label>産地：</label>
-            <select name="birthplace_region" id="region_select" value="" style="padding:6px;">
-            </select>
-            <select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
-            </select>
+        <div style="margin-top: 8px;">
+            <p class="m-0"><label>産地：</label></p>
+            <p class="m-0"><select name="birthplace_region" id="region_select" value="" style="padding:6px;">
+            </select></p>
+            <p class="m-0"><select name="birthplace_detail" id="detail_select" value="" style="padding:6px; display: none;">
+            </select></p>
         </div>
 
         <div style="margin-bottom:15px; margin-top: 15px;">
             <label>生産牧場：</label>
-            <input type="text" name="breeder" placeholder="生産牧場" style="width: 200px; padding:8px; margin-top:5px;">
+            <textarea name="breeder" placeholder="生産牧場" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;"></textarea>
         </div>
 
         <div style="margin-top:20px; display:flex; gap:10px;">
@@ -424,22 +424,22 @@ async function fetchFromJra() {
             return;
         }
 
-        const nameInput = document.querySelector('input[name="name"]');
-        const sireInput = document.querySelector('input[name="sire"]');
-        const damInput = document.querySelector('input[name="dam"]');
+        const nameInput = document.querySelector('[name="name"]');
+        const sireInput = document.querySelector('[name="sire"]');
+        const damInput = document.querySelector('[name="dam"]');
         const genderSelect = document.getElementById('gender_select');
         const yearInput = document.querySelector('input[name="year"]');
         const monthSelect = document.getElementById('horse_month');
         const daySelect = document.querySelector('select[name="day"]');
-        const ownerInput = document.querySelector('input[name="owner"]');
-        const breederInput = document.querySelector('input[name="breeder"]');
+        const ownerInput = document.querySelector('[name="owner"]');
+        const breederInput = document.querySelector('[name="breeder"]');
         const stableSelect = document.getElementById('reg_stable_select');
 
-        if (data.name && nameInput) nameInput.value = data.name;
-        if (data.sire && sireInput) sireInput.value = data.sire;
-        if (data.dam && damInput) damInput.value = data.dam;
-        if (data.owner && ownerInput) ownerInput.value = data.owner;
-        if (data.breeder && breederInput) breederInput.value = data.breeder;
+        if (data.name && nameInput) { nameInput.value = data.name; autoResizeTextarea(nameInput); }
+        if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
+        if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
+        if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
+        if (data.breeder && breederInput) { breederInput.value = data.breeder; autoResizeTextarea(breederInput); }
 
         if (data.gender && genderSelect) {
             setSelectValueRobust(genderSelect, data.gender);
@@ -825,12 +825,41 @@ function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
     }
 }
 
+// 【自動リサイズ】URL・馬主名・生産牧場欄が、はみ出したら折り返して下に拡大するようにする
+function autoResizeTextarea(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+}
+
+function initAutoGrowTextareas() {
+    document.querySelectorAll('.auto-grow-textarea').forEach(function (el) {
+        autoResizeTextarea(el);
+        el.addEventListener('input', function () {
+            autoResizeTextarea(el);
+        });
+        // 従来の1行入力欄と同じ挙動にするため、Enterキーでの改行挿入は無効にする
+        el.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                // JRAのURL欄でEnterが押された場合は「取得」ボタンと同じ処理を実行する
+                if (el.id === 'jra_url_input' && typeof fetchFromJra === 'function') {
+                    fetchFromJra();
+                }
+            }
+        });
+    });
+}
+
 // --- ページ読み込み時の初期化処理 ---
 document.addEventListener('DOMContentLoaded', function() {
     // 1. 産地フォームの初期化（他の処理より先に実行して安全に生成する）
     initBirthplaceFields('horse_month', false);
 
-    // 2. 厩舎の五十音フィルター初期化
+    // 2. URL・馬主名・生産牧場欄の自動リサイズ初期化
+    initAutoGrowTextareas();
+
+    // 3. 厩舎の五十音フィルター初期化
     const activeKana = document.querySelector('.reg-kana.active');
     try {
         updateStableDropdown('reg', '', activeKana);
@@ -838,7 +867,7 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error("厩舎フィルターの初期化エラー:", e);
     }
 
-    // 3. フラッシュメッセージ（エラー時など）のフォーム表示切り替え
+    // 4. フラッシュメッセージ（エラー時など）のフォーム表示切り替え
     {% if get_flashed_messages() %}
         if (typeof toggleStableForm === "function") toggleStableForm();
     {% endif %}

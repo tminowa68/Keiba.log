@@ -122,43 +122,52 @@ function goToPage(page) {
 }
 
 let currentArea = '全';
-let currentKana = '';
+let currentFilterChar = '';      // 実際に絞り込みに使う文字（行 or 個別かな）
+let currentFilterIsSub = false;  // true: 個別かな文字での絞り込み, false: 行(または「全」)での絞り込み
 
 function updateAreaFilter(area, btn) {
     document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentArea = area;
-    
-    // 現在の五十音選択状態を維持してドロップダウンを更新
-    const activeKanaBtn = document.querySelector('.kana-group .reg-kana.active');
-    updateStableDropdown('reg', currentKana, activeKanaBtn);
+
+    // 行・五十音の選択状態は変更せず、ドロップダウンの選択肢だけを絞り込み直す
+    rebuildStableOptions();
 }
 
 function resetFilter() {
     currentPage = 1; // リセット時は1ページ目に戻す
+
+    // エリア（全/美浦/栗東）を「全」に戻す
+    currentArea = '全';
+    document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
+    const allAreaBtn = document.querySelector('.area-btn');
+    if (allAreaBtn) allAreaBtn.classList.add('active');
+
+    // 行・五十音の選択も「全」に戻す
+    updateStableDropdown('reg', '', null);
+
     const select = document.getElementById('reg_stable_select');
-    // 「全」ボタンの要素を取得してリセット
-    const allKanaBtn = document.querySelector('.kana-group:last-child .reg-kana:last-child');
-    
-    updateStableDropdown('reg', '', allKanaBtn);
-    select.value = ""; 
+    select.value = "";
     renderAgeTables();
+}
+
+// 行ボタン（あ・か・さ…／全）のアクティブ表示を、実際のクリック元の要素に関わらず
+// 文字の値だけを見て正しいボタンに付け直す
+function setActiveRowButton(char) {
+    const rowButtons = document.querySelectorAll('.kana-group .reg-kana');
+    rowButtons.forEach(b => b.classList.remove('active'));
+    const target = Array.from(rowButtons).find(b => (char === '' ? b.textContent === '全' : b.textContent === char));
+    if (target) target.classList.add('active');
 }
 
 function updateStableDropdown(type, char, btn, isSubChar = false) {
     if (!isSubChar) {
-        document.querySelectorAll('.reg-kana').forEach(b => b.classList.remove('active'));
-        if (btn) btn.classList.add('active');
-    } else {
-        document.querySelectorAll('.sub-kana-btn').forEach(b => b.classList.remove('active'));
-        if (btn) btn.classList.add('active');
-    }
+        setActiveRowButton(char);
 
-    const select = document.getElementById('reg_stable_select');
-    const subContainer = document.getElementById('sub_kana_container');
-    if (!select) return;
+        currentFilterChar = char;
+        currentFilterIsSub = false;
 
-    if (!isSubChar) {
+        const subContainer = document.getElementById('sub_kana_container');
         subContainer.innerHTML = '';
         if (char && rowMap[char]) {
             createSubButtons(char);
@@ -166,9 +175,25 @@ function updateStableDropdown(type, char, btn, isSubChar = false) {
         } else {
             subContainer.style.display = 'none';
         }
+    } else {
+        document.querySelectorAll('.sub-kana-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+
+        currentFilterChar = char;
+        currentFilterIsSub = true;
     }
 
-    const regex = isSubChar ? new RegExp('^' + char) : getRowRegex(char);
+    rebuildStableOptions();
+}
+
+// 現在のエリア・行・五十音の選択状態に基づいて、厩舎ドロップダウンの選択肢だけを再構築する
+// （行・五十音ボタンの表示状態には触れない）
+function rebuildStableOptions() {
+    const select = document.getElementById('reg_stable_select');
+    if (!select) return;
+
+    const char = currentFilterChar;
+    const regex = currentFilterIsSub ? new RegExp('^' + char) : getRowRegex(char);
 
     select.innerHTML = '<option value="">厩舎を選択してください</option>';
 
@@ -436,6 +461,15 @@ function renderAgeTables() {
 
 window.onload = function() {
     updateStableDropdown('reg', '', document.querySelector('.kana-group:last-child .reg-kana.active'));
+
+    // 厩舎を選択した直後はフォーカスを外し、次にクリックするまで
+    // 矢印キーやページアップ/ダウンで選択が意図せず切り替わらないようにする
+    const stableSelect = document.getElementById('reg_stable_select');
+    if (stableSelect) {
+        stableSelect.addEventListener('change', function() {
+            this.blur();
+        });
+    }
 };
 </script>
 {% endblock %}

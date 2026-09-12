@@ -59,26 +59,7 @@
                     {% endif %}
                     </p>
                 </td>
-                <!-- 2列目: 産地 -->
-                <td>
-                    <p class="m-0"><strong>産地：</strong> 
-                        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
-                            {% if horse|length > 9 and horse[9] %}
-                                {{ horse[9] }}
-                            {% endif %}
-                            {% if horse|length > 10 and horse[10] %}
-                                ・{{ horse[10] }}
-                            {% endif %}
-                        {% else %}
-                            {% if session.get('login') %}
-                                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
-                            {% endif %}
-                        {% endif %}
-                    </p>
-                </td>
-            </tr>
-            <tr>
-                <!-- 1列目: 馬主名 -->
+                <!-- 2列目: 馬主名 -->
                 <td>
                     <div class="owner-info-container m-0">
                         <p class="m-0"><strong>馬主名：</strong>
@@ -98,6 +79,25 @@
                         </div>
                         {% endif %}
                     </div>
+                </td>
+            </tr>
+            <tr>
+                <!-- 1列目: 産地 -->
+                <td>
+                    <p class="m-0"><strong>産地：</strong> 
+                        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
+                            {% if horse|length > 9 and horse[9] %}
+                                {{ horse[9] }}
+                            {% endif %}
+                            {% if horse|length > 10 and horse[10] %}
+                                ・{{ horse[10] }}
+                            {% endif %}
+                        {% else %}
+                            {% if session.get('login') %}
+                                <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
+                            {% endif %}
+                        {% endif %}
+                    </p>
                 </td>
                 <!-- 2列目: 生産牧場 -->
                 <td>
@@ -1103,6 +1103,47 @@ function splitTransferStableValue(selectElement) {
         document.addEventListener('DOMContentLoaded', scrollToParent);
     } else {
         scrollToParent();
+    }
+})();
+
+// プロフィールの「登録」ボタン・血統表の「編集」ボタンをハイライトして中央にスクロール
+(function () {
+    // 親馬登録直後の戻り処理（上記）が動作する場合はそちらを優先し、こちらはスキップする
+    if (sessionStorage.getItem('scrollToParent')) return;
+
+    function highlightMissingInfo() {
+        const targets = [];
+
+        // プロフィール内で「登録」リンクが表示されているセルをハイライト対象にする
+        document.querySelectorAll('.profile-info-table td').forEach(function (td) {
+            if (td.querySelector('.missing-info-link')) {
+                targets.push(td);
+            }
+        });
+
+        // 血統表内で「編集」リンクが表示されているセル（div/td）をハイライト対象にする
+        document.querySelectorAll('.pedigree-cell').forEach(function (cell) {
+            if (cell.querySelector('.add-parent-link')) {
+                targets.push(cell);
+            }
+        });
+
+        if (targets.length === 0) return;
+
+        targets.forEach(function (el) {
+            el.classList.add('highlight-new-parent');
+        });
+
+        // 一番上（先頭）の対象を画面中央にスクロールして表示する
+        setTimeout(function () {
+            targets[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', highlightMissingInfo);
+    } else {
+        highlightMissingInfo();
     }
 })();
 </script>
