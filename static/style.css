@@ -272,10 +272,20 @@ td.col-num{
     border:1px solid #ddd;
     padding:15px;
     border-radius:5px;
-    margin-bottom:15px;
+    margin: 0 auto 15px auto;
+    width: fit-content;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 .select-stables p {
     margin-top: 0px;
+}
+
+/* 厩舎テーブルエリアは中身の幅に合わせて中央寄せ */
+#tables_area {
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
 }
 /* --- 五十音ボタンのレスポンシブ対応 --- */
 .kana-buttons {
@@ -1070,27 +1080,6 @@ td.col-num{
     margin: 15px 0;
 }
 
-/* モバイル端末向けのスタイル */
-@media screen and (max-width: 768px) {
-    input, select, textarea, button {
-        font-size: 16px;
-    }
-    .navbar {
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        -webkit-overflow-scrolling: touch;
-    }
-    .navbar a {
-        flex: 0 0 auto;
-        width: 3em;
-        padding: 12px 6px;
-    }
-    .navbar a span {
-        display: block;
-        text-align: center;
-        white-space: nowrap;
-    }
-}
 /* モーダルのスタイル */
 .candidate-modal-overlay {
     display: none;
@@ -1523,6 +1512,45 @@ td.col-num{
 .inbreed-title { display: block; margin-bottom: 8px; }
 .inbreed-none { color: #888; }
 
+/* --- 血統登録：同名の馬を登録するチェックボックス --- */
+.same-name-checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 15px;
+    font-size: 0.9em;
+    color: #555;
+    cursor: pointer;
+    user-select: none;
+}
+.same-name-checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+}
+
+/* --- 血統登録：産地（詳細）の初期選択肢「産地を選択してください」だけ文字を小さくする --- */
+#detail_select option:disabled {
+    font-size: 0.85em;
+}
+
+/* --- 血統登録：URL・馬主名・生産牧場欄（はみ出したら折り返して下に拡大） --- */
+.auto-grow-textarea {
+    display: block;
+    padding: 8px;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.4;
+    resize: none;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: pre-wrap;
+    box-sizing: border-box;
+}
+.auto-grow-textarea-inline {
+    display: inline-block;
+    vertical-align: middle;
+}
+
 /* --- 警告マークのスタイル --- */
 .alert-mark {
     display: inline-flex;
@@ -1538,4 +1566,67 @@ td.col-num{
     font-size: 0.9em;
     margin-right: 5px;
     vertical-align: middle;
+}
+
+/* モバイル端末向けのスタイル */
+@media screen and (max-width: 768px) {
+    input, select, textarea, button {
+        font-size: 16px;
+    }
+    .navbar {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+    .navbar a {
+        flex: 0 0 auto;
+        width: 3em;
+        padding: 12px 6px;
+    }
+    .navbar a span {
+        display: block;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .container h1 {
+        font-size: 175%;
+    }
+    /* プロフィール情報テーブルを1列表示にし、はみ出す内容は折り返す */
+    .profile-info-table,
+    .profile-info-table tbody,
+    .profile-info-table tr,
+    .profile-info-table td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .profile-info-table td {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+    .inbreed-title {
+        font-size: small;
+    }
+
+    /* 厩舎テーブルエリアはスマホ画面に収まるよう文字・余白を縮小 */
+    #tables_area {
+        font-size: 0.8em;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    #tables_area th,
+    #tables_area td {
+        padding: 4px 5px;
+    }
+    #tables_area .col-name {
+        width: 6em;
+    }
+    #tables_area .col-sire {
+        min-width: 6em;
+        max-width: 8em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 }
