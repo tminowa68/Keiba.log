@@ -634,24 +634,37 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
                     record = records[0]
             else:
                 if child_birth_year:
-                    valid_records = []
+                    valid_records = []   # 仔馬の生年より前に生まれたことが確認できる候補
+                    unknown_records = [] # 生年不明で、前か後か判定できない候補
                     for r in records:
                         dob = str(r.get('生年月日', '')).strip()
                         b_year = extract_year(dob)
-                        if b_year and b_year < child_birth_year:
-                            valid_records.append((r, b_year))
-                    
+                        if b_year is not None:
+                            if b_year < child_birth_year:
+                                valid_records.append((r, b_year))
+                            # b_year >= child_birth_year の場合は
+                            # 仔馬より後（または同年）に生まれた馬なので候補から除外する
+                        else:
+                            unknown_records.append(r)
+
                     if valid_records:
+                        # 仔馬の生年に最も近い（＝より新しい）候補を優先
                         valid_records.sort(key=lambda x: child_birth_year - x[1])
-                        record = valid_records[0][0] 
+                        record = valid_records[0][0]
                         if len(valid_records) > 1:
                             is_ambiguous = True
                             candidates = [r[0] for r in valid_records]
-                    else:
-                        record = records[0] 
-                        if len(records) > 1:
+                    elif unknown_records:
+                        # 前後関係を確認できる候補が無い場合のみ、生年不明の馬を次点として使用
+                        record = unknown_records[0]
+                        if len(unknown_records) > 1:
                             is_ambiguous = True
-                            candidates = records
+                            candidates = unknown_records
+                    else:
+                        # 仔馬より前に生まれたことが確認できる候補も、不明な候補も無い
+                        # （＝同名馬は全て仔馬と同年か後に生まれている）場合は
+                        # 誤った馬を親として表示しないよう、未登録として扱う
+                        record = None
                 else:
                     record = records[0]
                     if len(records) > 1:
@@ -894,8 +907,12 @@ def add_parent():
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
             birth_date_str = f"{y}/{m}/{d}" if y and m and d else (str(y) if y else "")
 
+            # 「同名の馬を登録する」がチェックされている場合は、既存の同名データを
+            # 上書きせず、常に新規レコードとして追加する
+            force_new = request.form.get('force_new') == '1'
+
             data = ws.get_all_values()
-            found_idx = next((i + 1 for i, row in enumerate(data) if len(row) > 0 and row[0] == p_name), None)
+            found_idx = None if force_new else next((i + 1 for i, row in enumerate(data) if len(row) > 0 and row[0] == p_name), None)
             
             if found_idx:
                 ws.update(
@@ -952,7 +969,13 @@ def add_parent():
             if len(row) > 7: existing_data["breeder"] = row[7]
             if len(row) > 8: existing_data["URL"] = row[8]
     except: pass
-    return render_template('add_parent.html', p_type=p_type, p_name=p_name, origin=request.args.get('origin', ''), data=existing_data)
+    return render_template(
+        'add_parent.html', 
+        p_type=p_type, 
+        p_name=p_name, 
+        origin=request.args.get('origin', ''),
+        data=existing_data
+        )
 
 @app.route('/update_horse', methods=['POST'])
 @login_required
