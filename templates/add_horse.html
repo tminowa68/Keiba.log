@@ -88,6 +88,7 @@
 
             <input type="hidden" name="area" id="hidden_area">
             <input type="hidden" name="stable_name" id="hidden_stable_name">
+            <input type="hidden" name="status" id="hidden_status">
         </div>
 
         <div style="margin-top: 8px;">
@@ -441,6 +442,9 @@ async function fetchFromJra() {
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
         if (data.breeder && breederInput) { breederInput.value = data.breeder; autoResizeTextarea(breederInput); }
 
+        const statusInput = document.getElementById('hidden_status');
+        if (data.status && statusInput) { statusInput.value = data.status; }
+
         if (data.gender && genderSelect) {
             setSelectValueRobust(genderSelect, data.gender);
             updateGenderColor(genderSelect);
@@ -532,6 +536,7 @@ const locationData = {
         ]
     },
     "青森県": [],
+    "福島県": [],
     "茨城県": [],
     "栃木県": [],
     "群馬県": [],

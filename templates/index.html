@@ -57,7 +57,13 @@
                 {% if horse|length > 10 and (horse[10] is none or horse[10]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 {% if horse|length > 11 and (horse[11] is none or horse[11]|string|trim == '') %}{% set has_alert = true %}{% endif %}
                 <tr>
-                    <td class="col-status">{{ horse[8] if horse|length > 8 else '在厩' }}</td>
+                    <td class="col-status">
+                        {% if horse|length > 12 and (horse[12] is none or horse[12]|string|trim == '') %}
+                        <a href="/edit_horse/{{ horse[0] }}" class="btn-url">URL</a>
+                        {% else %}
+                        {{ horse[8] if horse|length > 8 else '在厩' }}
+                        {% endif %}
+                    </td>
                     <td class="col-name">
                         {% if has_alert %}<span class="alert-mark">!</span>{% endif %}
                         <a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a>
@@ -92,6 +98,7 @@ const allHorsesData = [
         stable: "{{ horse[6] }}・{{ horse[7] }}",
         // 状態データを追加 (無い場合は仮に'在厩'とする)
         status: "{{ horse[8] if horse|length > 8 else '在厩' }}",
+        url: "{{ horse[12] if horse|length > 12 else '' }}",
         hasAlert: {{ 'true' if has_alert else 'false' }}
     },
     {% endfor %}
@@ -316,6 +323,14 @@ function getRowRegex(char) {
     return kanaMap[char] || /.*/;
 }
 
+// URLが未登録の馬は、状態欄に「URL」ボタンを表示してhorse_detailを経由せずedit_horseへ直接飛べるようにする
+function renderStatusCell(h) {
+    if (!h.url) {
+        return `<a href="/edit_horse/${h.name}" class="btn-url">URL</a>`;
+    }
+    return h.status;
+}
+
 function renderAgeTables() {
     const selectedStable = document.getElementById('reg_stable_select').value;
     const container = document.getElementById('tables_area');
@@ -363,7 +378,7 @@ function renderAgeTables() {
                 <div style="flex: 1;"></div> <div style="display: flex; gap: 5px; justify-content: center; flex: 2; white-space: nowrap;">
                     ${controlsHtml}
                 </div>
-                <div style="flex: 1; font-weight: bold;">
+                <div style="flex: 1; font-weight: bold; white-space: nowrap;">
                     （全${totalPages}ページ）
                 </div>
             </div>`;
@@ -387,7 +402,7 @@ function renderAgeTables() {
                         
                         return `
                         <tr>
-                            <td>${h.status}</td>
+                            <td>${renderStatusCell(h)}</td>
                             <td class="col-name">
                                 ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
                                 <a href="/horse/${h.name}">${h.name}</a>
@@ -437,7 +452,7 @@ function renderAgeTables() {
                             
                             return `
                             <tr>
-                                <td>${h.status}</td>
+                                <td>${renderStatusCell(h)}</td>
                                 <td class="col-name">
                                     ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
                                     <a href="/horse/${h.name}">${h.name}</a>

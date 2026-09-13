@@ -73,7 +73,7 @@
                                 {% endif %}
                             </span>
                         </p>
-                        {% if session.get('login') %}
+                        {% if session.get('login') and horse[5] %}
                         <div class="owner-actions">
                             <a href="javascript:void(0)" onclick="openOwnerModal()" class="action-link">[ 変更 ]</a>
                         </div>
