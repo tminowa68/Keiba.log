@@ -131,7 +131,8 @@ def _text_after(element):
         return _text_after(element.parent)
     return None
 
-def fetch_jra_horse_info(url):
+def _fetch_jra_soup(url):
+    """指定されたJRA公式サイトのURLを取得し、BeautifulSoupオブジェクトを返す"""
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not any(
@@ -147,9 +148,41 @@ def fetch_jra_horse_info(url):
     resp.raise_for_status()
 
     html_text = resp.content.decode('cp932', errors='replace')
-    soup = BeautifulSoup(html_text, 'html.parser')
+    return BeautifulSoup(html_text, 'html.parser')
+
+def _parse_status_from_header(soup):
+    """header_line内のspan.opt／span.restから、状態(抹消／放牧／入厩)を判定する。
+    抹消の場合は (抹消, 抹消年月日 or None)、それ以外は (放牧 or 入厩, None) を返す"""
+    header_div = soup.select_one('div.header_line.no-mb')
+    opt_span = None
+    if header_div:
+        for cand in header_div.select('span.opt'):
+            # span.txt の中にある span.opt は「競走馬情報」ラベル用なので無視する
+            if cand.find_parent('span', class_='txt') is None:
+                opt_span = cand
+                break
+    rest_span = header_div.select_one('span.rest') if header_div else None
+
+    if opt_span:
+        text = opt_span.get_text(strip=True)
+        cancel_date = None
+        m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', text)
+        if m:
+            cancel_date = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+        return '抹消', cancel_date
+
+    return ('放牧' if rest_span else '入厩'), None
+
+def fetch_jra_horse_info(url):
+    soup = _fetch_jra_soup(url)
 
     result = {}
+
+    # 状態（抹消／放牧／入厩）：add_horse・edit_horseでも放牧/入厩を自動判定するために取得する
+    status, cancel_date = _parse_status_from_header(soup)
+    result['status'] = status
+    if cancel_date:
+        result['cancel_date'] = cancel_date
 
     # 馬名：<span class="opt">競走馬情報</span> の次の値
     # （spanタグ自身の子テキストを拾ってしまわないよう、兄弟要素以降だけを探索する）
@@ -207,6 +240,65 @@ def fetch_jra_horse_info(url):
         result['birthplace'] = birthplace
 
     return result
+
+def fetch_jra_horse_status(url):
+    """データ更新機能用：馬の現在の状態（抹消／放牧／入厩）と、
+    抹消でない場合の性別・馬主名・調教師名（生データ）を取得する"""
+    soup = _fetch_jra_soup(url)
+    result = {}
+
+    status, cancel_date = _parse_status_from_header(soup)
+    result['status'] = status
+
+    # ① 抹消判定：header_line内にspan.optがあれば抹消
+    if status == '抹消':
+        if cancel_date:
+            result['cancel_date'] = cancel_date
+        return result
+
+    # ③ 性別（add_horseと同じ判定ロジック）
+    gender_text = _dt_dd_text(soup, '性別')
+    if gender_text:
+        if 'せん' in gender_text or 'セン' in gender_text:
+            result['gender'] = 'せん'
+        elif '牝' in gender_text:
+            result['gender'] = '牝'
+        elif '牡' in gender_text:
+            result['gender'] = '牡'
+
+    # ④ 馬主名・調教師名
+    owner = _dt_dd_text(soup, '馬主名')
+    if owner:
+        result['owner'] = owner
+
+    trainer_raw = _dt_dd_text(soup, '調教師名')
+    if trainer_raw:
+        result['trainer_raw'] = trainer_raw
+
+    return result
+
+def parse_trainer_field(text):
+    """「名前（所属）」形式の文字列を (name, area) に分解する（add_horse.htmlのJS版と同等）"""
+    m = re.match(r'^(.+?)[（(]\s*(.+?)\s*[）)]\s*$', text)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return text.strip(), ''
+
+def find_stable_match(all_stables, area, trainer_name):
+    """所属・調教師名から、登録済み厩舎の選択肢の中から一致するものを探す（add_horse.htmlのJS版と同等）"""
+    candidates = [s for s in all_stables if not area or s['area'] == area]
+
+    def stable_name_of(s):
+        return s['display_name'].split('・', 1)[1] if '・' in s['display_name'] else s['display_name']
+
+    for s in candidates:
+        if stable_name_of(s) == trainer_name:
+            return s
+    for s in candidates:
+        sn = stable_name_of(s)
+        if sn and (trainer_name in sn or sn in trainer_name):
+            return s
+    return None
 
 def get_all_horses():
     try:
@@ -889,6 +981,142 @@ def add_stable():
         except Exception as e:
             flash(f"厩舎の追加に失敗しました: {e}")
     return redirect('/add_horse')
+
+@app.route('/update_horses')
+@login_required
+def update_horses():
+    """Horsesシートを走査し、抹消でなくURLがある馬について、
+    JRA公式サイトの最新情報（抹消／放牧・入厩／性別／馬主名／調教師名）を反映する"""
+    try:
+        sh = gc.open(horse_data)
+        ws_horses = sh.worksheet("Horses")
+        horses_data = ws_horses.get_all_values()
+
+        try:
+            ws_cancel = sh.worksheet("抹消")
+        except gspread.WorksheetNotFound:
+            ws_cancel = sh.add_worksheet(title="抹消", rows=100, cols=5)
+            ws_cancel.append_row(["年月日", "馬名"])
+
+        try:
+            ws_pasture = sh.worksheet("放牧入厩")
+        except gspread.WorksheetNotFound:
+            ws_pasture = sh.add_worksheet(title="放牧入厩", rows=100, cols=5)
+            ws_pasture.append_row(["放牧年月日", "馬名", "入厩年月日"])
+        pasture_data = ws_pasture.get_all_values()
+
+        ws_changes = sh.worksheet("Changes")
+        all_stables = get_stables_list()
+        today_str = datetime.now().strftime('%Y/%m/%d')
+
+        cell_updates = []     # ws_horses.batch_update用
+        changes_rows = []     # Changesシートへ追記する行
+        cancel_rows = []      # 抹消シートへ追記する行
+        pasture_updates = []  # ws_pasture.batch_update用（既存セットの入厩年月日を埋める）
+        pasture_new_rows = [] # 放牧入厩シートへ新規追加する行
+
+        cancelled_count, updated_count, error_count = 0, 0, 0
+
+        for i, row in enumerate(horses_data[1:], start=2):  # 1行目はヘッダー
+            status = row[8] if len(row) > 8 else ""
+            url = row[12] if len(row) > 12 else ""
+            if status == "抹消" or not url:
+                continue
+
+            horse_name = row[0] if len(row) > 0 else ""
+            current_gender = row[1] if len(row) > 1 else ""
+            current_owner = row[5] if len(row) > 5 else ""
+            current_area = row[6] if len(row) > 6 else ""
+            current_stable = row[7] if len(row) > 7 else ""
+
+            try:
+                info = fetch_jra_horse_status(url)
+            except Exception:
+                error_count += 1
+                continue
+
+            # ① 抹消判定
+            if info.get('status') == '抹消':
+                cell_updates.append({'range': f'I{i}', 'values': [['抹消']]})
+                cancel_rows.append([info.get('cancel_date', ''), horse_name])
+                cancelled_count += 1
+                continue
+
+            # ② 放牧／入厩
+            new_status = info.get('status', '入厩')
+            if new_status != status:
+                cell_updates.append({'range': f'I{i}', 'values': [[new_status]]})
+
+                # 放牧⇔入厩の切り替わりを「放牧入厩」シートにセットで記録する
+                # （状態が空欄からの切り替わりは記録しない）
+                if status in ('放牧', '入厩') and new_status in ('放牧', '入厩'):
+                    if new_status == '放牧':
+                        # 新しいセットを開始する（入厩年月日は完成時に埋める）
+                        pasture_new_rows.append([today_str, horse_name, ''])
+                    else:  # new_status == '入厩'
+                        # この馬の「放牧年月日はあるが入厩年月日がまだ無い」最新の行を探して完成させる
+                        open_row_idx = None
+                        for idx in range(len(pasture_data) - 1, 0, -1):
+                            prow = pasture_data[idx]
+                            p_name = prow[1] if len(prow) > 1 else ''
+                            p_checkin = prow[2] if len(prow) > 2 else ''
+                            if p_name == horse_name and not p_checkin:
+                                open_row_idx = idx
+                                break
+                        if open_row_idx is not None:
+                            sheet_row_num = open_row_idx + 1  # get_all_valuesは0始まり、シートの行番号は1始まり
+                            pasture_updates.append({'range': f'C{sheet_row_num}', 'values': [[today_str]]})
+                            # 同一実行内で二重に一致しないようローカルデータも更新しておく
+                            while len(pasture_data[open_row_idx]) < 3:
+                                pasture_data[open_row_idx].append('')
+                            pasture_data[open_row_idx][2] = today_str
+                        else:
+                            # 対応する放牧年月日が無い場合は、馬名と入厩年月日のみを記録する
+                            pasture_new_rows.append(['', horse_name, today_str])
+
+            # ③ 去勢判定（現在の性別が牡の場合のみ）
+            if current_gender == '牡' and info.get('gender') == 'せん':
+                cell_updates.append({'range': f'B{i}', 'values': [['せん']]})
+                changes_rows.append([today_str, horse_name, '去勢'])
+
+            # ④-1 馬主名の変更
+            new_owner = info.get('owner')
+            if new_owner and new_owner != current_owner:
+                cell_updates.append({'range': f'F{i}', 'values': [[new_owner]]})
+                changes_rows.append([today_str, horse_name, '変更', current_owner, new_owner])
+
+            # ④-2 調教師名（＝厩舎）の変更
+            trainer_raw = info.get('trainer_raw')
+            if trainer_raw:
+                t_name, t_area = parse_trainer_field(trainer_raw)
+                match = find_stable_match(all_stables, t_area, t_name)
+                if match:
+                    new_area = match['area']
+                    new_stable = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
+                    if new_stable != current_stable or new_area != current_area:
+                        current_full = f"{current_area}・{current_stable}" if current_area else current_stable
+                        new_full = f"{new_area}・{new_stable}" if new_area else new_stable
+                        cell_updates.append({'range': f'G{i}:H{i}', 'values': [[new_area, new_stable]]})
+                        changes_rows.append([today_str, horse_name, '転厩', current_full, new_full])
+
+            updated_count += 1
+
+        if cell_updates:
+            ws_horses.batch_update(cell_updates)
+        if changes_rows:
+            ws_changes.append_rows(changes_rows)
+        if cancel_rows:
+            ws_cancel.append_rows(cancel_rows)
+        if pasture_updates:
+            ws_pasture.batch_update(pasture_updates)
+        if pasture_new_rows:
+            ws_pasture.append_rows(pasture_new_rows)
+
+        flash(f"データ更新が完了しました。（抹消：{cancelled_count}件／更新：{updated_count}件／取得エラー：{error_count}件）")
+    except Exception as e:
+        flash(f"データ更新中にエラーが発生しました: {e}")
+
+    return redirect(url_for('index'))
 
 @app.route('/add_parent', methods=['GET', 'POST'])
 @login_required
