@@ -1593,6 +1593,47 @@ form .select-stables {
     vertical-align: middle;
 }
 
+/* --- データ更新：確認ポップアップ／進捗オーバーレイ --- */
+.update-modal-content {
+    max-width: 400px;
+    text-align: center;
+}
+.update-progress-note {
+    font-size: 0.85em;
+    color: #888;
+    margin-top: 10px;
+}
+/* 進捗オーバーレイは他の全モーダルより手前に表示し、誤操作を防ぐ */
+.update-progress-overlay {
+    z-index: 2000;
+}
+.update-spinner {
+    width: 44px;
+    height: 44px;
+    margin: 5px auto 20px auto;
+    border: 5px solid #e0e0e0;
+    border-top-color: #4CAF50;
+    border-radius: 50%;
+    animation: update-spin 0.9s linear infinite;
+}
+@keyframes update-spin {
+    to { transform: rotate(360deg); }
+}
+.update-progress-text {
+    font-size: 1.05em;
+    font-weight: bold;
+    color: #333;
+    min-height: 1.4em;
+}
+
+/* --- トップページ：最終更新日時の表示 --- */
+.last-updated-info {
+    text-align: right;
+    font-size: 0.85em;
+    color: #666;
+    margin: 0 0 10px 0;
+}
+
 /* モバイル端末向けのスタイル */
 @media screen and (max-width: 768px) {
     input, select, textarea, button {
