@@ -1,6 +1,9 @@
 {% extends "layout.html" %}
 {% block content %}
 <section>
+    {% if last_updated %}
+    <p class="last-updated-info">最終更新：{{ last_updated }}</p>
+    {% endif %}
     <div class="select-stables">
         <p>厩舎絞り込み：
             <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
@@ -402,7 +405,7 @@ function renderAgeTables() {
                         
                         return `
                         <tr>
-                            <td>${renderStatusCell(h)}</td>
+                            <td class="col-status">${renderStatusCell(h)}</td>
                             <td class="col-name">
                                 ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
                                 <a href="/horse/${h.name}">${h.name}</a>
@@ -452,7 +455,7 @@ function renderAgeTables() {
                             
                             return `
                             <tr>
-                                <td>${renderStatusCell(h)}</td>
+                                <td class="col-status">${renderStatusCell(h)}</td>
                                 <td class="col-name">
                                     ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
                                     <a href="/horse/${h.name}">${h.name}</a>

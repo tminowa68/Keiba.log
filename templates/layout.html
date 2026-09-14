@@ -22,7 +22,7 @@
         <a href="/add_horse" class="{% if request.path == '/add_horse' or request.path == '/add_parent' %}active{% endif %}">
             <span>データ</span><span>登録</span>
         </a>
-        <a href="/update_horses" class="{% if request.path == '/update_horses' %}active{% endif %}">
+        <a href="/update_horses" id="nav-update-horses" class="{% if request.path == '/update_horses' %}active{% endif %}" onclick="return confirmUpdateHorses(event)">
             <span>データ</span><span>更新</span>
         </a>
         
@@ -60,5 +60,105 @@
     </div>
     <p class="copyright">&copy; 2026 keiba.log All Rights Reserved.</p>
 </footer>
+
+<!-- データ更新：実行確認ポップアップ -->
+<div id="updateConfirmModal" class="custom-modal-overlay">
+    <div class="custom-modal-content update-modal-content">
+        <h3 class="custom-modal-header m-0">データ更新</h3>
+        <p>データ更新を実行しますか？</p>
+        <p class="update-progress-note">JRA公式サイトから最新情報を取得します。馬の頭数によっては時間がかかる場合があります。</p>
+        <div class="modal-btn-group">
+            <button type="button" class="btn-cancel" onclick="closeUpdateConfirmModal()">キャンセル</button>
+            <button type="button" class="btn-submit" onclick="startHorseUpdate()">実行する</button>
+        </div>
+    </div>
+</div>
+
+<!-- データ更新：実行中の進捗表示（他の操作をブロックする全画面オーバーレイ） -->
+<div id="updateProgressOverlay" class="custom-modal-overlay update-progress-overlay">
+    <div class="custom-modal-content update-modal-content">
+        <div class="update-spinner"></div>
+        <p id="updateProgressText" class="update-progress-text">データ更新を開始しています...</p>
+        <p class="update-progress-note">更新が完了するまでこの画面のまま少々お待ちください。</p>
+    </div>
+</div>
+
+<script>
+function confirmUpdateHorses(e) {
+    e.preventDefault();
+    document.getElementById('updateConfirmModal').style.display = 'block';
+    return false;
+}
+
+function closeUpdateConfirmModal() {
+    document.getElementById('updateConfirmModal').style.display = 'none';
+}
+
+// データ更新中に順番に表示するステータス文言
+const updateProgressMessages = [
+    "抹消をチェック中...",
+    "放牧入厩をチェック中...",
+    "性別（去勢）をチェック中...",
+    "馬主名をチェック中...",
+    "厩舎（転厩）をチェック中..."
+];
+
+let updateProgressTimer = null;
+
+function preventLeaveDuringUpdate(e) {
+    e.preventDefault();
+    e.returnValue = '';
+}
+
+function startHorseUpdate() {
+    closeUpdateConfirmModal();
+
+    const overlay = document.getElementById('updateProgressOverlay');
+    const textEl = document.getElementById('updateProgressText');
+    overlay.style.display = 'block';
+
+    // 更新中に誤ってタブを閉じたりリロードしたりしないよう警告を出す
+    window.addEventListener('beforeunload', preventLeaveDuringUpdate);
+
+    let msgIndex = 0;
+    textEl.textContent = updateProgressMessages[msgIndex];
+    updateProgressTimer = setInterval(() => {
+        msgIndex = (msgIndex + 1) % updateProgressMessages.length;
+        textEl.textContent = updateProgressMessages[msgIndex];
+    }, 2200);
+
+    fetch('/update_horses', {
+        method: 'GET',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(res => {
+        // セッション切れなどでログイン画面にリダイレクトされた場合はそのまま遷移する
+        if (res.redirected && res.url.indexOf('/login') !== -1) {
+            window.location.href = res.url;
+            return null;
+        }
+        return res.json().catch(() => ({ status: 'error', message: '応答の解析に失敗しました。' }));
+    })
+    .then(data => {
+        if (data) finishHorseUpdate(data);
+    })
+    .catch(() => {
+        finishHorseUpdate({ status: 'error', message: '通信エラーが発生しました。時間をおいて再度お試しください。' });
+    });
+}
+
+function finishHorseUpdate(data) {
+    clearInterval(updateProgressTimer);
+    window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
+
+    const textEl = document.getElementById('updateProgressText');
+    textEl.textContent = (data && data.message) ? data.message : 'データ更新が完了しました。';
+
+    // 結果を少し表示してからトップページ（一覧）へ遷移し、最終更新日時を反映する
+    setTimeout(() => {
+        window.location.href = '/';
+    }, 1500);
+}
+</script>
 </body>
 </html>
