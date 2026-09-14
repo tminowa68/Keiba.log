@@ -100,6 +100,57 @@ except gspread.WorksheetNotFound:
 def kana_to_hira(text):
     return "".join([chr(ord(c) - 96) if "ァ" <= c <= "ヶ" else c for c in text])
 
+# --- 「データ更新」の最終実行日時の記録・取得（Metaシートを使用） ---
+JP_WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
+
+def _get_meta_sheet():
+    sh = gc.open(horse_data)
+    try:
+        return sh.worksheet("Meta")
+    except gspread.WorksheetNotFound:
+        ws_meta = sh.add_worksheet(title="Meta", rows=10, cols=5)
+        ws_meta.append_row(["項目", "値"])
+        return ws_meta
+
+def get_last_updated():
+    """Metaシートから「データ更新」機能の最終実行日時を取得する（未設定ならNone）"""
+    try:
+        ws_meta = _get_meta_sheet()
+        for row in ws_meta.get_all_values()[1:]:
+            if len(row) > 0 and row[0] == 'last_updated':
+                return row[1] if len(row) > 1 else None
+        return None
+    except Exception:
+        return None
+
+def set_last_updated(dt_str):
+    """Metaシートに「データ更新」機能の最終実行日時を書き込む（無ければ新規追加）"""
+    try:
+        ws_meta = _get_meta_sheet()
+        data = ws_meta.get_all_values()
+        for i, row in enumerate(data[1:], start=2):
+            if len(row) > 0 and row[0] == 'last_updated':
+                ws_meta.update_acell(f'B{i}', dt_str)
+                return
+        ws_meta.append_row(['last_updated', dt_str])
+    except Exception as e:
+        print(f"最終更新日時の保存に失敗しました: {e}")
+
+def format_last_updated(dt_str):
+    """Meta保存形式（YYYY/MM/DD HH:MM）を「年月日(曜日)」の表示形式に変換する"""
+    if not dt_str:
+        return None
+    dt = None
+    for fmt in ('%Y/%m/%d %H:%M', '%Y/%m/%d'):
+        try:
+            dt = datetime.strptime(dt_str, fmt)
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        return dt_str
+    return f"{dt.year}年{dt.month}月{dt.day}日({JP_WEEKDAYS[dt.weekday()]})"
+
 # --- JRA競走馬情報ページ取得・解析 ---
 JRA_ALLOWED_HOSTS = ("jra.go.jp", "jra.jp")
 
@@ -871,7 +922,8 @@ def index():
     return render_template('index.html', 
                            results=results, 
                            stables=get_stables_list(), 
-                           current_year=datetime.now().year)
+                           current_year=datetime.now().year,
+                           last_updated=format_last_updated(get_last_updated()))
 
 @app.route('/api/fetch_jra_horse')
 @login_required
@@ -987,6 +1039,9 @@ def add_stable():
 def update_horses():
     """Horsesシートを走査し、抹消でなくURLがある馬について、
     JRA公式サイトの最新情報（抹消／放牧・入厩／性別／馬主名／調教師名）を反映する"""
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    success = True
+    message = ""
     try:
         sh = gc.open(horse_data)
         ws_horses = sh.worksheet("Horses")
@@ -1112,10 +1167,17 @@ def update_horses():
         if pasture_new_rows:
             ws_pasture.append_rows(pasture_new_rows)
 
-        flash(f"データ更新が完了しました。（抹消：{cancelled_count}件／更新：{updated_count}件／取得エラー：{error_count}件）")
-    except Exception as e:
-        flash(f"データ更新中にエラーが発生しました: {e}")
+        set_last_updated(datetime.now().strftime('%Y/%m/%d %H:%M'))
 
+        message = f"データ更新が完了しました。（抹消：{cancelled_count}件／更新：{updated_count}件／取得エラー：{error_count}件）"
+        flash(message)
+    except Exception as e:
+        success = False
+        message = f"データ更新中にエラーが発生しました: {e}"
+        flash(message)
+
+    if is_ajax:
+        return jsonify({"status": "success" if success else "error", "message": message})
     return redirect(url_for('index'))
 
 @app.route('/add_parent', methods=['GET', 'POST'])
