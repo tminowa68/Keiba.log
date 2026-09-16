@@ -1309,10 +1309,11 @@ form .select-stables {
 .modal-btn-group {
     display: flex;
     gap: 10px;
-    margin-top: 20px;
+    margin: 20px 0 0 0;
 }
 .modal-btn-group button {
     flex: 1;
+    margin: 0;
 }
 
 /* --- 入れ替えUI用スタイル --- */
@@ -1527,6 +1528,7 @@ form .select-stables {
 .m-0 { margin: 0; }
 .age-note { font-size: 0.9em; color: #555; margin-top: 5px; }
 .full-width-input { width: 100%; padding: 8px; box-sizing: border-box; }
+.readonly-input { background-color: #e9ecef; color: #6c757d; cursor: not-allowed; }
 .btn-cancel { background-color: #6c757d !important; }
 .select-stables-modal { margin-top: 10px; width: 100%; padding: 10px; box-sizing: border-box; }
 #transfer_sub_kana_container { margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc; }
