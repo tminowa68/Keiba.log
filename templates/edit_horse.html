@@ -120,6 +120,19 @@
             <a href="/" style="background:#ccc; color:black; padding:10px 20px; text-decoration:none; border-radius:4px;">ホームへ戻る</a>
         </div>
     </form>
+
+    <!-- 変更内容確認モーダル -->
+    <div id="confirm_overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+        <div style="background:#fff; padding:24px; border-radius:8px; max-width:520px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.2);">
+            <h3 style="margin-top:0;">以下の項目が変更されています</h3>
+            <p style="color:#666; font-size:0.9em;">この内容で登録してよろしいですか？</p>
+            <div id="confirm_changes_list"></div>
+            <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" id="confirm_cancel_btn" style="padding:8px 16px; background:#ccc; border:none; border-radius:4px; cursor:pointer;">キャンセル</button>
+                <button type="button" id="confirm_submit_btn" style="padding:8px 16px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">この内容で登録する</button>
+            </div>
+        </div>
+    </div>
 </section>
 
 <script>
@@ -127,6 +140,7 @@ const allStables = {{ stables | tojson | safe }};
 
 let currentArea = '全';
 let currentKana = '';
+let initialFormValues = {};
 
 function updateAreaFilter(area, btn) {
     document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
@@ -506,7 +520,7 @@ const locationData = {
         "欧州": ["イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", "デンマーク", "スウェーデン"],
         "オセアニア": ["オーストラリア", "ニュージーランド"],
         "南米": ["アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー"],
-        "中東": ["サウジアラビア"],
+        "中東": ["アラブ首長国連邦", "サウジアラビア"],
         "アフリカ": ["南アフリカ"]
     }
 };
@@ -825,6 +839,112 @@ function initAutoGrowTextareas() {
     });
 }
 
+// --- 変更確認（差分チェック）機能 ---
+
+// 生年月日をまとめて表示用の文字列に変換する
+function formatBirthDateForConfirm(year, month, day) {
+    year = (year || '').toString().trim();
+    month = (month || '').toString().trim();
+    day = (day || '').toString().trim();
+    if (!year) return '';
+    return year + '年' + (month || '?') + '月' + (day || '?') + '日';
+}
+
+// 現在のフォーム内容をスナップショットとして取得する
+function getFormSnapshot() {
+    const form = document.querySelector('form');
+    return {
+        jra_url: (document.getElementById('jra_url_input') || {}).value || '',
+        name: (form.querySelector('[name="name"]') || {}).value || '',
+        sire: (form.querySelector('[name="sire"]') || {}).value || '',
+        dam: (form.querySelector('[name="dam"]') || {}).value || '',
+        gender: (document.getElementById('gender_select') || {}).value || '',
+        year: (form.querySelector('[name="year"]') || {}).value || '',
+        month: (document.getElementById('horse_month') || {}).value || '',
+        day: (form.querySelector('[name="day"]') || {}).value || '',
+        owner: (form.querySelector('[name="owner"]') || {}).value || '',
+        stable: (document.getElementById('reg_stable_select') || {}).value || '',
+        birthplace_region: (document.getElementById('region_select') || {}).value || '',
+        birthplace_detail: (document.getElementById('detail_select') || {}).value || '',
+        breeder: (form.querySelector('[name="breeder"]') || {}).value || ''
+    };
+}
+
+// 元の値と現在値を比較し、「元々値が入っていて、かつ変化した」項目だけを一覧にする
+// （空白から値が入力されただけの項目は対象外とする）
+function buildConfirmChanges(initial, current) {
+    const changes = [];
+
+    function addIfChanged(label, oldVal, newVal) {
+        oldVal = (oldVal || '').toString().trim();
+        newVal = (newVal || '').toString().trim();
+        if (oldVal === newVal) return; // 変化なし
+        if (oldVal === '') return; // 空白 → 入力 は表示対象外
+        changes.push({ label: label, oldVal: oldVal, newVal: newVal });
+    }
+
+    addIfChanged('JRAのURL', initial.jra_url, current.jra_url);
+    addIfChanged('馬名', initial.name, current.name);
+    addIfChanged('父', initial.sire, current.sire);
+    addIfChanged('母', initial.dam, current.dam);
+    addIfChanged('性別', initial.gender, current.gender);
+
+    const oldBirthDate = formatBirthDateForConfirm(initial.year, initial.month, initial.day);
+    const newBirthDate = formatBirthDateForConfirm(current.year, current.month, current.day);
+    if (initial.year && initial.year.toString().trim() !== '' && oldBirthDate !== newBirthDate) {
+        changes.push({ label: '生年月日', oldVal: oldBirthDate, newVal: newBirthDate });
+    }
+
+    addIfChanged('馬主名', initial.owner, current.owner);
+    addIfChanged('所属厩舎', initial.stable, current.stable);
+    addIfChanged('産地', initial.birthplace_region, current.birthplace_region);
+    addIfChanged('産地（詳細）', initial.birthplace_detail, current.birthplace_detail);
+    addIfChanged('生産牧場', initial.breeder, current.breeder);
+
+    return changes;
+}
+
+// 変更点一覧を確認モーダルに描画して表示する
+function showConfirmModal(changes) {
+    const listContainer = document.getElementById('confirm_changes_list');
+    listContainer.innerHTML = '';
+    changes.forEach(function(c) {
+        const row = document.createElement('div');
+        row.style.marginBottom = '10px';
+        row.style.paddingBottom = '10px';
+        row.style.borderBottom = '1px solid #eee';
+
+        const labelEl = document.createElement('strong');
+        labelEl.textContent = c.label;
+
+        const valuesEl = document.createElement('div');
+        valuesEl.style.marginTop = '4px';
+
+        const oldEl = document.createElement('span');
+        oldEl.style.color = '#999';
+        oldEl.style.textDecoration = 'line-through';
+        oldEl.textContent = c.oldVal;
+
+        const arrowEl = document.createElement('span');
+        arrowEl.style.margin = '0 8px';
+        arrowEl.textContent = '→';
+
+        const newEl = document.createElement('span');
+        newEl.style.color = '#2196F3';
+        newEl.style.fontWeight = 'bold';
+        newEl.textContent = c.newVal;
+
+        valuesEl.appendChild(oldEl);
+        valuesEl.appendChild(arrowEl);
+        valuesEl.appendChild(newEl);
+
+        row.appendChild(labelEl);
+        row.appendChild(valuesEl);
+        listContainer.appendChild(row);
+    });
+    document.getElementById('confirm_overlay').style.display = 'flex';
+}
+
 // --- ページ読み込み時の初期化処理 ---
 document.addEventListener('DOMContentLoaded', function() {
     // 1. 産地フォームの初期化（他の処理より先に実行して安全に生成する）
@@ -859,6 +979,37 @@ document.addEventListener('DOMContentLoaded', function() {
     {% if get_flashed_messages() %}
         if (typeof toggleStableForm === "function") toggleStableForm();
     {% endif %}
+
+    // 5. 変更確認機能の初期化：元々入力されていた値をここで保存しておく
+    initialFormValues = getFormSnapshot();
+
+    // 6. 登録ボタン押下時、元の値から変化している項目があれば確認モーダルを表示する
+    const horseForm = document.querySelector('form');
+    horseForm.addEventListener('submit', function(e) {
+        const current = getFormSnapshot();
+        const changes = buildConfirmChanges(initialFormValues, current);
+        if (changes.length === 0) {
+            return; // 変化なし（空白からの入力のみを含む）の場合はそのまま登録する
+        }
+        e.preventDefault();
+        showConfirmModal(changes);
+    });
+
+    const confirmCancelBtn = document.getElementById('confirm_cancel_btn');
+    if (confirmCancelBtn) {
+        confirmCancelBtn.addEventListener('click', function() {
+            document.getElementById('confirm_overlay').style.display = 'none';
+        });
+    }
+
+    const confirmSubmitBtn = document.getElementById('confirm_submit_btn');
+    if (confirmSubmitBtn) {
+        confirmSubmitBtn.addEventListener('click', function() {
+            document.getElementById('confirm_overlay').style.display = 'none';
+            // form.submit() は submit イベントを発火させないため、確認モーダルが再表示されることはない
+            horseForm.submit();
+        });
+    }
 });
 </script>
 {% endblock %}

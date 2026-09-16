@@ -132,7 +132,7 @@
                             'デンマーク': 'DEN', 'スウェーデン': 'SWE', 
                             'オーストラリア': 'AUS','ニュージーランド': 'NZ', 
                             'アルゼンチン': 'ARG', 'チリ': 'CHI', 'ブラジル': 'BRZ', 'ウルグアイ': 'URU', 'ペルー': 'PER', 
-                            'サウジアラビア': 'KSA', 
+                            'アラブ首長国連邦': 'UAE', 'サウジアラビア': 'KSA', 
                             '南アフリカ': 'SAF'
                         } %}
                         {% set filename_base = flag_map.get(node.birthplace_detail, node.birthplace_detail) %}
@@ -449,10 +449,10 @@
 
             <div class="form-group swap-group">
                 <label>旧厩舎</label>
-                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" class="full-width-input" required>
+                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" class="full-width-input readonly-input" readonly autocomplete="off" tabindex="-1">
                 <div class="swap-icon" onclick="swapValues('transfer_old_val', 'transfer_new_val')" aria-label="入れ替え">⇅</div>
                 <label>新厩舎</label>
-                <input type="text" id="transfer_new_val" name="new_val" class="full-width-input" required>
+                <input type="text" id="transfer_new_val" name="new_val" class="full-width-input" autocomplete="off" required>
                 
                 <div class="select-stables select-stables-modal">
                     <p class="mb-5">絞り込み：
@@ -468,7 +468,7 @@
                     </div>
                 </div>
                 <div id="transfer_sub_kana_container" class="kana-buttons"></div>
-                <select id="transfer_stable_select" class="transfer-select" onchange="document.getElementById('transfer_new_val').value = this.value">
+                <select id="transfer_stable_select" class="transfer-select" onchange="setTransferNewStable(this.value)">
                     <option value="">厩舎を選択してください</option>
                 </select>
         </div>
@@ -505,6 +505,11 @@ function openTransferModal() {
     updateTransferStableDropdown('', activeKanaBtn);
 }
 function closeTransferModal() { document.getElementById('transferModal').style.display = 'none'; }
+
+// 転厩：新厩舎の選択値のみを反映する（旧厩舎欄には一切触れない）
+function setTransferNewStable(value) {
+    document.getElementById('transfer_new_val').value = value;
+}
 
 // モーダル間で受け渡すための一時変数
 let currentChildName = '';
