@@ -709,6 +709,21 @@ def extract_year(date_str):
         
     return None
 
+_NAME_DAM_YEAR_RE = re.compile(r'^(.*?)\s*\((.*?)\s*-\s*(\d{4})[年]?\)$')
+
+def split_dam_annotation(raw):
+    """
+    「馬名 (母馬 - 生年)」形式の文字列を (表示名, 母馬名 or None, 生年 or None) に分解する。
+    同名馬混同を避けるために付与される注記を解析する共通ヘルパー。
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return '', None, None
+    m = _NAME_DAM_YEAR_RE.match(raw)
+    if m:
+        return m.group(1).strip(), m.group(2).strip(), int(m.group(3))
+    return raw, None, None
+
 def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
     # スプレッドシートから全データを取得
     try:
@@ -1872,6 +1887,130 @@ def save_entry():
     except Exception as e:
         print(f"Entry save error: {e}")
         return {"status": "error", "message": str(e)}, 500
+
+@app.route('/api/relatives')
+def api_relatives():
+    horse_name = request.args.get('horse_name')
+    try:
+        horse_birth_year = int(request.args.get('horse_birth_year', 0))
+    except ValueError:
+        horse_birth_year = 0
+
+    dam_name = request.args.get('dam_name', '').strip()
+    dam_full_name = request.args.get('dam_full_name', '').strip()
+    granddam_full_name = request.args.get('granddam_full_name', '').strip()
+
+    if not dam_full_name:
+        return jsonify({"relatives": []})
+
+    all_horses = get_all_horses()
+
+    # 甥・姪判定用：ある馬名から「その馬自身の母欄の値」の候補群を引けるようにしておく
+    # （Horsesシート＝実際に登録されている競走馬、Damシート＝血統表専用の繁殖牝馬データ）
+    name_candidates = {}
+    for h in all_horses:
+        if len(h) > 4 and h[0]:
+            name_candidates.setdefault(h[0], []).append({'母': h[4], '生年月日': h[2] if len(h) > 2 else ''})
+    try:
+        sh = gc.open(horse_data)
+        for r in sh.worksheet('Dam').get_all_records():
+            n = str(r.get('馬名', '')).strip()
+            if n:
+                name_candidates.setdefault(n, []).append(r)
+    except Exception:
+        pass
+
+    def resolve_granddam_of(dam_field_value, child_birth_year):
+        """
+        ある馬の「母」欄の値から、その母馬自身の母（＝対象馬から見た祖母）の表示名を推定する。
+        「馬名 (母馬 - 生年)」の注記が既にあればそこから直接取得し、無ければ登録データを検索する。
+        """
+        disp_name, embedded_mother, _embedded_year = split_dam_annotation(dam_field_value)
+        if embedded_mother:
+            return embedded_mother
+        if not disp_name:
+            return None
+
+        candidates = name_candidates.get(disp_name, [])
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            g_disp, _, _ = split_dam_annotation(str(candidates[0].get('母', '')).strip())
+            return g_disp or None
+
+        # 同名の母馬候補が複数ある場合は、対象馬より前に生まれた馬を優先して絞り込む
+        if child_birth_year:
+            valid = []
+            for r in candidates:
+                b_year = extract_year(str(r.get('生年月日', '')).strip())
+                if b_year and b_year < child_birth_year:
+                    valid.append((r, b_year))
+            if valid:
+                valid.sort(key=lambda x: child_birth_year - x[1])
+                g_disp, _, _ = split_dam_annotation(str(valid[0][0].get('母', '')).strip())
+                return g_disp or None
+        return None
+
+    relatives = []
+
+    for h in all_horses:
+        if len(h) < 5:
+            continue
+
+        target_name = h[0]
+        if target_name == horse_name:
+            continue
+
+        target_gender = h[1]
+        target_birth_str = h[2]
+        target_sire = h[3]
+        target_dam = h[4].strip()
+
+        if not target_dam:
+            continue
+
+        target_birth_year = extract_year(target_birth_str) or 0
+
+        relation = None
+
+        # 1. 兄弟馬の判定 (母が完全一致するか)
+        # 同名馬混同を避けるため、フルDBネーム「馬名 (母馬 - 生年)」で照合する
+        if target_dam == dam_full_name:
+            if not horse_birth_year or not target_birth_year:
+                relation = "兄弟" if target_gender in ['牡', 'せん'] else "姉妹"  # 生年不明で前後関係が判定できないケース
+            elif target_birth_year < horse_birth_year:
+                relation = "兄" if target_gender in ['牡', 'せん'] else "姉"
+            elif target_birth_year > horse_birth_year:
+                relation = "弟" if target_gender in ['牡', 'せん'] else "妹"
+            else:
+                relation = "同期(兄弟)"  # 双子などの例外ケース
+
+        # 2. 叔父・叔母の判定 (対象馬の母 ＝ 本馬の祖母、が一致するか)
+        elif granddam_full_name and target_dam == granddam_full_name:
+            relation = "叔父" if target_gender in ['牡', 'せん'] else "叔母"
+
+        # 3. 甥・姪の判定 (対象馬の祖母 ＝ 本馬の母、が一致するか)
+        # 対象馬自身の「母の母」を注記または登録データから逆算して照合する
+        elif dam_name:
+            target_granddam = resolve_granddam_of(target_dam, target_birth_year)
+            if target_granddam and target_granddam == dam_name:
+                relation = "甥" if target_gender in ['牡', 'せん'] else "姪"
+
+        # 必要に応じて従兄弟などの判定もここに追加可能です
+
+        if relation:
+            relatives.append({
+                "relation": relation,
+                "name": target_name,
+                "gender": target_gender,
+                "birth_year": target_birth_year if target_birth_year else '不明',
+                "sire": target_sire
+            })
+
+    # 生年の古い順に並び替え
+    relatives.sort(key=lambda x: (x['birth_year'] if isinstance(x['birth_year'], int) else 9999))
+
+    return jsonify({"relatives": relatives})
 
 @app.route('/api/available_races')
 def api_available_races():
