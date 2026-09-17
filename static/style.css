@@ -662,6 +662,16 @@ form .select-stables {
     border-radius: 5px; 
     display: none;
 }
+#relatives-results {
+    padding: 15px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+.relatives-table th,
+.relatives-table td {
+    text-align: center;
+}
 
 /* 編集リンクのデザイン */
 .pedigree-cell .add-parent-link.side-action {
