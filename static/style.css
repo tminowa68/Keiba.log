@@ -672,6 +672,10 @@ form .select-stables {
 .relatives-table td {
     text-align: center;
 }
+.relatives-table td:nth-child(3),
+.relatives-table td:nth-child(6) {
+    text-align: left;
+}
 
 /* 編集リンクのデザイン */
 .pedigree-cell .add-parent-link.side-action {
