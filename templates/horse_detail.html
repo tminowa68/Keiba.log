@@ -301,13 +301,14 @@
     <!-- 既存のインブリード結果表示 -->
     <div id="inbreed-results"></div>
 
-    <!-- 兄弟馬・近親馬表示領域を追加 -->
-    <div id="relatives-results" class="mt-20" style="display: none;">
+    <!-- 兄弟馬・近親馬表示領域を追加（サーバー側で計算済みのため即時表示） -->
+    <div id="relatives-results" class="mt-20">
         <strong class="inbreed-title">兄弟馬・近親馬</strong>
         <table class="race-list-table relatives-table" style="margin-top: 10px;">
             <thead>
                 <tr>
                     <th>関係</th>
+                    <th>状態</th>
                     <th>馬名</th>
                     <th>性別</th>
                     <th>生年</th>
@@ -315,7 +316,30 @@
                 </tr>
             </thead>
             <tbody id="relatives-tbody">
-                <!-- JavaScriptでデータを挿入 -->
+                {% if relatives %}
+                    {% for rel in relatives %}
+                    <tr>
+                        <td>{{ rel.relation }}</td>
+                        <td>
+                            {% if not rel.has_url %}
+                                <a href="/edit_horse/{{ rel.name }}" class="btn-url">URLを追加</a>
+                            {% elif rel.status in ['放牧', '入厩'] %}
+                                現役
+                            {% elif rel.status == '抹消' %}
+                                引退
+                            {% else %}
+                                {{ rel.status or '-' }}
+                            {% endif %}
+                        </td>
+                        <td>{% if rel.has_alert %}<span class="alert-mark">!</span>{% endif %}<a href="/horse/{{ rel.name }}">{{ rel.name }}</a></td>
+                        <td class="{{ 'female-text' if rel.gender == '牝' else '' }}">{{ rel.gender }}</td>
+                        <td>{{ rel.birth_year }}</td>
+                        <td>{{ rel.sire }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="6" class="inbreed-none">なし</td></tr>
+                {% endif %}
             </tbody>
         </table>
     </div>
@@ -644,59 +668,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('current-class').textContent = judgeClass(totalPrize, hasRaced, horseAge, currentMonth);
 });
 
-// --- 兄弟馬・近親馬の取得と表示 ---
+// --- 兄弟馬・近親馬：URL未登録の馬があれば、そこにフォーカスして気づきやすくする ---
 document.addEventListener("DOMContentLoaded", function() {
-    const relativesSection = document.getElementById('relatives-results');
-    // プロフィールタブ以外（レースタブ等）では表示領域自体が無いのでスキップ
-    if (!relativesSection) return;
-
-    const horseName = "{{ horse[0] }}";
-
-    // 対象馬の血統表から母(インデックス3)と祖母(インデックス7)のデータを取得
-    const damNode = pedigreeData ? pedigreeData[3] : null;
-    const grandDamNode = pedigreeData ? pedigreeData[7] : null;
-
-    // 母の情報がない場合は照合できないため処理をスキップ
-    if (!damNode) return;
-
-    // 照合用データの作成 (母名, 母のフルDB名, 祖母名, 祖母のフルDB名)
-    // 同名の母馬を混同しないよう、フルDB名（馬名 (母馬 - 生年)）で照合する
-    const queryParams = new URLSearchParams({
-        horse_name: horseName,
-        horse_birth_year: '{{ horse[2].year if not horse[2] is string else horse[2][:4] }}',
-        horse_gender: '{{ horse[1] }}',
-        dam_name: damNode.name || '',
-        dam_full_name: damNode.full_db_name || '',
-        granddam_name: grandDamNode ? (grandDamNode.name || '') : '',
-        granddam_full_name: grandDamNode ? (grandDamNode.full_db_name || '') : ''
-    });
-
-    fetch(`/api/relatives?${queryParams.toString()}`)
-        .then(response => response.json())
-        .then(data => {
-            const tbody = document.getElementById('relatives-tbody');
-            if (data && data.relatives && data.relatives.length > 0) {
-                let html = '';
-
-                data.relatives.forEach(rel => {
-                    html += `
-                        <tr>
-                            <td>${rel.relation}</td>
-                            <td><a href="/horse/${encodeURIComponent(rel.name)}">${rel.name}</a></td>
-                            <td class="${rel.gender === '牝' ? 'female-text' : ''}">${rel.gender}</td>
-                            <td>${rel.birth_year}</td>
-                            <td>${rel.sire}</td>
-                        </tr>
-                    `;
-                });
-
-                tbody.innerHTML = html;
-                relativesSection.style.display = 'block';
-            } else {
-                relativesSection.style.display = 'none';
-            }
-        })
-        .catch(err => console.error('近親馬の取得に失敗しました:', err));
+    const urlBtn = document.querySelector('#relatives-tbody .btn-url');
+    if (urlBtn) {
+        urlBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        urlBtn.focus();
+    }
 });
 
 function calculateAddedPrize(rank, condition, raceName) {
