@@ -1483,7 +1483,13 @@ def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
     all_horses = get_all_horses()
-    horse = next((h for h in all_horses if len(h)>0 and h[0] == name), None)
+    horse = next((h for h in all_horses if len(h)>0 and h[0].strip() == name.strip()), None)
+    if horse is None:
+        # シート取得の一時的な失敗などを想定し、まず1回だけ同じページを再読み込みする
+        if request.args.get('_retry') != '1':
+            return redirect(url_for('horse_detail', name=name, active_tab=active_tab, _retry='1'))
+        flash("対象の馬が見つかりませんでした。")
+        return redirect(url_for('index'))
     horse_races = []
     
     schedule_cache = {}
@@ -1624,9 +1630,25 @@ def horse_detail(name, active_tab):
     
     pedigree_data = get_5gen_pedigree(horse[3], horse[4], base_birth_year, gc)
 
+    # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
+    # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
+    dam_node = pedigree_data.get(3)
+    granddam_node = pedigree_data.get(7)
+    relatives = []
+    if dam_node and dam_node.get('full_db_name'):
+        relatives = compute_relatives(
+            horse[0],
+            base_birth_year or 0,
+            dam_node.get('name', ''),
+            dam_node.get('full_db_name', ''),
+            granddam_node.get('name', '') if granddam_node else '',
+            granddam_node.get('full_db_name', '') if granddam_node else ''
+        )
+
     return render_template('horse_detail.html', 
                            horse=horse, 
                            horse_races=horse_races,
+                           relatives=relatives,
                            sire_info=sire_info, 
                            dam_info=dam_info, 
                            current_year=datetime.now().year,
@@ -1888,20 +1910,13 @@ def save_entry():
         print(f"Entry save error: {e}")
         return {"status": "error", "message": str(e)}, 500
 
-@app.route('/api/relatives')
-def api_relatives():
-    horse_name = request.args.get('horse_name')
-    try:
-        horse_birth_year = int(request.args.get('horse_birth_year', 0))
-    except ValueError:
-        horse_birth_year = 0
-
-    dam_name = request.args.get('dam_name', '').strip()
-    dam_full_name = request.args.get('dam_full_name', '').strip()
-    granddam_full_name = request.args.get('granddam_full_name', '').strip()
-
+def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, granddam_name, granddam_full_name):
+    """
+    兄弟馬・近親馬（叔父叔母・甥姪・従兄弟姉妹）のリストを計算する。
+    horse_detail の初期表示（SSR）と /api/relatives（互換用）の両方から呼び出される共通ロジック。
+    """
     if not dam_full_name:
-        return jsonify({"relatives": []})
+        return []
 
     all_horses = get_all_horses()
 
@@ -1957,8 +1972,8 @@ def api_relatives():
         if len(h) < 5:
             continue
 
-        target_name = h[0]
-        if target_name == horse_name:
+        target_name = h[0].strip() if h[0] else ''
+        if not target_name or target_name == horse_name:
             continue
 
         target_gender = h[1]
@@ -1989,27 +2004,56 @@ def api_relatives():
         elif granddam_full_name and target_dam == granddam_full_name:
             relation = "叔父" if target_gender in ['牡', 'せん'] else "叔母"
 
-        # 3. 甥・姪の判定 (対象馬の祖母 ＝ 本馬の母、が一致するか)
+        # 3. 甥・姪／従兄弟・従姉妹の判定
         # 対象馬自身の「母の母」を注記または登録データから逆算して照合する
-        elif dam_name:
+        elif dam_name or granddam_name:
             target_granddam = resolve_granddam_of(target_dam, target_birth_year)
-            if target_granddam and target_granddam == dam_name:
+            if target_granddam and dam_name and target_granddam == dam_name:
+                # 対象馬の祖母 ＝ 本馬の母 → 対象馬は本馬の兄弟の子
                 relation = "甥" if target_gender in ['牡', 'せん'] else "姪"
+            elif target_granddam and granddam_name and target_granddam == granddam_name:
+                # 対象馬の祖母 ＝ 本馬の祖母（母同士は別）→ いとこ
+                relation = "いとこ"
 
         # 必要に応じて従兄弟などの判定もここに追加可能です
 
         if relation:
+            def _blank(idx):
+                return len(h) > idx and (h[idx] is None or str(h[idx]).strip() == '')
+            has_alert = _blank(5) or _blank(9) or _blank(10) or _blank(11)
+            target_status = h[8].strip() if len(h) > 8 and h[8] else ''
+            has_url = len(h) > 12 and h[12] and str(h[12]).strip() != ''
+
             relatives.append({
                 "relation": relation,
                 "name": target_name,
                 "gender": target_gender,
                 "birth_year": target_birth_year if target_birth_year else '不明',
-                "sire": target_sire
+                "sire": target_sire,
+                "has_alert": has_alert,
+                "status": target_status,
+                "has_url": has_url
             })
 
     # 生年の古い順に並び替え
     relatives.sort(key=lambda x: (x['birth_year'] if isinstance(x['birth_year'], int) else 9999))
 
+    return relatives
+
+@app.route('/api/relatives')
+def api_relatives():
+    horse_name = request.args.get('horse_name', '').strip()
+    try:
+        horse_birth_year = int(request.args.get('horse_birth_year', 0))
+    except ValueError:
+        horse_birth_year = 0
+
+    dam_name = request.args.get('dam_name', '').strip()
+    dam_full_name = request.args.get('dam_full_name', '').strip()
+    granddam_name = request.args.get('granddam_name', '').strip()
+    granddam_full_name = request.args.get('granddam_full_name', '').strip()
+
+    relatives = compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, granddam_name, granddam_full_name)
     return jsonify({"relatives": relatives})
 
 @app.route('/api/available_races')
