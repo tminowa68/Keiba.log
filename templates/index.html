@@ -35,8 +35,12 @@
         </p>
 
         <p id="stable_status_info" style="margin: 5px; padding-left: 10px;">
-            所属頭数：<span id="total_horses"></span>頭<br>
-            入厩頭数 / 馬房数：<span id="active_horses"></span> / <span id="stable_capacity"></span>
+            <span id="total_horses_row">所属頭数 / 上限：
+                <span id="total_horses"></span> / <span id="stable_limit"></span>頭
+            </span><br id="total_horses_break">
+            <span id="active_horses_row">入厩頭数 / 馬房数：
+                <span id="active_horses"></span> / <span id="stable_capacity"></span>
+            </span>
         </p>
     </div>
 
@@ -274,17 +278,38 @@ function onStableChange() {
 
         // 2. 所属頭数などの計算・反映
         const filteredHorses = allHorsesData.filter(h => h.stable === selectedStable);
-        const totalHorses = filteredHorses.length;
+        let totalHorses = filteredHorses.length;
         const activeHorses = filteredHorses.filter(h => h.status !== '放牧').length;
+
+        // 所属頭数は馬房数（臨時貸付含む）の2.5倍を上限として表示する
+        const stallBase = parseInt(stableInfo.raw_capacity, 10);
+        let maxAllowed = null;
+        if (!isNaN(stallBase)) {
+            const tempLoan = parseInt(stableInfo.temp_loan, 10) || 0;
+            maxAllowed = Math.floor((stallBase + tempLoan) * 2.5);
+            totalHorses = Math.min(totalHorses, maxAllowed);
+        }
         
         const elTotal = document.getElementById('total_horses');
         const elActive = document.getElementById('active_horses');
         const elCapacity = document.getElementById('stable_capacity');
+        const elLimit = document.getElementById('stable_limit');
         
         if (elTotal) elTotal.textContent = totalHorses;
         if (elActive) elActive.textContent = activeHorses;
         if (elCapacity) elCapacity.textContent = stableInfo.capacity || '-';
+        if (elLimit) elLimit.textContent = maxAllowed !== null ? maxAllowed : '-';
         if (statusInfo) statusInfo.style.display = 'block';
+
+        // 技術調教師の場合は所属頭数・入厩頭数/馬房数の行を非表示にする
+        const isGijutsu = stableInfo.capacity === '技術調教師';
+        const totalRow = document.getElementById('total_horses_row');
+        const activeRow = document.getElementById('active_horses_row');
+        const totalBreak = document.getElementById('total_horses_break');
+        const rowDisplay = isGijutsu ? 'none' : '';
+        if (totalRow) totalRow.style.display = rowDisplay;
+        if (activeRow) activeRow.style.display = rowDisplay;
+        if (totalBreak) totalBreak.style.display = rowDisplay;
     }
     
     // 最後に必ずテーブルを更新する
