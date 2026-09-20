@@ -51,7 +51,7 @@
                 {% set birth_day = birth_parts[2]|int if birth_parts|length > 2 else '' %}
             <input type="number" name="year" value="{{ birth_year }}" style="width:50px; padding:8px;" required>年
             <select name="month" id="horse_month" style="padding:8px;" required>
-                {% for m in range(1, 7) %}
+                {% for m in range(1, 9) %}
                 <option value="{{ m }}" {% if m|string == birth_month|string %}selected{% endif %}>{{ m }}</option>
                 {% endfor %}
             </select> 月
@@ -513,6 +513,7 @@ const locationData = {
     "千葉県": [],
     "長野県": [],
     "熊本県": [],
+    "大分県": [],
     "宮崎県": [],
     "鹿児島県": [],
     "海外": {
@@ -798,7 +799,7 @@ function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
     // 南半球判定
     const isSouthern = southernHemisphereDetails.includes(detailValue);
     const start = isSouthern ? 7 : 1;
-    const end = isSouthern ? 12 : 6;
+    const end = isSouthern ? 12 : 8;
 
     for (let i = start; i <= end; i++) {
         const opt = document.createElement('option');

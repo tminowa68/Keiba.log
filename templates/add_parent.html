@@ -55,7 +55,7 @@
         <select name="month" id="parent_month" style="padding:8px;">
             <option value="" {% if not m_val %}selected{% endif %}></option>
             {% set start_m = 7 if is_sh else 1 %}
-            {% set end_m = 12 if is_sh else 6 %}
+            {% set end_m = 12 if is_sh else 8 %}
             {% for m in range(start_m, end_m + 1) %}
             <option value="{{ m }}" {% if m == m_val %}selected{% endif %}>{{ m }}</option>
             {% endfor %}
@@ -259,6 +259,7 @@ const locationData = {
     "千葉県": [],
     "長野県": [],
     "熊本県": [],
+    "大分県": [],
     "宮崎県": [],
     "鹿児島県": [],
     "海外": {
@@ -553,7 +554,7 @@ function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
 
     const isSouthern = southernHemisphereDetails.includes(detailValue);
     const start = isSouthern ? 7 : 1;
-    const end = isSouthern ? 12 : 6;
+    const end = isSouthern ? 12 : 8;
 
     for (let i = start; i <= end; i++) {
         const opt = document.createElement('option');
