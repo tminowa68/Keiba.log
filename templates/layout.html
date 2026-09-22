@@ -79,7 +79,11 @@
     <div class="custom-modal-content update-modal-content">
         <div class="update-spinner"></div>
         <p id="updateProgressText" class="update-progress-text">データ更新を開始しています...</p>
-        <p class="update-progress-note">更新が完了するまでこの画面のまま少々お待ちください。</p>
+        
+        <!-- プログレスバーを追加（初期状態は非表示） -->
+        <progress id="updateProgressBar" value="0" max="100" style="width: 100%; height: 20px; display: none; margin-top: 15px;"></progress>
+        
+        <p class="update-progress-note" style="margin-top: 15px;">更新が完了するまでこの画面のまましばらくお待ちください。</p>
     </div>
 </div>
 
@@ -94,61 +98,97 @@ function closeUpdateConfirmModal() {
     document.getElementById('updateConfirmModal').style.display = 'none';
 }
 
-// データ更新中に順番に表示するステータス文言
-const updateProgressMessages = [
-    "抹消をチェック中...",
-    "放牧入厩をチェック中...",
-    "性別（去勢）をチェック中...",
-    "馬主名をチェック中...",
-    "厩舎（転厩）をチェック中..."
-];
-
-let updateProgressTimer = null;
-
 function preventLeaveDuringUpdate(e) {
     e.preventDefault();
     e.returnValue = '';
 }
 
-function startHorseUpdate() {
+// 案2: フロントエンド主導で1件ずつAPIを叩く処理
+async function startHorseUpdate() {
     closeUpdateConfirmModal();
 
     const overlay = document.getElementById('updateProgressOverlay');
     const textEl = document.getElementById('updateProgressText');
+    const progressBar = document.getElementById('updateProgressBar');
+    
     overlay.style.display = 'block';
+    textEl.textContent = "更新対象のリストを取得しています...";
+    progressBar.style.display = 'none';
 
     // 更新中に誤ってタブを閉じたりリロードしたりしないよう警告を出す
     window.addEventListener('beforeunload', preventLeaveDuringUpdate);
 
-    let msgIndex = 0;
-    textEl.textContent = updateProgressMessages[msgIndex];
-    updateProgressTimer = setInterval(() => {
-        msgIndex = (msgIndex + 1) % updateProgressMessages.length;
-        textEl.textContent = updateProgressMessages[msgIndex];
-    }, 2200);
-
-    fetch('/update_horses', {
-        method: 'GET',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-    })
-    .then(res => {
-        // セッション切れなどでログイン画面にリダイレクトされた場合はそのまま遷移する
-        if (res.redirected && res.url.indexOf('/login') !== -1) {
-            window.location.href = res.url;
-            return null;
+    try {
+        // 1. 対象馬リストの取得
+        const listRes = await fetch('/api/get_target_horses', {
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        
+        // セッション切れリダイレクト対応
+        if (listRes.redirected && listRes.url.indexOf('/login') !== -1) {
+            window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
+            window.location.href = listRes.url;
+            return;
         }
-        return res.json().catch(() => ({ status: 'error', message: '応答の解析に失敗しました。' }));
-    })
-    .then(data => {
-        if (data) finishHorseUpdate(data);
-    })
-    .catch(() => {
+
+        const listData = await listRes.json();
+        const total = listData.total;
+        const horseIds = listData.horse_ids;
+
+        if (total === 0) {
+            finishHorseUpdate({ message: '更新対象の馬データがありませんでした。' });
+            return;
+        }
+
+        // プログレスバーの準備
+        progressBar.max = total;
+        progressBar.value = 0;
+        progressBar.style.display = 'block';
+
+        let completed = 0;
+        textEl.textContent = `データ更新中... (${completed} / ${total} 件完了)`;
+
+        // 2. 1頭ずつ更新処理を実行
+        for (let i = 0; i < total; i++) {
+            const horseId = horseIds[i];
+            
+            try {
+                const updateRes = await fetch(`/api/update_single_horse/${horseId}`, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+
+                if (updateRes.redirected && updateRes.url.indexOf('/login') !== -1) {
+                    window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
+                    window.location.href = updateRes.url;
+                    return;
+                }
+            } catch (err) {
+                console.error(`ID: ${horseId} の更新に失敗しました:`, err);
+                // エラーが起きても処理は止めず、次の馬に進む
+            }
+
+            // UIの更新
+            completed++;
+            progressBar.value = completed;
+            textEl.textContent = `データ更新中... (${completed} / ${total} 件完了)`;
+        }
+
+        await fetch('/api/finish_update_horses', {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        finishHorseUpdate({ message: 'すべてのデータ更新が完了しました。' });
+
+    } catch (error) {
+        console.error(error);
         finishHorseUpdate({ status: 'error', message: '通信エラーが発生しました。時間をおいて再度お試しください。' });
-    });
+    }
 }
 
 function finishHorseUpdate(data) {
-    clearInterval(updateProgressTimer);
     window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
 
     const textEl = document.getElementById('updateProgressText');

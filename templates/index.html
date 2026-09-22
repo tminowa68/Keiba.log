@@ -4,6 +4,11 @@
     {% if last_updated %}
     <p class="last-updated-info">最終更新：{{ last_updated }}</p>
     {% endif %}
+    <div id="stable_alert_box" class="stable-alert-box" style="display: none;">
+        <p>以下の厩舎の所属頭数/入厩頭数が上限を超えています。確認してください。</p>
+        <p id="stable_alert_list" class="stable-alert-list"></p>
+    </div>
+
     <div class="select-stables">
         <p>厩舎絞り込み：
             <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
@@ -285,25 +290,33 @@ function onStableChange() {
 
         // 2. 所属頭数などの計算・反映
         const filteredHorses = allHorsesData.filter(h => h.stable === selectedStable);
-        let totalHorses = filteredHorses.length;
-        const activeHorses = filteredHorses.filter(h => h.status !== '放牧').length;
+        // 状態が「抹消」の馬は所属頭数に含めない
+        const totalHorses = filteredHorses.filter(h => h.status !== '抹消').length;
+        // 入厩頭数：抹消・放牧の馬は含めない
+        const activeHorses = filteredHorses.filter(h => h.status !== '抹消' && h.status !== '放牧').length;
 
-        // 所属頭数は馬房数（臨時貸付含む）の2.5倍を上限として表示する
+        // 所属頭数の上限は馬房数（臨時貸付含む）の2.5倍
         const stallBase = parseInt(stableInfo.raw_capacity, 10);
-        let maxAllowed = null;
-        if (!isNaN(stallBase)) {
-            const tempLoan = parseInt(stableInfo.temp_loan, 10) || 0;
-            maxAllowed = Math.floor((stallBase + tempLoan) * 2.5);
-            totalHorses = Math.min(totalHorses, maxAllowed);
-        }
-        
+        const tempLoan = parseInt(stableInfo.temp_loan, 10) || 0;
+        const totalStalls = !isNaN(stallBase) ? (stallBase + tempLoan) : null;
+        const maxAllowed = totalStalls !== null ? Math.floor(totalStalls * 2.5) : null;
+
         const elTotal = document.getElementById('total_horses');
         const elActive = document.getElementById('active_horses');
         const elCapacity = document.getElementById('stable_capacity');
         const elLimit = document.getElementById('stable_limit');
-        
-        if (elTotal) elTotal.textContent = totalHorses;
-        if (elActive) elActive.textContent = activeHorses;
+
+        // 上限を超えている場合でも実際の総数をそのまま表示する
+        if (elTotal) {
+            elTotal.textContent = totalHorses;
+            elTotal.style.color = (maxAllowed !== null && totalHorses > maxAllowed) ? '#d32f2f' : '';
+            elTotal.style.fontWeight = (maxAllowed !== null && totalHorses > maxAllowed) ? 'bold' : '';
+        }
+        if (elActive) {
+            elActive.textContent = activeHorses;
+            elActive.style.color = (totalStalls !== null && activeHorses > totalStalls) ? '#d32f2f' : '';
+            elActive.style.fontWeight = (totalStalls !== null && activeHorses > totalStalls) ? 'bold' : '';
+        }
         if (elCapacity) elCapacity.textContent = stableInfo.capacity || '-';
         if (elLimit) elLimit.textContent = maxAllowed !== null ? maxAllowed : '-';
         if (statusInfo) statusInfo.style.display = 'block';
@@ -509,8 +522,77 @@ function renderAgeTables() {
     container.innerHTML = html;
 }
 
+// 全厩舎について所属頭数（抹消を除く）／入厩頭数（抹消・放牧を除く）が
+// 上限（馬房数×2.5／馬房数）を超えていないかを判定し、超過している厩舎名の一覧を返す
+function getOverLimitStables() {
+    const overLimit = [];
+
+    allStables.forEach(s => {
+        if (s.capacity === '技術調教師') return; // 技術調教師は馬房数管理の対象外
+
+        const horses = allHorsesData.filter(h => h.stable === s.display_name);
+        const totalHorses = horses.filter(h => h.status !== '抹消').length;
+        const activeHorses = horses.filter(h => h.status !== '抹消' && h.status !== '放牧').length;
+
+        const stallBase = parseInt(s.raw_capacity, 10);
+        const tempLoan = parseInt(s.temp_loan, 10) || 0;
+        const totalStalls = !isNaN(stallBase) ? (stallBase + tempLoan) : null;
+        const maxAllowed = totalStalls !== null ? Math.floor(totalStalls * 2.5) : null;
+
+        const overTotal = maxAllowed !== null && totalHorses > maxAllowed;
+        const overActive = totalStalls !== null && activeHorses > totalStalls;
+
+        if (overTotal || overActive) {
+            overLimit.push(s.display_name);
+        }
+    });
+
+    return overLimit;
+}
+
+// 上限超過の厩舎名を、ページ上部の警告メッセージに一覧表示する
+function renderStableAlerts() {
+    const box = document.getElementById('stable_alert_box');
+    const listEl = document.getElementById('stable_alert_list');
+    if (!box || !listEl) return;
+
+    const overLimitStables = getOverLimitStables();
+
+    if (overLimitStables.length === 0) {
+        box.style.display = 'none';
+        listEl.innerHTML = '';
+        return;
+    }
+
+    listEl.innerHTML = overLimitStables.map(name => {
+        const safeName = name.replace(/'/g, "\\'");
+        return `<span class="stable-alert-link" onclick="selectStableFromAlert('${safeName}')">${name}</span>`;
+    }).join('、');
+    box.style.display = 'block';
+}
+
+// 警告メッセージ内の厩舎名がクリックされたら、絞り込み条件をリセットしたうえで
+// その厩舎を厩舎絞り込みのドロップダウンで選択する
+function selectStableFromAlert(displayName) {
+    currentArea = '全';
+    document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
+    const allAreaBtn = document.querySelector('.area-btn');
+    if (allAreaBtn) allAreaBtn.classList.add('active');
+
+    // 行・五十音の絞り込みを「全」に戻し、ドロップダウンの選択肢を再構築する
+    updateStableDropdown('reg', '', null);
+
+    const select = document.getElementById('reg_stable_select');
+    if (select) {
+        select.value = displayName;
+        onStableChange();
+        select.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
 window.onload = function() {
     updateStableDropdown('reg', '', document.querySelector('.kana-group:last-child .reg-kana.active'));
+    renderStableAlerts();
 
     // 厩舎を選択した直後はフォーカスを外し、次にクリックするまで
     // 矢印キーやページアップ/ダウンで選択が意図せず切り替わらないようにする
