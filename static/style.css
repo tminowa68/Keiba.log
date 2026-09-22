@@ -277,6 +277,37 @@ td.col-num{
     width: auto;
 }
 
+/* --- 厩舎の頭数上限超過の警告メッセージ --- */
+.stable-alert-box {
+    border: 1px solid #d32f2f;
+    background: #fdecea;
+    color: #b71c1c;
+    padding: 10px 15px;
+    border-radius: 5px;
+    margin: 0 auto 15px auto;
+    width: fit-content;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.stable-alert-box p {
+    margin: 0;
+}
+.stable-alert-box p + p {
+    margin-top: 6px;
+}
+.stable-alert-list {
+    line-height: 1.8;
+}
+.stable-alert-link {
+    color: #b71c1c;
+    font-weight: bold;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.stable-alert-link:hover {
+    color: #7f0000;
+}
+
 /* 検索のスタイル */
 .select-stables {
     border:1px solid #ddd;
