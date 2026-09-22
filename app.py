@@ -1475,12 +1475,26 @@ def horse_detail(name, active_tab):
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and h[0].strip() == name.strip()), None)
+
     if horse is None:
-        # シート取得の一時的な失敗などを想定し、まず1回だけ同じページを再読み込みする
-        if request.args.get('_retry') != '1':
-            return redirect(url_for('horse_detail', name=name, active_tab=active_tab, _retry='1'))
-        flash("対象の馬が見つかりませんでした。")
+        # セッションから現在のリトライ回数を取得（なければ0）
+        retry_count = session.get('horse_retry_count', 0)
+
+        # 5回未満の場合はカウントアップして同じページへリダイレクト
+        if retry_count < 5:
+            session['horse_retry_count'] = retry_count + 1
+            return redirect(
+                url_for('horse_detail', name=name, active_tab=active_tab)
+            )
+
+        # 5回リトライしてもダメだった場合はセッションをクリアしてエラー遷移
+        session.pop('horse_retry_count', None)
+        flash('対象の馬が見つかりませんでした。')
         return redirect(url_for('index'))
+
+    # 成功した場合は、次回のためにリトライカウントをリセットしておく
+    session.pop('horse_retry_count', None)
+    
     horse_races = []
     
     schedule_cache = {}
@@ -2011,7 +2025,7 @@ def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, gra
         if relation:
             def _blank(idx):
                 return len(h) > idx and (h[idx] is None or str(h[idx]).strip() == '')
-            has_alert = _blank(5) or _blank(9) or _blank(10) or _blank(11)
+            has_alert = _blank(5) or _blank(9) or _blank(11)
             target_status = h[8].strip() if len(h) > 8 and h[8] else ''
             has_url = len(h) > 12 and h[12] and str(h[12]).strip() != ''
 
