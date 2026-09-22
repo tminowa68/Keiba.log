@@ -138,6 +138,13 @@
 <script>
 const allStables = {{ stables | tojson | safe }};
 
+// 厩舎（調教師）の選択肢が1つも取得できていない場合、取得できるまでリロードし続ける
+if (!Array.isArray(allStables) || allStables.length === 0) {
+    setTimeout(function() {
+        location.reload();
+    }, 1000);
+}
+
 let currentArea = '全';
 let currentKana = '';
 let initialFormValues = {};

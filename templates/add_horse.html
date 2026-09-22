@@ -173,7 +173,7 @@ const allStables = {{ stables | tojson | safe }};
 if (!Array.isArray(allStables) || allStables.length === 0) {
     setTimeout(function() {
         location.reload();
-    }, 1500);
+    }, 1000);
 }
 
 let currentArea = '全';
