@@ -1049,151 +1049,134 @@ def add_stable():
             flash(f"厩舎の追加に失敗しました: {e}")
     return redirect('/add_horse')
 
-@app.route('/update_horses')
+@app.route('/api/get_target_horses', methods=['GET'])
 @login_required
-def update_horses():
-    """Horsesシートを走査し、抹消でなくURLがある馬について、
-    JRA公式サイトの最新情報（抹消／放牧・入厩／性別／馬主名／調教師名）を反映する"""
-    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
-    success = True
-    message = ""
+def get_target_horses():
+    """1. 更新対象となる馬の行番号（row_index）リストを取得するAPI"""
     try:
         sh = gc.open(horse_data)
         ws_horses = sh.worksheet("Horses")
         horses_data = ws_horses.get_all_values()
 
-        try:
-            ws_cancel = sh.worksheet("抹消")
-        except gspread.WorksheetNotFound:
-            ws_cancel = sh.add_worksheet(title="抹消", rows=100, cols=5)
-            ws_cancel.append_row(["年月日", "馬名"])
+        target_row_indexes = []
+        for i, row in enumerate(horses_data[1:], start=2):  # 1行目はヘッダーなので2行目から
+            status = row[8] if len(row) > 8 else ""
+            url = row[12] if len(row) > 12 else ""
+            if status == "抹消" or not url:
+                continue
+            target_row_indexes.append(i)  # 行番号をIDとして保持
 
-        try:
-            ws_pasture = sh.worksheet("放牧入厩")
-        except gspread.WorksheetNotFound:
-            ws_pasture = sh.add_worksheet(title="放牧入厩", rows=100, cols=5)
-            ws_pasture.append_row(["放牧年月日", "馬名", "入厩年月日"])
-        pasture_data = ws_pasture.get_all_values()
+        return jsonify({
+            "status": "success",
+            "total": len(target_row_indexes),
+            "horse_ids": target_row_indexes
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"対象リストの取得に失敗しました: {e}"}), 500
+
+
+@app.route('/api/update_single_horse/<int:row_index>', methods=['POST'])
+@login_required
+def update_single_horse(row_index):
+    """2. 指定された行番号の馬1頭の情報をスクレイピングして即時スプレッドシート更新するAPI"""
+    try:
+        sh = gc.open(horse_data)
+        ws_horses = sh.worksheet("Horses")
+        
+        # 対象行のデータを取得
+        row = ws_horses.row_values(row_index)
+        status = row[8] if len(row) > 8 else ""
+        url = row[12] if len(row) > 12 else ""
+
+        if status == "抹消" or not url:
+            return jsonify({"status": "skipped", "message": "対象外の馬です"})
+
+        horse_name = row[0] if len(row) > 0 else ""
+        current_gender = row[1] if len(row) > 1 else ""
+        current_owner = row[5] if len(row) > 5 else ""
+        current_area = row[6] if len(row) > 6 else ""
+        current_stable = row[7] if len(row) > 7 else ""
+
+        # JRA公式サイトから最新情報を取得
+        info = fetch_jra_horse_status(url)
 
         ws_changes = sh.worksheet("Changes")
         all_stables = get_stables_list()
         today_str = datetime.now().strftime('%Y/%m/%d')
 
-        cell_updates = []     # ws_horses.batch_update用
-        changes_rows = []     # Changesシートへ追記する行
-        cancel_rows = []      # 抹消シートへ追記する行
-        pasture_updates = []  # ws_pasture.batch_update用（既存セットの入厩年月日を埋める）
-        pasture_new_rows = [] # 放牧入厩シートへ新規追加する行
+        # ① 抹消判定
+        if info.get('status') == '抹消':
+            ws_horses.update(f'I{row_index}', [['抹消']])
+            ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+            ws_cancel.append_row([info.get('cancel_date', ''), horse_name])
+            return jsonify({"status": "success", "result": "抹消", "horse_name": horse_name})
 
-        cancelled_count, updated_count, error_count = 0, 0, 0
+        # ② 放牧／入厩
+        new_status = info.get('status', '入厩')
+        if new_status != status:
+            ws_horses.update(f'I{row_index}', [[new_status]])
 
-        for i, row in enumerate(horses_data[1:], start=2):  # 1行目はヘッダー
-            status = row[8] if len(row) > 8 else ""
-            url = row[12] if len(row) > 12 else ""
-            if status == "抹消" or not url:
-                continue
+            if status in ('放牧', '入厩') and new_status in ('放牧', '入厩'):
+                ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日"])
+                pasture_data = ws_pasture.get_all_values()
 
-            horse_name = row[0] if len(row) > 0 else ""
-            current_gender = row[1] if len(row) > 1 else ""
-            current_owner = row[5] if len(row) > 5 else ""
-            current_area = row[6] if len(row) > 6 else ""
-            current_stable = row[7] if len(row) > 7 else ""
+                if new_status == '放牧':
+                    ws_pasture.append_row([today_str, horse_name, ''])
+                else:  # new_status == '入厩'
+                    open_row_idx = None
+                    for idx in range(len(pasture_data) - 1, 0, -1):
+                        prow = pasture_data[idx]
+                        p_name = prow[1] if len(prow) > 1 else ''
+                        p_checkin = prow[2] if len(prow) > 2 else ''
+                        if p_name == horse_name and not p_checkin:
+                            open_row_idx = idx
+                            break
+                    if open_row_idx is not None:
+                        sheet_row_num = open_row_idx + 1
+                        ws_pasture.update(f'C{sheet_row_num}', [[today_str]])
+                    else:
+                        ws_pasture.append_row(['', horse_name, today_str])
 
-            try:
-                info = fetch_jra_horse_status(url)
-            except Exception:
-                error_count += 1
-                continue
+        # ③ 去勢判定
+        if current_gender == '牡' and info.get('gender') == 'せん':
+            ws_horses.update(f'B{row_index}', [['せん']])
+            ws_changes.append_row([today_str, horse_name, '去勢'])
 
-            # ① 抹消判定
-            if info.get('status') == '抹消':
-                cell_updates.append({'range': f'I{i}', 'values': [['抹消']]})
-                cancel_rows.append([info.get('cancel_date', ''), horse_name])
-                cancelled_count += 1
-                continue
+        # ④-1 馬主名変更
+        new_owner = info.get('owner')
+        if new_owner and new_owner != current_owner:
+            ws_horses.update(f'F{row_index}', [[new_owner]])
+            ws_changes.append_row([today_str, horse_name, '変更', current_owner, new_owner])
 
-            # ② 放牧／入厩
-            new_status = info.get('status', '入厩')
-            if new_status != status:
-                cell_updates.append({'range': f'I{i}', 'values': [[new_status]]})
+        # ④-2 調教師名（厩舎）変更
+        trainer_raw = info.get('trainer_raw')
+        if trainer_raw:
+            t_name, t_area = parse_trainer_field(trainer_raw)
+            match = find_stable_match(all_stables, t_area, t_name)
+            if match:
+                new_area = match['area']
+                new_stable = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
+                if new_stable != current_stable or new_area != current_area:
+                    current_full = f"{current_area}・{current_stable}" if current_area else current_stable
+                    new_full = f"{new_area}・{new_stable}" if new_area else new_stable
+                    ws_horses.update(f'G{row_index}:H{row_index}', [[new_area, new_stable]])
+                    ws_changes.append_row([today_str, horse_name, '転厩', current_full, new_full])
 
-                # 放牧⇔入厩の切り替わりを「放牧入厩」シートにセットで記録する
-                # （状態が空欄からの切り替わりは記録しない）
-                if status in ('放牧', '入厩') and new_status in ('放牧', '入厩'):
-                    if new_status == '放牧':
-                        # 新しいセットを開始する（入厩年月日は完成時に埋める）
-                        pasture_new_rows.append([today_str, horse_name, ''])
-                    else:  # new_status == '入厩'
-                        # この馬の「放牧年月日はあるが入厩年月日がまだ無い」最新の行を探して完成させる
-                        open_row_idx = None
-                        for idx in range(len(pasture_data) - 1, 0, -1):
-                            prow = pasture_data[idx]
-                            p_name = prow[1] if len(prow) > 1 else ''
-                            p_checkin = prow[2] if len(prow) > 2 else ''
-                            if p_name == horse_name and not p_checkin:
-                                open_row_idx = idx
-                                break
-                        if open_row_idx is not None:
-                            sheet_row_num = open_row_idx + 1  # get_all_valuesは0始まり、シートの行番号は1始まり
-                            pasture_updates.append({'range': f'C{sheet_row_num}', 'values': [[today_str]]})
-                            # 同一実行内で二重に一致しないようローカルデータも更新しておく
-                            while len(pasture_data[open_row_idx]) < 3:
-                                pasture_data[open_row_idx].append('')
-                            pasture_data[open_row_idx][2] = today_str
-                        else:
-                            # 対応する放牧年月日が無い場合は、馬名と入厩年月日のみを記録する
-                            pasture_new_rows.append(['', horse_name, today_str])
+        return jsonify({"status": "success", "horse_name": horse_name})
 
-            # ③ 去勢判定（現在の性別が牡の場合のみ）
-            if current_gender == '牡' and info.get('gender') == 'せん':
-                cell_updates.append({'range': f'B{i}', 'values': [['せん']]})
-                changes_rows.append([today_str, horse_name, '去勢'])
-
-            # ④-1 馬主名の変更
-            new_owner = info.get('owner')
-            if new_owner and new_owner != current_owner:
-                cell_updates.append({'range': f'F{i}', 'values': [[new_owner]]})
-                changes_rows.append([today_str, horse_name, '変更', current_owner, new_owner])
-
-            # ④-2 調教師名（＝厩舎）の変更
-            trainer_raw = info.get('trainer_raw')
-            if trainer_raw:
-                t_name, t_area = parse_trainer_field(trainer_raw)
-                match = find_stable_match(all_stables, t_area, t_name)
-                if match:
-                    new_area = match['area']
-                    new_stable = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
-                    if new_stable != current_stable or new_area != current_area:
-                        current_full = f"{current_area}・{current_stable}" if current_area else current_stable
-                        new_full = f"{new_area}・{new_stable}" if new_area else new_stable
-                        cell_updates.append({'range': f'G{i}:H{i}', 'values': [[new_area, new_stable]]})
-                        changes_rows.append([today_str, horse_name, '転厩', current_full, new_full])
-
-            updated_count += 1
-
-        if cell_updates:
-            ws_horses.batch_update(cell_updates)
-        if changes_rows:
-            ws_changes.append_rows(changes_rows)
-        if cancel_rows:
-            ws_cancel.append_rows(cancel_rows)
-        if pasture_updates:
-            ws_pasture.batch_update(pasture_updates)
-        if pasture_new_rows:
-            ws_pasture.append_rows(pasture_new_rows)
-
-        set_last_updated(datetime.now().strftime('%Y/%m/%d %H:%M'))
-
-        message = f"データ更新が完了しました。（抹消：{cancelled_count}件／更新：{updated_count}件／取得エラー：{error_count}件）"
-        flash(message)
     except Exception as e:
-        success = False
-        message = f"データ更新中にエラーが発生しました: {e}"
-        flash(message)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-    if is_ajax:
-        return jsonify({"status": "success" if success else "error", "message": message})
-    return redirect(url_for('index'))
+
+@app.route('/api/finish_update_horses', methods=['POST'])
+@login_required
+def finish_update_horses():
+    """3. 全ての更新完了後に最終更新日時を設定するAPI"""
+    try:
+        set_last_updated(datetime.now().strftime('%Y/%m/%d %H:%M'))
+        return jsonify({"status": "success", "message": "データ更新が完了しました。"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/add_parent', methods=['GET', 'POST'])
 @login_required
@@ -1311,7 +1294,15 @@ def update_horse():
         return redirect(f"/horse/{new_name}")
     except Exception as e:
         return f"エラーが発生しました: {e}", 400
-    
+
+def get_or_create_worksheet(sh, title, headers):
+    try:
+        return sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows=100, cols=len(headers))
+        ws.append_row(headers)
+        return ws
+
 @app.route('/save_change', methods=['POST'])
 @login_required
 def save_change():
