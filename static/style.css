@@ -707,6 +707,29 @@ form .select-stables {
 .relatives-table td:nth-child(6) {
     text-align: left;
 }
+.relatives-table .relatives-header-row td {
+    text-align: left;
+    font-weight: bold;
+    background-color: #f5f5f5;
+    color: #333;
+}
+.relatives-table .relatives-divider-row td {
+    padding: 0;
+    border-top: 2px solid #999;
+    line-height: 0;
+    height: 0;
+}
+.relatives-table .row-muted {
+    background-color: #f0f0f0;
+    color: #888;
+}
+.relatives-table .row-self {
+    background-color: #fff9c4;
+}
+.relatives-table .row-nested td:first-child {
+    padding-left: 22px;
+    color: #666;
+}
 
 /* 編集リンクのデザイン */
 .pedigree-cell .add-parent-link.side-action {
