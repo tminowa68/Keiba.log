@@ -320,9 +320,9 @@
                         {% if row.kind == 'header' %}
                         <tr class="relatives-header-row"><td colspan="6">{{ row.label }}</td></tr>
                         {% elif row.kind == 'divider' %}
-                        <tr class="relatives-divider-row"><td colspan="6"></td></tr>
+                        <tr class="relatives-divider-row {{ 'family-group family-group-divider' if row.group_divider else '' }}"><td colspan="6"></td></tr>
                         {% else %}
-                        <tr class="{{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }} {{ 'row-nested' if row.parent_name else '' }}">
+                        <tr class="{{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }} {{ 'row-nested' if row.parent_name else '' }} {{ 'family-group family-group-' + row.group_pos if row.group_pos else '' }}">
                             <td>{{ row.relation }}</td>
                             <td>
                                 {% if row.linkable and not row.has_url %}
