@@ -1639,21 +1639,32 @@ def horse_detail(name, active_tab):
     # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
     dam_node = pedigree_data.get(3)
     granddam_node = pedigree_data.get(7)
-    relatives = []
+
+    def _horse_blank(idx):
+        return len(horse) > idx and (horse[idx] is None or str(horse[idx]).strip() == '')
+
+    horse_status = horse[8].strip() if len(horse) > 8 and horse[8] else ''
+    horse_has_url = len(horse) > 12 and horse[12] and str(horse[12]).strip() != ''
+    horse_has_alert = _horse_blank(5) or _horse_blank(9) or _horse_blank(11)
+
+    family_table1, family_table2 = [], []
     if dam_node and dam_node.get('full_db_name'):
-        relatives = compute_relatives(
-            horse[0],
-            base_birth_year or 0,
+        family_table1, family_table2 = compute_family_tables(
+            horse[0], horse[1], base_birth_year or 0, horse[3],
+            horse_status, horse_has_url, horse_has_alert,
             dam_node.get('name', ''),
             dam_node.get('full_db_name', ''),
+            dam_node.get('birth_year'),
             granddam_node.get('name', '') if granddam_node else '',
-            granddam_node.get('full_db_name', '') if granddam_node else ''
+            granddam_node.get('full_db_name', '') if granddam_node else '',
+            granddam_node.get('birth_year') if granddam_node else None
         )
 
     return render_template('horse_detail.html', 
                            horse=horse, 
                            horse_races=horse_races,
-                           relatives=relatives,
+                           family_table1=family_table1,
+                           family_table2=family_table2,
                            sire_info=sire_info, 
                            dam_info=dam_info, 
                            current_year=datetime.now().year,
@@ -1914,6 +1925,278 @@ def save_entry():
     except Exception as e:
         print(f"Entry save error: {e}")
         return {"status": "error", "message": str(e)}, 500
+
+def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire_disp,
+                           horse_status, horse_has_url, horse_has_alert,
+                           dam_name, dam_full_name, dam_birth_year,
+                           granddam_name, granddam_full_name, granddam_birth_year):
+    """
+    「兄弟馬」テーブルと「近親馬」テーブル用のデータを組み立てる。
+    Horsesシートに加えて、Sireシート・Damシートに載っている馬（種牡馬・繁殖牝馬として登録されている
+    だけの馬）も血縁馬として拾い上げる。SireシートとDamシートから拾った馬にはリンクを付けない。
+
+    戻り値は (table1_rows, table2_rows) のタプル。各要素は以下のいずれか：
+      - {'kind': 'header', 'label': ...}                 見出し行（母／祖母）
+      - {'kind': 'divider'}                               区切り線行
+      - {'kind': 'row', 'relation':.., 'name':.., ...}    馬の行
+    """
+    if not dam_full_name:
+        return [], []
+
+    all_horses = get_all_horses()
+
+    # 甥・姪／いとこ判定用：ある馬名から「その馬自身の母欄の値」の候補群を引けるようにしておく
+    name_candidates = {}
+    for h in all_horses:
+        if len(h) > 4 and h[0]:
+            name_candidates.setdefault(h[0], []).append({'母': h[4], '生年月日': h[2] if len(h) > 2 else ''})
+
+    sire_records, dam_records = [], []
+    try:
+        sh = gc.open(horse_data)
+        try:
+            dam_records = sh.worksheet('Dam').get_all_records()
+        except Exception:
+            dam_records = []
+        try:
+            sire_records = sh.worksheet('Sire').get_all_records()
+        except Exception:
+            sire_records = []
+    except Exception:
+        pass
+
+    for r in dam_records:
+        n = str(r.get('馬名', '')).strip()
+        if n:
+            name_candidates.setdefault(n, []).append(r)
+
+    def resolve_granddam_of(dam_field_value, child_birth_year):
+        disp_name, embedded_mother, _embedded_year = split_dam_annotation(dam_field_value)
+        if embedded_mother:
+            return embedded_mother
+        if not disp_name:
+            return None
+        candidates = name_candidates.get(disp_name, [])
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            g_disp, _, _ = split_dam_annotation(str(candidates[0].get('母', '')).strip())
+            return g_disp or None
+        if child_birth_year:
+            valid = []
+            for r in candidates:
+                b_year = extract_year(str(r.get('生年月日', '')).strip())
+                if b_year and b_year < child_birth_year:
+                    valid.append((r, b_year))
+            if valid:
+                valid.sort(key=lambda x: child_birth_year - x[1])
+                g_disp, _, _ = split_dam_annotation(str(valid[0][0].get('母', '')).strip())
+                return g_disp or None
+        return None
+
+    # --- Horsesシート・Sireシート・Damシートの馬をひとつの候補リストにまとめる ---
+    # （同名馬がHorsesシートに既に登録済みの場合はそちらを優先し、Sire/Damシート側の重複は無視する）
+    existing_names = set()
+    candidates = []
+
+    for h in all_horses:
+        if len(h) < 5 or not h[0]:
+            continue
+        nm = h[0].strip()
+        if not nm or nm == horse_name:
+            continue
+        existing_names.add(nm)
+
+        def _blank(idx, row=h):
+            return len(row) > idx and (row[idx] is None or str(row[idx]).strip() == '')
+
+        candidates.append({
+            'name': nm,
+            'gender': h[1] if len(h) > 1 else '',
+            'birth_str': h[2] if len(h) > 2 else '',
+            'sire_disp': h[3] if len(h) > 3 else '',
+            'dam_field': h[4].strip() if len(h) > 4 and h[4] else '',
+            'status': h[8].strip() if len(h) > 8 and h[8] else '',
+            'has_url': len(h) > 12 and h[12] and str(h[12]).strip() != '',
+            'has_alert': _blank(5) or _blank(9) or _blank(11),
+            'linkable': True,
+        })
+
+    for r in sire_records:
+        nm = str(r.get('馬名', '')).strip()
+        if not nm or nm == horse_name or nm in existing_names:
+            continue
+        existing_names.add(nm)
+        candidates.append({
+            'name': nm,
+            'gender': '牡',
+            'birth_str': str(r.get('生年月日', '')).strip(),
+            'sire_disp': str(r.get('父', '')).strip(),
+            'dam_field': str(r.get('母', '')).strip(),
+            'status': '種馬',
+            'has_url': False,
+            'has_alert': False,
+            'linkable': False,
+        })
+
+    for r in dam_records:
+        nm = str(r.get('馬名', '')).strip()
+        if not nm or nm == horse_name or nm in existing_names:
+            continue
+        existing_names.add(nm)
+        candidates.append({
+            'name': nm,
+            'gender': '牝',
+            'birth_str': str(r.get('生年月日', '')).strip(),
+            'sire_disp': str(r.get('父', '')).strip(),
+            'dam_field': str(r.get('母', '')).strip(),
+            'status': '繁殖',
+            'has_url': False,
+            'has_alert': False,
+            'linkable': False,
+        })
+
+    by_name = {}
+    for c in candidates:
+        by_name.setdefault(c['name'], []).append(c)
+
+    def _find_own(name, birth_year):
+        """母・祖母自身の表示用データ（性別・父・状態など）を候補リストから探す"""
+        opts = by_name.get(name, [])
+        if not opts:
+            return None
+        if birth_year:
+            for c in opts:
+                if extract_year(c['birth_str']) == birth_year:
+                    return c
+        return opts[0]
+
+    def _make_row(relation, name, gender, birth_year, sire_disp, status, has_url, has_alert, linkable,
+                  is_self=False, parent_name=None):
+        return {
+            'kind': 'row',
+            'relation': relation,
+            'name': name,
+            'gender': gender,
+            'birth_year': birth_year if birth_year else '不明',
+            'sire': sire_disp,
+            'status': status,
+            'has_url': has_url,
+            'has_alert': has_alert,
+            'linkable': linkable,
+            'is_self': is_self,
+            'is_muted': (not is_self) and ((status == '抹消') or (not linkable)),
+            'parent_name': parent_name,
+        }
+
+    siblings, nephews, uncles, cousins = [], [], [], []
+
+    for c in candidates:
+        target_dam = c['dam_field']
+        if not target_dam:
+            continue
+        target_birth_year = extract_year(c['birth_str']) or 0
+        gender = c['gender']
+
+        # 1. 兄弟馬の判定（母が完全一致するか）
+        if target_dam == dam_full_name:
+            if not horse_birth_year or not target_birth_year:
+                relation = "兄弟" if gender in ['牡', 'せん'] else "姉妹"
+            elif target_birth_year < horse_birth_year:
+                relation = "兄" if gender in ['牡', 'せん'] else "姉"
+            elif target_birth_year > horse_birth_year:
+                relation = "弟" if gender in ['牡', 'せん'] else "妹"
+            else:
+                relation = "同期(兄弟)"
+            siblings.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
+                                       c['status'], c['has_url'], c['has_alert'], c['linkable']))
+
+        # 2. 叔父・叔母の判定（対象馬の母＝本馬の祖母、が一致するか）
+        # ※ 本馬の実母自身もここに該当してしまう（祖母の子であるため）ので、実母は除外する
+        elif granddam_full_name and target_dam == granddam_full_name:
+            if c['name'] == dam_name:
+                continue
+            relation = "叔父" if gender in ['牡', 'せん'] else "叔母"
+            uncles.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
+                                     c['status'], c['has_url'], c['has_alert'], c['linkable']))
+
+        # 3. 甥・姪／いとこの判定
+        elif dam_name or granddam_name:
+            parent_disp_name, _, _ = split_dam_annotation(target_dam)
+            target_granddam = resolve_granddam_of(target_dam, target_birth_year)
+            if target_granddam and dam_name and target_granddam == dam_name:
+                relation = "甥" if gender in ['牡', 'せん'] else "姪"
+                nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
+                                          c['status'], c['has_url'], c['has_alert'], c['linkable'],
+                                          parent_name=parent_disp_name))
+            elif target_granddam and granddam_name and target_granddam == granddam_name:
+                cousins.append(_make_row("いとこ", c['name'], gender, target_birth_year, c['sire_disp'],
+                                          c['status'], c['has_url'], c['has_alert'], c['linkable'],
+                                          parent_name=parent_disp_name))
+
+    def _sort_key(row):
+        return row['birth_year'] if isinstance(row['birth_year'], int) else 9999
+
+    def _insert_with_children(base_rows, child_rows_by_parent):
+        """
+        base_rows（本人の世代の行、生年順）を並べ、各行の直後に、
+        その馬を母とする子（甥姪／いとこ）があれば区切り線を挟んで差し込む。
+        どの親にも一致しなかった子は、最後にまとめて追加する。
+        """
+        remaining = dict(child_rows_by_parent)
+        result = []
+        for row in base_rows:
+            result.append(row)
+            children = remaining.pop(row['name'], None)
+            if children:
+                children.sort(key=_sort_key)
+                result.append({'kind': 'divider'})
+                result.extend(children)
+        leftover = [r for rows in remaining.values() for r in rows]
+        if leftover:
+            leftover.sort(key=_sort_key)
+            result.append({'kind': 'divider'})
+            result.extend(leftover)
+        return result
+
+    def _group_by_parent(rows):
+        grouped = {}
+        for r in rows:
+            grouped.setdefault(r['parent_name'], []).append(r)
+        return grouped
+
+    # --- テーブル1：母（見出し） → 兄弟馬・本馬（仔がいれば直下に甥姪） ---
+    own_row = _make_row('本馬', horse_name, horse_gender, horse_birth_year, horse_sire_disp,
+                         horse_status, horse_has_url, horse_has_alert, False, is_self=True)
+    siblings_and_self = siblings + [own_row]
+    siblings_and_self.sort(key=_sort_key)
+
+    table1 = [{'kind': 'header', 'label': f"母：{dam_name}（{dam_birth_year if dam_birth_year else '不明'}）"}]
+    table1.extend(_insert_with_children(siblings_and_self, _group_by_parent(nephews)))
+
+    # --- テーブル2：祖母（見出し） → 叔父叔母・母（叔父叔母に仔がいれば直下にいとこ） ---
+    table2 = []
+    if granddam_name:
+        mother_own = _find_own(dam_name, dam_birth_year)
+        if mother_own:
+            mother_row = _make_row('母', dam_name, mother_own['gender'], dam_birth_year, mother_own['sire_disp'],
+                                    mother_own['status'], mother_own['has_url'], mother_own['has_alert'],
+                                    mother_own['linkable'])
+        else:
+            mother_row = _make_row('母', dam_name, '牝', dam_birth_year, '不明', '', False, False, True)
+
+        tier2 = uncles + [mother_row]
+        tier2.sort(key=_sort_key)
+
+        # 母自身の子（＝本馬の兄弟）はテーブル1で既に表示済みのため、いとことしては差し込まない
+        cousins_by_parent = _group_by_parent(cousins)
+        cousins_by_parent.pop(dam_name, None)
+
+        table2.append({'kind': 'header',
+                        'label': f"祖母：{granddam_name}（{granddam_birth_year if granddam_birth_year else '不明'}）"})
+        table2.extend(_insert_with_children(tier2, cousins_by_parent))
+
+    return table1, table2
 
 def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, granddam_name, granddam_full_name):
     """
