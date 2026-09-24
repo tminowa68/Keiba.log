@@ -302,8 +302,7 @@
     <div id="inbreed-results"></div>
 
     <!-- 兄弟馬・近親馬表示領域を追加（サーバー側で計算済みのため即時表示） -->
-    <div id="relatives-results" class="mt-20">
-        <strong class="inbreed-title">兄弟馬・近親馬</strong>
+    {% macro render_relatives_table(rows) %}
         <table class="race-list-table relatives-table" style="margin-top: 10px;">
             <thead>
                 <tr>
@@ -315,33 +314,52 @@
                     <th>父馬</th>
                 </tr>
             </thead>
-            <tbody id="relatives-tbody">
-                {% if relatives %}
-                    {% for rel in relatives %}
-                    <tr>
-                        <td>{{ rel.relation }}</td>
-                        <td>
-                            {% if not rel.has_url %}
-                                <a href="/edit_horse/{{ rel.name }}" class="btn-url">URLを追加</a>
-                            {% elif rel.status in ['放牧', '入厩'] %}
-                                現役
-                            {% elif rel.status == '抹消' %}
-                                引退
-                            {% else %}
-                                {{ rel.status or '-' }}
-                            {% endif %}
-                        </td>
-                        <td>{% if rel.has_alert %}<span class="alert-mark">!</span>{% endif %}<a href="/horse/{{ rel.name }}">{{ rel.name }}</a></td>
-                        <td class="{{ 'female-text' if rel.gender == '牝' else '' }}">{{ rel.gender }}</td>
-                        <td>{{ rel.birth_year }}</td>
-                        <td>{{ rel.sire }}</td>
-                    </tr>
+            <tbody>
+                {% if rows %}
+                    {% for row in rows %}
+                        {% if row.kind == 'header' %}
+                        <tr class="relatives-header-row"><td colspan="6">{{ row.label }}</td></tr>
+                        {% elif row.kind == 'divider' %}
+                        <tr class="relatives-divider-row"><td colspan="6"></td></tr>
+                        {% else %}
+                        <tr class="{{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }} {{ 'row-nested' if row.parent_name else '' }}">
+                            <td>{{ row.relation }}</td>
+                            <td>
+                                {% if row.linkable and not row.has_url %}
+                                    <a href="/edit_horse/{{ row.name }}" class="btn-url">URLを追加</a>
+                                {% elif row.status in ['放牧', '入厩'] %}
+                                    現役
+                                {% elif row.status == '抹消' %}
+                                    引退
+                                {% else %}
+                                    {{ row.status or '-' }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if row.has_alert %}<span class="alert-mark">!</span>{% endif %}
+                                {% if row.linkable %}<a href="/horse/{{ row.name }}">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}
+                            </td>
+                            <td class="{{ 'female-text' if row.gender == '牝' else '' }}">{{ row.gender }}</td>
+                            <td>{{ row.birth_year }}</td>
+                            <td>{{ row.sire }}</td>
+                        </tr>
+                        {% endif %}
                     {% endfor %}
                 {% else %}
                     <tr><td colspan="6" class="inbreed-none">なし</td></tr>
                 {% endif %}
             </tbody>
         </table>
+    {% endmacro %}
+
+    <div id="relatives-results" class="mt-20">
+        <strong class="inbreed-title">兄弟馬</strong>
+        {{ render_relatives_table(family_table1) }}
+    </div>
+
+    <div id="close-relatives-results" class="mt-20">
+        <strong class="inbreed-title">近親馬</strong>
+        {{ render_relatives_table(family_table2) }}
     </div>
 </section>
 {% endif %}
@@ -670,7 +688,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // --- 兄弟馬・近親馬：URL未登録の馬があれば、そこにフォーカスして気づきやすくする ---
 document.addEventListener("DOMContentLoaded", function() {
-    const urlBtn = document.querySelector('#relatives-tbody .btn-url');
+    const urlBtn = document.querySelector('#relatives-results .btn-url, #close-relatives-results .btn-url');
     if (urlBtn) {
         urlBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
         urlBtn.focus();
