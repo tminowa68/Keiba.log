@@ -2140,18 +2140,27 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     def _insert_with_children(base_rows, child_rows_by_parent):
         """
         base_rows（本人の世代の行、生年順）を並べ、各行の直後に、
-        その馬を母とする子（甥姪／いとこ）があれば区切り線を挟んで差し込む。
-        どの親にも一致しなかった子は、最後にまとめて追加する。
+        その馬を母とする子（甥姪／いとこ）があれば二重線を挟んで差し込む。
+        親＋子のまとまりには太枠で囲むための位置情報（group_pos／group_divider）を付与する。
+        どの親にも一致しなかった子は、最後にまとめて追加する（この場合は枠なし）。
         """
         remaining = dict(child_rows_by_parent)
         result = []
         for row in base_rows:
-            result.append(row)
             children = remaining.pop(row['name'], None)
             if children:
                 children.sort(key=_sort_key)
-                result.append({'kind': 'divider'})
-                result.extend(children)
+                row = dict(row)
+                row['group_pos'] = 'top'
+                result.append(row)
+                result.append({'kind': 'divider', 'group_divider': True})
+                last_idx = len(children) - 1
+                for i, ch in enumerate(children):
+                    ch = dict(ch)
+                    ch['group_pos'] = 'bottom' if i == last_idx else 'mid'
+                    result.append(ch)
+            else:
+                result.append(row)
         leftover = [r for rows in remaining.values() for r in rows]
         if leftover:
             leftover.sort(key=_sort_key)
@@ -2181,9 +2190,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         if mother_own:
             mother_row = _make_row('母', dam_name, mother_own['gender'], dam_birth_year, mother_own['sire_disp'],
                                     mother_own['status'], mother_own['has_url'], mother_own['has_alert'],
-                                    mother_own['linkable'])
+                                    mother_own['linkable'], is_self=True)
         else:
-            mother_row = _make_row('母', dam_name, '牝', dam_birth_year, '不明', '', False, False, True)
+            mother_row = _make_row('母', dam_name, '牝', dam_birth_year, '不明', '', False, False, True, is_self=True)
 
         tier2 = uncles + [mother_row]
         tier2.sort(key=_sort_key)
