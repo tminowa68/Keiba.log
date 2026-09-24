@@ -693,7 +693,8 @@ form .select-stables {
     border-radius: 5px; 
     display: none;
 }
-#relatives-results {
+#relatives-results,
+#close-relatives-results {
     padding: 15px;
     background: #fff;
     border: 1px solid #ddd;
@@ -727,8 +728,29 @@ form .select-stables {
     background-color: #fff9c4;
 }
 .relatives-table .row-nested td:first-child {
-    padding-left: 22px;
     color: #666;
+}
+
+/* --- 姉妹／叔母とその仔をひとつの家族グループとして太枠で囲む --- */
+.relatives-table .family-group td:first-child {
+    border-left: 3px solid #333;
+}
+.relatives-table .family-group td:last-child {
+    border-right: 3px solid #333;
+}
+.relatives-table .family-group-top td {
+    border-top: 3px solid #333;
+}
+.relatives-table .family-group-bottom td {
+    border-bottom: 3px solid #333;
+}
+.relatives-table .family-group-divider td {
+    border-left: 3px solid #333;
+    border-right: 3px solid #333;
+    border-top: 4px double #333;
+    padding: 0;
+    line-height: 0;
+    height: 0;
 }
 
 /* 編集リンクのデザイン */
