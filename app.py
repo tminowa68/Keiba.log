@@ -189,7 +189,7 @@ def _fetch_jra_soup(url):
     if parsed.scheme not in ("http", "https") or not any(
         parsed.netloc.endswith(host) for host in JRA_ALLOWED_HOSTS
     ):
-        raise ValueError("JRA公式サイト（jra.go.jp / jra.jp）のURLを入力してください。")
+        raise ValueError("JRAの公式パソコンサイト（jra.go.jp/）のURLを入力してください。")
 
     resp = requests.get(
         url,
