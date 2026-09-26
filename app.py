@@ -328,6 +328,196 @@ def fetch_jra_horse_status(url):
 
     return result
 
+# --- JBISサーチ経由での血統情報取得（JRAに掲載のない馬向け） ---
+JBIS_BASE = "https://www.jbis.or.jp"
+# 検索結果ページの実URL（sid=horse：馬情報検索／keyword：馬名／match=exact：完全一致検索／
+# entry：登録状況の絞り込み＝3が種牡馬、4が繁殖牝馬）
+JBIS_RESULT_URL = "https://www.jbis.or.jp/horse/result/"
+JBIS_ENTRY_CODE = {"Sire": "entry_3", "Dam": "entry_4"}
+_JBIS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Referer": "https://www.jbis.or.jp/",
+}
+_ALPHABET_NAME_RE = re.compile(r'^[A-Za-z0-9 .\'\-]+$')
+_COUNTRY_SUFFIX_RE = re.compile(r'[（(][^（）()]*[）)]\s*$')
+
+class JbisMultipleMatchError(Exception):
+    """JBISサーチの検索結果が複数件だった場合に送出する"""
+    pass
+
+def _fetch_jbis_soup(url, params=None, method="GET"):
+    """指定されたJBIS（jbis.or.jp）のURLを取得し、BeautifulSoupオブジェクトを返す。
+    JBISサイトは応答が遅いことがあるため、タイムアウトを長めにし、
+    タイムアウト時は1回だけ再試行する。"""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc.endswith("jbis.or.jp"):
+        raise ValueError("JBISのURL（jbis.or.jp）ではありません。")
+
+    last_error = None
+    for attempt in range(2):
+        try:
+            if method.upper() == "POST":
+                resp = requests.post(url, data=params, headers=_JBIS_HEADERS, timeout=25)
+            else:
+                resp = requests.get(url, params=params, headers=_JBIS_HEADERS, timeout=25)
+            resp.raise_for_status()
+            resp.encoding = resp.apparent_encoding or 'utf-8'
+            return BeautifulSoup(resp.text, 'html.parser')
+        except requests.exceptions.Timeout as e:
+            last_error = e
+            continue
+    raise last_error
+
+def _strip_country_suffix(text):
+    """名前末尾の「(国名)」のような括弧書きを取り除く"""
+    if not text:
+        return text
+    return _COUNTRY_SUFFIX_RE.sub('', text.strip()).strip()
+
+def search_jbis_horse_url(horse_name, p_type):
+    """
+    JBISサーチ（馬情報検索）で馬名を完全一致検索する
+    （種別に応じて登録状況を種牡馬／繁殖牝馬に絞り込む）。
+    検索結果が1件ならその馬の詳細ページの絶対URLを返す。
+    0件の場合はNone、2件以上の場合はJbisMultipleMatchErrorを送出する。
+    """
+    payload = {
+        'sid': 'horse',
+        'keyword': horse_name,
+        'match': 'exact',
+        'entry': JBIS_ENTRY_CODE.get(p_type, ''),
+    }
+
+    result_soup = _fetch_jbis_soup(JBIS_RESULT_URL, params=payload, method='GET')
+
+    count_span = result_soup.select_one('div.data-hit__count span')
+    count_text = count_span.get_text(strip=True) if count_span else ''
+    count = int(count_text) if count_text.isdigit() else None
+
+    if not count:
+        return None
+    if count >= 2:
+        raise JbisMultipleMatchError("検索結果が複数あります。URLを入力してください。")
+
+    link = result_soup.select_one('a.txt-link[href^="/horse/"]')
+    if not link or not link.get('href'):
+        return None
+    return requests.compat.urljoin(JBIS_BASE, link.get('href'))
+
+def _resolve_jbis_display_name(name, url):
+    """
+    名前がアルファベット表記の場合、リンク先ページの<span class="hdg1-search__sub">を
+    採用する（国名の括弧書きは除去する）。それ以外はそのまま返す。
+    """
+    if not name or not url or not _ALPHABET_NAME_RE.match(name):
+        return name
+    try:
+        parent_soup = _fetch_jbis_soup(url)
+        sub_span = parent_soup.select_one('span.hdg1-search__sub')
+        if sub_span:
+            sub_name = _strip_country_suffix(sub_span.get_text(strip=True))
+            if sub_name:
+                return sub_name
+    except Exception:
+        pass
+    return name
+
+def _extract_jbis_parent(soup, class_name, label_texts):
+    """
+    父・母の (名前, URL) を取得する。
+    ページ内では「父の母」等のネスト表示にも同じクラス（data-3__female等）が
+    使い回されていることがあるため、まず見出し（<div class="{class_name}-hdg">母</div>等）
+    に「直後に続く」<div class="{class_name}">を優先的に探す。
+    見つからない場合は指定クラスをそのまま探し、それでも見つからない場合はさらに緩い
+    フォールバック（クラス名の部分一致／ラベル文字列への近接）を行う。
+    """
+    def _link_to_result(link):
+        if not link or not link.get('href'):
+            return None
+        name = _strip_country_suffix(link.get_text(strip=True))
+        if not name:
+            return None
+        url = requests.compat.urljoin(JBIS_BASE, link.get('href'))
+        return name, url
+
+    def _link_in(container):
+        if not container:
+            return None
+        return container.select_one('a.txt-link[href^="/horse/"]') or container.select_one('a[href^="/horse/"]')
+
+    # 0. 見出し（例："母"）の直後に続くdiv.{class_name}を優先する
+    #    （「父の母」等、同じクラス名が別の意味で使い回されているケースへの対策）
+    hdg_class = f'{class_name}-hdg'
+    for label_text in label_texts:
+        for hdg in soup.select(f'.{hdg_class}'):
+            if hdg.get_text(strip=True) != label_text:
+                continue
+            content = hdg.find_next_sibling(class_=class_name)
+            result = _link_to_result(_link_in(content))
+            if result:
+                return result
+
+    # 1. 指定されたクラス名そのもの（最初に見つかったもの）
+    result = _link_to_result(_link_in(soup.select_one(f'div.{class_name}')))
+    if result:
+        return result
+
+    # 2. クラス名の一部（male/female）を含む要素
+    key = 'male' if 'male' in class_name else 'female'
+    for el in soup.select(f'[class*="{key}"]'):
+        result = _link_to_result(_link_in(el))
+        if result:
+            return result
+
+    # 3. ラベル文字列（父／母／Sire／Dam等）に隣接する馬リンク
+    for label_text in label_texts:
+        label_el = soup.find(string=lambda s: s and s.strip() == label_text)
+        if not label_el:
+            continue
+        container = label_el.find_parent()
+        for _ in range(4):
+            if not container:
+                break
+            result = _link_to_result(_link_in(container))
+            if result:
+                return result
+            container = container.find_next_sibling() or container.find_parent()
+
+    return None
+
+def fetch_other_horse_info(p_name, p_type, direct_url=None):
+    """
+    直接URLが指定されていればそのページから、指定がなければJBISサーチで馬名から特定した
+    馬のページから、父・母の名前を取得する。
+    父・母の名前がアルファベット表記の場合は、それぞれの詳細ページから
+    <span class="hdg1-search__sub"> の値（国名の括弧書きを除いたもの）を採用する。
+    """
+    if direct_url:
+        horse_url = direct_url
+    else:
+        horse_url = search_jbis_horse_url(p_name, p_type)
+        if not horse_url:
+            raise ValueError("JBISサーチで馬が見つかりませんでした。")
+
+    detail_soup = _fetch_jbis_soup(horse_url)
+    result = {"jbis_url": horse_url}
+
+    sire_info = _extract_jbis_parent(detail_soup, 'data-3__male', ['父', 'Sire'])
+    if sire_info:
+        name, url = sire_info
+        result['sire'] = _resolve_jbis_display_name(name, url)
+
+    dam_info = _extract_jbis_parent(detail_soup, 'data-3__female', ['母', 'Dam'])
+    if dam_info:
+        name, url = dam_info
+        result['dam'] = _resolve_jbis_display_name(name, url)
+
+    return result
+
 def parse_trainer_field(text):
     """「名前（所属）」形式の文字列を (name, area) に分解する（add_horse.htmlのJS版と同等）"""
     m = re.match(r'^(.+?)[（(]\s*(.+?)\s*[）)]\s*$', text)
@@ -953,6 +1143,28 @@ def api_fetch_jra_horse():
         return jsonify(data), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"ページの取得に失敗しました: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"解析中にエラーが発生しました: {e}"}), 500
+
+@app.route('/api/fetch_other_horse')
+@login_required
+def api_fetch_other_horse():
+    p_name = request.args.get('p_name', '').strip()
+    p_type = request.args.get('p_type', 'Sire').strip()
+    direct_url = request.args.get('url', '').strip() or None
+    if not p_name and not direct_url:
+        return jsonify({"error": "馬名またはURLが取得できませんでした。"}), 400
+    try:
+        data = fetch_other_horse_info(p_name, p_type, direct_url=direct_url)
+        if not data.get('sire') and not data.get('dam'):
+            return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
+        return jsonify(data), 200
+    except JbisMultipleMatchError as e:
+        return jsonify({"error": str(e)}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"ページの取得に失敗しました: {e}"}), 502
     except Exception as e:
@@ -2111,12 +2323,16 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
             siblings.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                        c['status'], c['has_url'], c['has_alert'], c['linkable']))
 
-        # 2. 叔父・叔母の判定（対象馬の母＝本馬の祖母、が一致するか）
+        # 2. 伯父叔父・伯母叔母の判定（対象馬の母＝本馬の祖母、が一致するか）
         # ※ 本馬の実母自身もここに該当してしまう（祖母の子であるため）ので、実母は除外する
+        # ※ 実母より年上なら伯父・伯母、年下なら叔父・叔母と表記を分ける
         elif granddam_full_name and target_dam == granddam_full_name:
             if c['name'] == dam_name:
                 continue
-            relation = "叔父" if gender in ['牡', 'せん'] else "叔母"
+            if dam_birth_year and target_birth_year and target_birth_year < dam_birth_year:
+                relation = "伯父" if gender in ['牡', 'せん'] else "伯母"
+            else:
+                relation = "叔父" if gender in ['牡', 'せん'] else "叔母"
             uncles.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                      c['status'], c['has_url'], c['has_alert'], c['linkable']))
 
@@ -2134,13 +2350,41 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
                                           c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                           parent_name=parent_disp_name))
 
+    # 4. 又甥・又姪（甥姪の仔）／いとこ甥・いとこ姪（いとこの仔）の判定
+    #    ※ 甥姪・いとこの一覧が確定した後、それぞれを親として持つ馬を探す
+    nephew_names = {n['name'] for n in nephews}
+    cousin_names = {c['name'] for c in cousins}
+    grand_nephews, cousin_nephews = [], []
+
+    for c in candidates:
+        target_dam = c['dam_field']
+        if not target_dam:
+            continue
+        parent_disp_name, _, _ = split_dam_annotation(target_dam)
+        if not parent_disp_name:
+            continue
+        gender = c['gender']
+        target_birth_year = extract_year(c['birth_str']) or 0
+
+        if parent_disp_name in nephew_names:
+            relation = "又甥" if gender in ['牡', 'せん'] else "又姪"
+            grand_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
+                                            c['status'], c['has_url'], c['has_alert'], c['linkable'],
+                                            parent_name=parent_disp_name))
+        elif parent_disp_name in cousin_names:
+            relation = "いとこ甥" if gender in ['牡', 'せん'] else "いとこ姪"
+            cousin_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
+                                             c['status'], c['has_url'], c['has_alert'], c['linkable'],
+                                             parent_name=parent_disp_name))
+
     def _sort_key(row):
         return row['birth_year'] if isinstance(row['birth_year'], int) else 9999
 
     def _insert_with_children(base_rows, child_rows_by_parent):
         """
-        base_rows（本人の世代の行、生年順）を並べ、各行の直後に、
-        その馬を母とする子（甥姪／いとこ）があれば二重線を挟んで差し込む。
+        base_rows（本人の世代の行、あらかじめ生年順に並べたもの）を並べ、各行の直後に、
+        その馬を親とする子（あらかじめ生年順、または既にネスト展開済みの行列）があれば
+        二重線を挟んで差し込む。
         親＋子のまとまりには太枠で囲むための位置情報（group_pos／group_divider）を付与する。
         どの親にも一致しなかった子は、最後にまとめて追加する（この場合は枠なし）。
         """
@@ -2149,7 +2393,6 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         for row in base_rows:
             children = remaining.pop(row['name'], None)
             if children:
-                children.sort(key=_sort_key)
                 row = dict(row)
                 row['group_pos'] = 'top'
                 result.append(row)
@@ -2169,21 +2412,41 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         return result
 
     def _group_by_parent(rows):
+        """親名ごとにグループ化し、各グループ内は生年順に並べる"""
         grouped = {}
         for r in rows:
             grouped.setdefault(r['parent_name'], []).append(r)
+        for lst in grouped.values():
+            lst.sort(key=_sort_key)
         return grouped
 
-    # --- テーブル1：母（見出し） → 兄弟馬・本馬（仔がいれば直下に甥姪） ---
+    def _nest_two_generations(children_by_parent, grandchildren_by_parent):
+        """
+        children_by_parent（例：兄弟名→甥姪一覧）の各子の直下に、
+        grandchildren_by_parent（例：甥姪名→又甥又姪一覧）から該当する孫世代をネストして展開する。
+        戻り値は、そのまま_insert_with_childrenのchild_rows_by_parentとして使える形。
+        """
+        expanded = {}
+        for parent_name, children in children_by_parent.items():
+            scoped_grandchildren = {
+                child['name']: grandchildren_by_parent[child['name']]
+                for child in children if child['name'] in grandchildren_by_parent
+            }
+            expanded[parent_name] = _insert_with_children(children, scoped_grandchildren)
+        return expanded
+
+    # --- テーブル1：母（見出し） → 兄弟馬・本馬（仔がいれば直下に甥姪、孫がいればさらに直下に又甥又姪） ---
     own_row = _make_row('本馬', horse_name, horse_gender, horse_birth_year, horse_sire_disp,
                          horse_status, horse_has_url, horse_has_alert, False, is_self=True)
     siblings_and_self = siblings + [own_row]
     siblings_and_self.sort(key=_sort_key)
 
-    table1 = [{'kind': 'header', 'label': f"母：{dam_name}（{dam_birth_year if dam_birth_year else '不明'}）"}]
-    table1.extend(_insert_with_children(siblings_and_self, _group_by_parent(nephews)))
+    nephews_by_sibling = _nest_two_generations(_group_by_parent(nephews), _group_by_parent(grand_nephews))
 
-    # --- テーブル2：祖母（見出し） → 叔父叔母・母（叔父叔母に仔がいれば直下にいとこ） ---
+    table1 = [{'kind': 'header', 'label': f"母：{dam_name}（{dam_birth_year if dam_birth_year else '不明'}）"}]
+    table1.extend(_insert_with_children(siblings_and_self, nephews_by_sibling))
+
+    # --- テーブル2：祖母（見出し） → 伯父叔父叔母・母（仔がいれば直下にいとこ、孫がいればさらに直下にいとこ甥いとこ姪） ---
     table2 = []
     if granddam_name:
         mother_own = _find_own(dam_name, dam_birth_year)
@@ -2200,10 +2463,11 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 母自身の子（＝本馬の兄弟）はテーブル1で既に表示済みのため、いとことしては差し込まない
         cousins_by_parent = _group_by_parent(cousins)
         cousins_by_parent.pop(dam_name, None)
+        cousins_by_uncle = _nest_two_generations(cousins_by_parent, _group_by_parent(cousin_nephews))
 
         table2.append({'kind': 'header',
                         'label': f"祖母：{granddam_name}（{granddam_birth_year if granddam_birth_year else '不明'}）"})
-        table2.extend(_insert_with_children(tier2, cousins_by_parent))
+        table2.extend(_insert_with_children(tier2, cousins_by_uncle))
 
     return table1, table2
 
