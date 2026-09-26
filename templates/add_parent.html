@@ -28,6 +28,13 @@
         <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
     </div>
 
+    <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+        <label>その他のURL：</label><br>
+        <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
+        <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+        <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+    </div>
+
     <div style="margin-bottom: 15px;">
         <label>馬名：</label>
         <strong>{{ p_name }}</strong>
@@ -215,6 +222,52 @@ async function fetchFromJra() {
                 }
             }
         }
+
+        statusEl.textContent = '情報を取得しました。内容を確認してください。';
+        statusEl.style.color = 'green';
+    } catch (e) {
+        statusEl.textContent = '通信エラーが発生しました。';
+        statusEl.style.color = 'red';
+    }
+}
+
+// 【JBIS等（JRA以外）のページ取得】入力されたURLのページに直接アクセスし、
+// 父・母の情報を取得してフォームへ自動入力する（JRAのURL欄と同様の挙動）
+// 【JBIS等（JRA以外）のページ取得】URLが入力されていればそのページに直接アクセスし、
+// 入力されていなければ馬名でJBISサーチを検索して、父・母の情報を取得しフォームへ自動入力する
+async function fetchFromOther() {
+    const urlInput = document.getElementById('other_url_input');
+    const statusEl = document.getElementById('other_fetch_status');
+    const url = urlInput.value.trim();
+    const pName = document.querySelector('input[name="p_name"]').value;
+    const pType = {{ p_type | tojson }};
+
+    let query;
+    if (url) {
+        query = 'url=' + encodeURIComponent(url);
+        statusEl.textContent = '取得中...';
+    } else {
+        query = 'p_name=' + encodeURIComponent(pName) + '&p_type=' + encodeURIComponent(pType);
+        statusEl.textContent = '検索中...';
+    }
+    statusEl.style.color = '#666';
+
+    try {
+        const res = await fetch('/api/fetch_other_horse?' + query);
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+            statusEl.textContent = data.error || '取得に失敗しました。';
+            statusEl.style.color = 'red';
+            return;
+        }
+
+        const sireInput = document.querySelector('[name="sire"]');
+        const damInput = document.querySelector('[name="dam"]');
+
+        if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
+        if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
+        if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
         statusEl.style.color = 'green';
@@ -589,6 +642,10 @@ function initAutoGrowTextareas() {
                 if (el.id === 'jra_url_input' && typeof fetchFromJra === 'function') {
                     fetchFromJra();
                 }
+                // その他のURL欄でEnterが押された場合も同様に「取得」と同じ処理を実行する
+                if (el.id === 'other_url_input' && typeof fetchFromOther === 'function') {
+                    fetchFromOther();
+                }
             }
         });
     });
@@ -636,6 +693,15 @@ function clearParentForm() {
 
     const statusEl = document.getElementById('jra_fetch_status');
     if (statusEl) statusEl.textContent = '';
+
+    const otherUrlInput = document.getElementById('other_url_input');
+    if (otherUrlInput) {
+        otherUrlInput.value = '';
+        autoResizeTextarea(otherUrlInput);
+    }
+
+    const otherStatusEl = document.getElementById('other_fetch_status');
+    if (otherStatusEl) otherStatusEl.textContent = '';
 }
 
 window.addEventListener('DOMContentLoaded', function() {
