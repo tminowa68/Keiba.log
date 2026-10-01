@@ -700,57 +700,103 @@ form .select-stables {
     border: 1px solid #ddd;
     border-radius: 5px;
 }
-.relatives-table th,
-.relatives-table td {
+/* --- 兄弟馬・近親馬テーブル：divベースのgridレイアウト ---
+   関係列の矢印表示で行をインデントしても、他の列（性別・生年など）の位置が
+   ずれないよう、テーブル構造ではなくグリッドで各列の幅を固定している。 */
+.relatives-table {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    margin-top: 10px;
+    border: 1px solid #ddd;
+    font-size: 0.95em;
+}
+.relatives-row {
+    display: grid;
+    grid-template-columns: 120px 92px minmax(160px, 1.6fr) 64px 74px minmax(140px, 1.4fr);
+    align-items: center;
+    border-bottom: 1px solid #eee;
+}
+.relatives-row.relatives-head-row {
+    background-color: #4CAF50;
+    color: #fff;
+    font-weight: bold;
+}
+.relatives-cell {
+    padding: 8px 10px;
     text-align: center;
+    overflow-wrap: anywhere;
 }
-.relatives-table td:nth-child(3),
-.relatives-table td:nth-child(6) {
+.relatives-cell.cell-name,
+.relatives-cell.cell-sire {
     text-align: left;
 }
-.relatives-table .relatives-header-row td {
+.relatives-cell.relatives-full {
+    grid-column: 1 / -1;
     text-align: left;
+}
+.relatives-row.relatives-header-row .relatives-full {
     font-weight: bold;
     background-color: #f5f5f5;
     color: #333;
 }
-.relatives-table .relatives-divider-row td {
+.relatives-row.relatives-divider-row {
+    border-bottom: none;
+}
+.relatives-row.relatives-divider-row .relatives-full {
     padding: 0;
     border-top: 2px solid #999;
     line-height: 0;
     height: 0;
 }
-.relatives-table .row-muted {
+.relatives-row.row-muted {
     background-color: #f0f0f0;
     color: #888;
 }
-.relatives-table .row-self {
+.relatives-row.row-self {
     background-color: #fff9c4;
 }
-.relatives-table .row-nested td:first-child {
+.relatives-row.row-nested .cell-relation {
     color: #666;
 }
 
-/* --- 姉妹／叔母とその仔をひとつの家族グループとして太枠で囲む --- */
-.relatives-table .family-group td:first-child {
-    border-left: 3px solid #333;
+/* 関係列：矢印を左寄せで表示し、その後に関係名を表示する */
+.cell-relation {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    text-align: left;
+    white-space: nowrap;
 }
-.relatives-table .family-group td:last-child {
+.relation-arrow {
+    color: #666;
+    flex-shrink: 0;
+}
+.cell-relation.relation-depth-1 {
+    padding-left: 14px;
+}
+.cell-relation.relation-depth-2 {
+    padding-left: 28px;
+}
+
+/* --- 姉妹／叔母とその仔をひとつの家族グループとして太枠で囲む --- */
+.relatives-row.family-group {
+    border-left: 3px solid #333;
     border-right: 3px solid #333;
 }
-.relatives-table .family-group-top td {
+.relatives-row.family-group-top {
     border-top: 3px solid #333;
 }
-.relatives-table .family-group-bottom td {
+.relatives-row.family-group-bottom {
     border-bottom: 3px solid #333;
 }
-.relatives-table .family-group-divider td {
+.relatives-row.family-group-divider {
     border-left: 3px solid #333;
     border-right: 3px solid #333;
+}
+.relatives-row.family-group-divider .relatives-full {
     border-top: 4px double #333;
-    padding: 0;
-    line-height: 0;
-    height: 0;
 }
 
 /* 編集リンクのデザイン */
