@@ -116,6 +116,26 @@ const allHorsesData = [
     {% endfor %}
 ];
 
+// 馬名の並び替え用比較関数
+// ヴ(U+30F4)はUnicode上でエ・オより後ろに配置されているため、localeCompareに
+// そのまま渡すと五十音順として不自然な位置（ウより前、または末尾）にきてしまう。
+// 比較用のキーとしてのみ「ヴ」を「ウ」+ 順序調整用の特殊文字に置き換えることで、
+// 「ウ」と「エ」の間に並ぶようにする。
+function kanaSortKey(str) {
+    return (str || '').replace(/ヴ/g, 'ウ\uFFFF');
+}
+function compareHorseName(a, b) {
+    return kanaSortKey(a.name).localeCompare(kanaSortKey(b.name), 'ja');
+}
+allHorsesData.sort(compareHorseName);
+
+// 馬のデータが1つも取得できていない場合、取得できるまでリロードし続ける
+if (!Array.isArray(allHorsesData) || allHorsesData.length === 0) {
+    setTimeout(function() {
+        location.reload();
+    }, 1000);
+}
+
 const allStables = {{ stables | tojson | safe }};
 
 // 厩舎（調教師）の選択肢が1つも取得できていない場合、取得できるまでリロードし続ける
@@ -292,8 +312,8 @@ function onStableChange() {
         const filteredHorses = allHorsesData.filter(h => h.stable === selectedStable);
         // 状態が「抹消」の馬は所属頭数に含めない
         const totalHorses = filteredHorses.filter(h => h.status !== '抹消').length;
-        // 入厩頭数：抹消・放牧の馬は含めない
-        const activeHorses = filteredHorses.filter(h => h.status !== '抹消' && h.status !== '放牧').length;
+        // 入厩頭数：抹消・放牧・早期の馬は含めない
+        const activeHorses = filteredHorses.filter(h => h.status !== '抹消' && h.status !== '放牧' && h.status !== '早期').length;
 
         // 所属頭数の上限は馬房数（臨時貸付含む）の2.5倍
         const stallBase = parseInt(stableInfo.raw_capacity, 10);
@@ -473,6 +493,7 @@ function renderAgeTables() {
     const filtered = allHorsesData.filter(h => h.stable === selectedStable);
     
     const groups = {
+        '1歳': filtered.filter(h => h.age === 1),
         '2歳': filtered.filter(h => h.age === 2),
         '3歳': filtered.filter(h => h.age === 3),
         '4歳': filtered.filter(h => h.age === 4),
@@ -481,9 +502,11 @@ function renderAgeTables() {
 
     let html = '<div class="age-tables-container">';
     Object.keys(groups).forEach(label => {
+        // 1歳馬・2歳馬のテーブルは、0頭の場合は表示しない
+        if ((label === '1歳' || label === '2歳') && groups[label].length === 0) return;
         html += `
             <div class="age-group-section">
-                <h3>${label}</h3>
+                <h3>${label}（${groups[label].length}頭）</h3>
                 <table>
                     <thead>
                         <tr>
@@ -522,7 +545,7 @@ function renderAgeTables() {
     container.innerHTML = html;
 }
 
-// 全厩舎について所属頭数（抹消を除く）／入厩頭数（抹消・放牧を除く）が
+// 全厩舎について所属頭数（抹消を除く）／入厩頭数（抹消・放牧・早期を除く）が
 // 上限（馬房数×2.5／馬房数）を超えていないかを判定し、超過している厩舎名の一覧を返す
 function getOverLimitStables() {
     const overLimit = [];
@@ -532,7 +555,7 @@ function getOverLimitStables() {
 
         const horses = allHorsesData.filter(h => h.stable === s.display_name);
         const totalHorses = horses.filter(h => h.status !== '抹消').length;
-        const activeHorses = horses.filter(h => h.status !== '抹消' && h.status !== '放牧').length;
+        const activeHorses = horses.filter(h => h.status !== '抹消' && h.status !== '放牧' && h.status !== '早期').length;
 
         const stallBase = parseInt(s.raw_capacity, 10);
         const tempLoan = parseInt(s.temp_loan, 10) || 0;
@@ -593,6 +616,7 @@ function selectStableFromAlert(displayName) {
 window.onload = function() {
     updateStableDropdown('reg', '', document.querySelector('.kana-group:last-child .reg-kana.active'));
     renderStableAlerts();
+    renderAgeTables(); // 馬名の並び替え（ヴの位置修正含む）を反映するため、初期表示もJS側で描画し直す
 
     // 厩舎を選択した直後はフォーカスを外し、次にクリックするまで
     // 矢印キーやページアップ/ダウンで選択が意図せず切り替わらないようにする

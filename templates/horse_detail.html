@@ -302,54 +302,59 @@
     <div id="inbreed-results"></div>
 
     <!-- 兄弟馬・近親馬表示領域を追加（サーバー側で計算済みのため即時表示） -->
+    <!-- テーブル構造ではなくdiv(grid)を使用：関係列の矢印表示で行をずらしても他の列がずれないようにするため -->
     {% macro render_relatives_table(rows) %}
-        <table class="race-list-table relatives-table" style="margin-top: 10px;">
-            <thead>
-                <tr>
-                    <th>関係</th>
-                    <th>状態</th>
-                    <th>馬名</th>
-                    <th>性別</th>
-                    <th>生年</th>
-                    <th>父馬</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% if rows %}
-                    {% for row in rows %}
-                        {% if row.kind == 'header' %}
-                        <tr class="relatives-header-row"><td colspan="6">{{ row.label }}</td></tr>
-                        {% elif row.kind == 'divider' %}
-                        <tr class="relatives-divider-row {{ 'family-group family-group-divider' if row.group_divider else '' }}"><td colspan="6"></td></tr>
-                        {% else %}
-                        <tr class="{{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }} {{ 'row-nested' if row.parent_name else '' }} {{ 'family-group family-group-' + row.group_pos if row.group_pos else '' }}">
-                            <td>{{ row.relation }}</td>
-                            <td>
-                                {% if row.linkable and not row.has_url %}
-                                    <a href="/edit_horse/{{ row.name }}" class="btn-url">URLを追加</a>
-                                {% elif row.status in ['放牧', '入厩'] %}
-                                    現役
-                                {% elif row.status == '抹消' %}
-                                    引退
-                                {% else %}
-                                    {{ row.status or '-' }}
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if row.has_alert %}<span class="alert-mark">!</span>{% endif %}
-                                {% if row.linkable %}<a href="/horse/{{ row.name }}">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}
-                            </td>
-                            <td class="{{ 'female-text' if row.gender == '牝' else '' }}">{{ row.gender }}</td>
-                            <td>{{ row.birth_year }}</td>
-                            <td>{{ row.sire }}</td>
-                        </tr>
-                        {% endif %}
-                    {% endfor %}
-                {% else %}
-                    <tr><td colspan="6" class="inbreed-none">なし</td></tr>
-                {% endif %}
-            </tbody>
-        </table>
+        <div class="relatives-table">
+            <div class="relatives-row relatives-head-row">
+                <div class="relatives-cell">関係</div>
+                <div class="relatives-cell">状態</div>
+                <div class="relatives-cell">馬名</div>
+                <div class="relatives-cell">性別</div>
+                <div class="relatives-cell">生年</div>
+                <div class="relatives-cell">父馬</div>
+            </div>
+            {% if rows %}
+                {% for row in rows %}
+                    {% if row.kind == 'header' %}
+                    <div class="relatives-row relatives-header-row">
+                        <div class="relatives-cell relatives-full">{{ row.label }}</div>
+                    </div>
+                    {% elif row.kind == 'divider' %}
+                    <div class="relatives-row relatives-divider-row {{ 'family-group family-group-divider' if row.group_divider else '' }}">
+                        <div class="relatives-cell relatives-full"></div>
+                    </div>
+                    {% else %}
+                    <div class="relatives-row {{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }} {{ 'row-nested' if row.parent_name else '' }} {{ 'family-group family-group-' + row.group_pos if row.group_pos else '' }}">
+                        <div class="relatives-cell cell-relation {{ 'relation-depth-' + row.depth|string if row.depth else '' }}">
+                            {% if row.depth %}<span class="relation-arrow">{{ '→' * row.depth }}</span>{% endif %}<span class="relation-text">{{ row.relation }}</span>
+                        </div>
+                        <div class="relatives-cell cell-status">
+                            {% if row.linkable and not row.has_url %}
+                                <a href="/edit_horse/{{ row.name }}" class="btn-url">URLを追加</a>
+                            {% elif row.status in ['放牧', '入厩'] %}
+                                現役
+                            {% elif row.status == '抹消' %}
+                                引退
+                            {% else %}
+                                {{ row.status or '-' }}
+                            {% endif %}
+                        </div>
+                        <div class="relatives-cell cell-name">
+                            {% if row.has_alert %}<span class="alert-mark">!</span>{% endif %}
+                            {% if row.linkable %}<a href="/horse/{{ row.name }}">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}
+                        </div>
+                        <div class="relatives-cell cell-gender {{ 'female-text' if row.gender == '牝' else '' }}">{{ row.gender }}</div>
+                        <div class="relatives-cell cell-birth">{{ row.birth_year }}</div>
+                        <div class="relatives-cell cell-sire">{{ row.sire }}</div>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <div class="relatives-row">
+                    <div class="relatives-cell relatives-full inbreed-none">なし</div>
+                </div>
+            {% endif %}
+        </div>
     {% endmacro %}
 
     <div id="relatives-results" class="mt-20">
