@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+{% block title %}競走馬登録 一括インポート - keiba.log{% endblock %}
+{% block content %}
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+            <div style="color: green; padding: 10px; font-size:0.95em; background:#f0f8f0; border-radius:4px; margin-bottom:10px;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <h2>競走馬登録 一括インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの「競走馬登録」ページを保存したファイル（.mhtml／.html）をアップロードすると、
+        一覧に含まれる馬をまとめて登録します。<br>
+        既に登録済みの馬名は、空欄の項目だけを埋めます（状態・URLは対象外のため、既存の値が空欄にされることはありません）。<br>
+        ページの見出しにある登録日（例：「競走馬登録 2026年9月24日登録分」）は、競走馬登録の列に入力されます。
+    </p>
+
+    <form method="POST" action="/import_horses" enctype="multipart/form-data" style="margin-top:20px;">
+        <div style="margin-bottom:15px;">
+            <label>ファイル：</label><br>
+            <input type="file" name="mhtml_file" accept=".mhtml,.html,.htm" required style="margin-top:5px;">
+        </div>
+        <div style="margin-top:20px; display:flex; gap:10px;">
+            <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>
+            <a href="/" style="background:#ccc; color:black; padding:10px 20px; text-decoration:none; border-radius:4px;">ホームへ戻る</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

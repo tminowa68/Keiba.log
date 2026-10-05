@@ -11,6 +11,7 @@
     {% endwith %}
     <form method="POST" action="/add_horse" autocomplete="off">
         <h2>競走馬の登録</h2>
+        <p style="margin-top:-8px;"><a href="/import_horses" style="font-size:0.9em;">JRAの競走馬登録ページから一括登録する →</a></p>
 
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>JRAの公式パソコンサイトのURL：</label><br>
@@ -557,7 +558,7 @@ const locationData = {
             "千歳市"
         ],
         "渡島総合振興局": [
-            "森町"
+            "函館市", "森町"
         ]
     },
     "青森県": [],
@@ -659,6 +660,7 @@ const municipalityValidity = {
     "千歳市":     { start: "1958-07-01",  end: null },
     "千歳町":     { start: "1939-04-01",  end: "1958-07-01" },
 
+    "函館市":     { start: "1922-08-01",  end: null },
     "森町":       { start: "1921-04-01",  end: null }
 };
 
