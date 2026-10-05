@@ -2,6 +2,7 @@ import sqlite3
 import re, os
 import json
 import requests
+import email
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
@@ -77,9 +78,9 @@ except gspread.SpreadsheetNotFound:
     ws1.update_title("Horses")
     ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場", "URL"])
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
-    ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付"])
+    ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
-    ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付"])
+    ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
 
 try:
     sh.worksheet("Changes")
@@ -561,11 +562,24 @@ def get_stables_list():
                 data = sheet.get_all_values()
                 for row in data[1:]:
                     if len(row) >= 2 and row[0] and row[1]:
-                        # 列インデックスの更新 (E:開業[4], F:引退[5], G:馬房数[6], H:臨時貸付[7])
+                        # 列インデックスの更新 (E:開業[4], F:引退[5], G:馬房数[6], H:臨時貸付[7], I:貸付終了[8])
                         opening = row[4] if len(row) > 4 else ""
                         retirement = row[5] if len(row) > 5 else ""
                         capacity_str = row[6] if len(row) > 6 else "0"
                         temp_loan_str = row[7] if len(row) > 7 else "0"
+                        loan_end_str = row[8] if len(row) > 8 else ""
+
+                        # 貸付終了日（I列）が過去の日付なら、臨時貸付は馬房数の計算に含めない
+                        if loan_end_str:
+                            loan_end_date = None
+                            for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+                                try:
+                                    loan_end_date = datetime.strptime(loan_end_str.strip(), fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            if loan_end_date and loan_end_date.date() < datetime.now().date():
+                                temp_loan_str = "0"
                         
                         # --- 〇年目の計算（開業の年月日の西暦から数える） ---
                         years_active = ""
@@ -1199,6 +1213,317 @@ def resolve_registration_status(status, birth_year, reg_year, reg_month):
         if status == '放牧':
             return '早期'
     return status
+
+def _extract_html_from_upload(file_bytes):
+    """
+    アップロードされたファイルがMHTML形式（Webページの保存ファイル）ならHTML本文を取り出し、
+    単なるHTMLファイルならそのまま文字列にして返す。
+    """
+    head = file_bytes[:2000].lower()
+    if b'mime-version' in head or b'content-type: multipart/related' in head:
+        msg = email.message_from_bytes(file_bytes)
+        for part in msg.walk():
+            if part.get_content_type() == 'text/html':
+                charset = part.get_content_charset() or 'cp932'
+                payload = part.get_payload(decode=True)
+                try:
+                    return payload.decode(charset, errors='replace')
+                except (LookupError, UnicodeDecodeError):
+                    return payload.decode('cp932', errors='replace')
+        raise ValueError('MHTMLファイルの中にHTML本文が見つかりませんでした。')
+    for enc in ('cp932', 'utf-8'):
+        try:
+            return file_bytes.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode('cp932', errors='replace')
+
+
+# --- 産地（産地／地域）の判定用データ ---
+# add_horse.html／add_parent.html／edit_horse.html のJS版 locationData・
+# OVERSEAS_ABBREVIATION_MAP と同じ内容。どちらかを変更した場合はもう一方も合わせて変更すること。
+LOCATION_DATA = {
+    "北海道": {
+        "日高振興局": [
+            "浦河町", "えりも町", "荻伏村", "様似町", "様似村",
+            "静内町", "新ひだか町", "新冠町", "新冠村", "日高町",
+            "日高村", "平取町", "幌泉町", "幌泉村", "三石町",
+            "三石村", "門別町"
+        ],
+        "胆振総合振興局": [
+            "厚真町", "安平町", "安平村", "虻田町", "追分町",
+            "追分村", "白老町", "白老村", "伊達市", "伊達町",
+            "洞爺湖町", "洞爺村", "苫小牧市", "豊浦町", "登別市",
+            "登別町", "早来町", "早来村", "穂別町", "穂別村",
+            "幌別町", "幌別村", "むかわ町", "鵡川町", "鵡川村",
+            "室蘭市"
+        ],
+        "十勝総合振興局": [
+            "池田町", "帯広市", "清水町", "清水村", "士幌町", "士幌村", "大樹町", "大樹村", "幕別町", "幕別村"
+        ],
+        "石狩振興局": [
+            "千歳市"
+        ],
+        "渡島総合振興局": [
+            "函館市", "森町"
+        ]
+    },
+    "青森県": [], "福島県": [], "茨城県": [], "栃木県": [], "群馬県": [],
+    "千葉県": [], "長野県": [], "熊本県": [], "大分県": [], "宮崎県": [], "鹿児島県": [],
+    "海外": {
+        "北米": ["アメリカ", "カナダ", "メキシコ"],
+        "欧州": ["イギリス", "アイルランド", "フランス", "ドイツ", "イタリア", "デンマーク", "スウェーデン"],
+        "オセアニア": ["オーストラリア", "ニュージーランド"],
+        "南米": ["アルゼンチン", "チリ", "ブラジル", "ウルグアイ", "ペルー"],
+        "中東": ["アラブ首長国連邦", "サウジアラビア"],
+        "アフリカ": ["南アフリカ"]
+    }
+}
+
+OVERSEAS_ABBREVIATION_MAP = {
+    '米': 'アメリカ',
+    '加': 'カナダ',
+    '英': 'イギリス',
+    '愛': 'アイルランド',
+    '仏': 'フランス',
+    '独': 'ドイツ',
+    '豪': 'オーストラリア',
+    '新': 'ニュージーランド',
+    '亜': 'アルゼンチン',
+}
+
+def find_birthplace_match(raw):
+    """
+    JRAの「産地」表記を、産地（詳細：市区町村・国名など）→産地（第1階層：都道府県／海外）→
+    海外の略称（米・英・仏など）の優先順位でLOCATION_DATAと突き合わせ、
+    {'region':..., 'detail':...} を返す。一致しなければNone。
+    （add_horse.htmlのfindBirthplaceMatch関数と同じロジック）
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+
+    # 1. 産地（詳細：市区町村・国名など）に一致するか
+    for region, region_data in LOCATION_DATA.items():
+        if isinstance(region_data, list):
+            if text in region_data:
+                return {'region': region, 'detail': text}
+        elif isinstance(region_data, dict):
+            for group_list in region_data.values():
+                if text in group_list:
+                    return {'region': region, 'detail': text}
+
+    # 2. 産地（第1階層）そのものに一致するか
+    if text in LOCATION_DATA:
+        return {'region': text, 'detail': None}
+
+    # 3. 海外の略称（米・英・仏など）を正式名称に変換して「海外」から選ぶ
+    if text in OVERSEAS_ABBREVIATION_MAP:
+        return {'region': '海外', 'detail': OVERSEAS_ABBREVIATION_MAP[text]}
+
+    return None
+
+def parse_jra_registration_page(html_text):
+    """
+    JRAの「競走馬登録」ページ（HTML／MHTMLで保存したもの）を解析し、
+    (registration_str, [horse_dict, ...]) を返す。
+    registration_str は "YYYY/M/D" 形式（見出しの日付が見つからなければ空文字）。
+    horse_dict のキー: name, gender, birth(=YYYY/M/D), area(拠点), stable(厩舎名),
+                       region(産地), detail(地域), breeder(生産牧場), owner(馬主名), sire, dam
+    """
+    soup = BeautifulSoup(html_text, 'html.parser')
+
+    registration_str = ''
+    main_div = soup.select_one('caption .main') or soup.find('div', class_='main')
+    if main_div:
+        m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', main_div.get_text())
+        if m:
+            registration_str = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+
+    horses = []
+    for tr in soup.select('tbody tr'):
+        name_el = tr.find('th', attrs={'scope': 'row'})
+        if not name_el:
+            continue
+        name = name_el.get_text(strip=True)
+        if not name:
+            continue
+
+        tds = tr.find_all('td')
+        if len(tds) < 3:
+            continue
+
+        # 性別・毛色（毛色は使わない）・生年月日
+        lines = [l.strip() for l in tds[0].get_text(separator='\n').split('\n') if l.strip()]
+        gender = lines[0].split('・')[0].strip() if lines else ''
+        birth_date_str = ''
+        if len(lines) > 1:
+            m2 = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', lines[1])
+            if m2:
+                birth_date_str = f"{int(m2.group(1))}/{int(m2.group(2))}/{int(m2.group(3))}"
+
+        # 預託きゅう舎（拠点・厩舎名）／産地・生産牧場／馬主名
+        stable_lines = [l.strip() for l in tds[1].get_text(separator='\n').split('\n') if l.strip()]
+        area = stable_name = region = detail = breeder = owner = ''
+        if len(stable_lines) > 0:
+            m3 = re.match(r'[（(](.+?)[）)]\s*(.+)', stable_lines[0])
+            if m3:
+                area, stable_name = m3.group(1).strip(), m3.group(2).strip()
+            else:
+                stable_name = stable_lines[0]
+        if len(stable_lines) > 1:
+            # 「産地 生産牧場」の形式（最初の空白で分割）。生産牧場名に空白を含む馬は手直しが必要な場合がある
+            parts = stable_lines[1].split(None, 1)
+            if len(parts) == 2:
+                raw_place, breeder = parts[0].strip(), parts[1].strip()
+                match = find_birthplace_match(raw_place)
+                if match:
+                    region = match['region']
+                    detail = match['detail'] or ''
+                else:
+                    # 一致しない場合は産地にそのまま入れておく（地域は空欄）
+                    region = raw_place
+            else:
+                breeder = stable_lines[1]
+        if len(stable_lines) > 2:
+            owner = stable_lines[2].strip()
+
+        # 父・母（<div class="parent"><span>父</span><span>母</span></div>）
+        sire = dam = ''
+        parent_div = tr.find('div', class_='parent')
+        if parent_div:
+            spans = parent_div.find_all('span')
+            if len(spans) > 0:
+                sire = spans[0].get_text(strip=True)
+            if len(spans) > 1:
+                dam = spans[1].get_text(strip=True)
+
+        horses.append({
+            'name': name, 'gender': gender, 'birth': birth_date_str,
+            'area': area, 'stable': stable_name, 'region': region, 'detail': detail,
+            'breeder': breeder, 'owner': owner, 'sire': sire, 'dam': dam,
+        })
+
+    return registration_str, horses
+
+
+@app.route('/import_horses', methods=['GET', 'POST'])
+@login_required
+def import_horses():
+    """JRAの「競走馬登録」ページ（HTML／MHTML保存）をアップロードして一括登録する"""
+    if request.method == 'GET':
+        return render_template('import_horses.html')
+
+    file = request.files.get('mhtml_file')
+    if not file or not file.filename:
+        flash('ファイルが選択されていません。')
+        return redirect('/import_horses')
+
+    try:
+        html_text = _extract_html_from_upload(file.read())
+        registration_str, parsed_horses = parse_jra_registration_page(html_text)
+    except Exception as e:
+        flash(f'ファイルの解析に失敗しました: {e}')
+        return redirect('/import_horses')
+
+    if not parsed_horses:
+        flash('馬のデータが見つかりませんでした。ファイルの形式をご確認ください。')
+        return redirect('/import_horses')
+
+    def _blank(v):
+        return v is None or str(v).strip() == ''
+
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("Horses")
+        data = ws.get_all_values()
+        headers = list(data[0]) if data else []
+        rows = [list(r) for r in data[1:]]
+
+        while len(headers) < 14:
+            headers.append('')
+        if _blank(headers[13]):
+            headers[13] = '競走馬登録'
+
+        name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
+
+        reg_y, reg_m = '', ''
+        if registration_str:
+            reg_parts = registration_str.split('/')
+            reg_y = reg_parts[0] if len(reg_parts) > 0 else ''
+            reg_m = reg_parts[1] if len(reg_parts) > 1 else ''
+
+        added = updated = skipped = 0
+
+        for h in parsed_horses:
+            name = h['name']
+
+            if name not in name_to_index:
+                # 新規登録：状態・URLは空欄のまま（早期登録の時期に該当する場合のみ状態を「早期」にする）
+                birth_year = h['birth'].split('/')[0] if h['birth'] else ''
+                status = resolve_registration_status('', birth_year, reg_y, reg_m)
+
+                new_row = [''] * len(headers)
+                new_row[0] = name
+                new_row[1] = h['gender']
+                new_row[2] = h['birth']
+                new_row[3] = h['sire']
+                new_row[4] = h['dam']
+                new_row[5] = h['owner']
+                new_row[6] = h['area']
+                new_row[7] = h['stable']
+                new_row[8] = status
+                new_row[9] = h['region']
+                new_row[10] = h['detail']
+                new_row[11] = h['breeder']
+                new_row[13] = registration_str
+                rows.append(new_row)
+                name_to_index[name] = len(rows) - 1
+                added += 1
+            else:
+                # 既存馬：空欄の項目だけ埋める（状態・URLは対象外＝既存の値を空欄にしない）
+                row = rows[name_to_index[name]]
+                while len(row) < len(headers):
+                    row.append('')
+
+                field_map = {
+                    1: h['gender'], 2: h['birth'], 3: h['sire'], 4: h['dam'],
+                    5: h['owner'], 6: h['area'], 7: h['stable'],
+                    9: h['region'], 10: h['detail'], 11: h['breeder'],
+                }
+                changed = False
+                for col_idx, new_val in field_map.items():
+                    if _blank(row[col_idx]) and new_val:
+                        row[col_idx] = new_val
+                        changed = True
+
+                # 競走馬登録日が未入力だった場合のみ設定し、早期登録の時期に該当すれば状態を更新する
+                if _blank(row[13]) and registration_str:
+                    row[13] = registration_str
+                    birth_year = row[2].split('/')[0] if row[2] else ''
+                    new_status = resolve_registration_status(row[8], birth_year, reg_y, reg_m)
+                    if new_status != row[8]:
+                        row[8] = new_status
+                    changed = True
+
+                if changed:
+                    updated += 1
+                else:
+                    skipped += 1
+
+        rows.sort(key=lambda r: r[0] if r and r[0] else '')
+        ws.clear()
+        ws.update(range_name='A1', values=[headers] + rows)
+
+        msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
+        if registration_str:
+            msg += f"（登録日：{registration_str}）"
+        flash(msg)
+        return redirect('/import_horses')
+    except Exception as e:
+        flash(f'登録処理中にエラーが発生しました: {e}')
+        return redirect('/import_horses')
+
 
 @app.route('/add_horse', methods=['POST'])
 @login_required
