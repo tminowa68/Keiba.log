@@ -1873,6 +1873,11 @@ def update_horse():
         for i, row in enumerate(data):
             if len(row) > 0 and row[0] == request.form.get('old_name'):
                 status = request.form.get('status')
+                old_status = row[8] if len(row) > 8 else ''
+                # 状態が「早期」の馬は、edit_horseでの手動編集でも「放牧」には変更できないようにする
+                # （「入厩」への変更は許可する）
+                if old_status == '早期' and status == '放牧':
+                    status = '早期'
                 old_registration = row[13] if len(row) > 13 else ''
                 # 競走馬登録日が新たに入力・変更された場合は、早期登録の状態判定を適用する
                 if has_reg_fields and registration_str and registration_str != old_registration:
