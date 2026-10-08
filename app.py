@@ -1128,6 +1128,9 @@ def index():
     results = []
     for h in raw_results:
         horse = list(h)
+        # 状態が「抹消」の馬は一覧に表示しない
+        if len(horse) > 8 and str(horse[8] or '').strip() == '抹消':
+            continue
         if len(horse) > 2:
             try:
                 horse[2] = datetime.strptime(horse[2], '%Y/%m/%d')
@@ -1918,8 +1921,9 @@ def parse_sheet_date(value):
 
 @app.route('/weekly')
 def weekly():
-    """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する"""
+    """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
     base = parse_sheet_date(request.args.get('date', '')) or datetime.now().date()
+    stable_filter = request.args.get('stable', '').strip()
     week_start = base - timedelta(days=base.weekday())
     week_end = week_start + timedelta(days=6)
 
@@ -1952,8 +1956,9 @@ def weekly():
                 continue
             item = {'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)}
             if item['type'] == '抹消':
-                cancelled_keys.add((d, item['name']))
-                cancelled.append(item)
+                if (d, item['name']) not in cancelled_keys:
+                    cancelled_keys.add((d, item['name']))
+                    cancelled.append(item)
             else:
                 changes.append(item)
 
@@ -1985,12 +1990,21 @@ def weekly():
             item['date_label'] = f"{item['date'].month}/{item['date'].day}({JP_WEEKDAYS[item['date'].weekday()]})"
         items.sort(key=lambda x: (x['date'], x['name']))
 
+    if stable_filter:
+        def _match(item):
+            # 転厩は、転厩元・転厩先のどちらかがその厩舎なら表示する
+            return item['stable'] == stable_filter or (
+                item.get('type') == '転厩' and stable_filter in (item.get('old'), item.get('new')))
+        registered, cancelled, pasture, changes = (
+            [i for i in items if _match(i)] for items in (registered, cancelled, pasture, changes))
+
     def week_label(d):
         return f"{d.year}年{d.month}月{d.day}日({JP_WEEKDAYS[d.weekday()]})"
 
     return render_template('weekly.html',
                            registered=registered, cancelled=cancelled, pasture=pasture, changes=changes,
                            week_label=f"{week_label(week_start)}〜{week_label(week_end)}",
+                           stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
                            prev_week=(week_start - timedelta(days=7)).strftime('%Y-%m-%d'),
                            next_week=(week_start + timedelta(days=7)).strftime('%Y-%m-%d'))
