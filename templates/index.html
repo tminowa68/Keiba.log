@@ -528,7 +528,8 @@ function renderAgeTables() {
         '2歳': filtered.filter(h => h.age === 2),
         '3歳': filtered.filter(h => h.age === 3),
         '4歳': filtered.filter(h => h.age === 4),
-        '5歳以上': filtered.filter(h => h.age >= 5)
+        // 5歳以上は馬齢の若い順、同じ馬齢の中は馬名順に並べる
+        '5歳以上': filtered.filter(h => h.age >= 5).sort((a, b) => (a.age - b.age) || compareHorseName(a, b))
     };
 
     let html = '<div class="age-tables-container">';
