@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+{% block title %}週間レポート - keiba.log{% endblock %}
+{% block content %}
+<section>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+            <div style="color: red; padding: 10px; font-size:0.9em;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div style="margin-bottom: 12px;">
+        <a href="/weekly?date={{ prev_week }}">← 前の週</a>
+        <a href="/weekly" style="margin-left: 10px;">今週</a>
+        <a href="/weekly?date={{ next_week }}" style="margin-left: 10px;">次の週 →</a>
+        <form method="GET" action="/weekly" style="display: inline-block; margin-left: 15px;">
+            <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px;">
+            <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
+        </form>
+    </div>
+    <h2>{{ week_label }}</h2>
+    <p style="margin: 0; color: #555;">
+        登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
+    </p>
+</section>
+
+<section>
+    <h3 class="m-0">登録馬（{{ registered|length }}頭）</h3>
+    {% if registered %}
+    <table>
+        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th></tr></thead>
+        <tbody>
+        {% for h in registered %}
+        <tr>
+            <td>{{ h.date_label }}</td>
+            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{{ h.gender }}</td>
+            <td>{{ h.sire }}</td>
+            <td>{{ h.dam }}</td>
+            <td>{{ h.stable }}</td>
+            <td>{{ h.status }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>この週の登録馬はありません。</p>
+    {% endif %}
+</section>
+
+<section>
+    <h3 class="m-0">抹消馬（{{ cancelled|length }}頭）</h3>
+    {% if cancelled %}
+    <table>
+        <thead><tr><th>抹消日</th><th>馬名</th><th>厩舎</th></tr></thead>
+        <tbody>
+        {% for h in cancelled %}
+        <tr>
+            <td>{{ h.date_label }}</td>
+            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{{ h.stable }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>この週の抹消馬はありません。</p>
+    {% endif %}
+</section>
+
+<section>
+    <h3 class="m-0">放牧入厩（{{ pasture|length }}件）</h3>
+    {% if pasture %}
+    <table>
+        <thead><tr><th>年月日</th><th>馬名</th><th>厩舎</th><th>区分</th></tr></thead>
+        <tbody>
+        {% for h in pasture %}
+        <tr>
+            <td>{{ h.date_label }}</td>
+            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{{ h.stable }}</td>
+            <td>{{ h.type }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>この週の放牧・入厩はありません。</p>
+    {% endif %}
+</section>
+
+<section>
+    <h3 class="m-0">変更（{{ changes|length }}件）</h3>
+    {% if changes %}
+    <table>
+        <thead><tr><th>年月日</th><th>馬名</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th></tr></thead>
+        <tbody>
+        {% for h in changes %}
+        <tr>
+            <td>{{ h.date_label }}</td>
+            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{{ h.stable }}</td>
+            <td>{{ h.type }}</td>
+            <td>{{ h.old }}</td>
+            <td>{{ h.new }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>この週の変更はありません。</p>
+    {% endif %}
+</section>
+{% endblock %}

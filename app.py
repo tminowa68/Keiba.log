@@ -1763,6 +1763,174 @@ def import_trainer_horses():
         return redirect('/import_horses')
 
 
+def parse_jra_cancel_page(html_text):
+    """
+    JRAの「抹消一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
+    (cancel_date_str, [馬名, ...]) を返す。cancel_date_str は見出し「抹消一覧 2026年10月8日抹消分」の "YYYY/M/D"
+    （見つからなければ空文字）。
+    """
+    soup = BeautifulSoup(html_text, 'html.parser')
+    root = soup.select_one('#entry_erasure') or soup
+
+    cancel_date_str = ''
+    caption = root.select_one('caption .main')
+    if caption:
+        m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', caption.get_text())
+        if m:
+            cancel_date_str = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+
+    names = []
+    for th in root.select('tbody th[scope="row"]'):
+        name = th.get_text(strip=True)
+        if name:
+            names.append(name)
+    return cancel_date_str, names
+
+@app.route('/import_cancel_horses', methods=['POST'])
+@login_required
+def import_cancel_horses():
+    """JRAの「抹消一覧」ページ（HTML／MHTML保存）をアップロードして、登録済みの馬の状態を抹消にする"""
+    file = request.files.get('cancel_file')
+    if not file or not file.filename:
+        flash('ファイルが選択されていません。')
+        return redirect('/import_horses')
+
+    try:
+        cancel_date_str, names = parse_jra_cancel_page(_extract_html_from_upload(file.read()))
+    except Exception as e:
+        flash(f'ファイルの解析に失敗しました: {e}')
+        return redirect('/import_horses')
+
+    if not names:
+        flash('抹消馬が見つかりませんでした。ファイルの形式をご確認ください。')
+        return redirect('/import_horses')
+
+    date_str = cancel_date_str or datetime.now().strftime('%Y/%m/%d')
+
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("Horses")
+        data = ws.get_all_values()
+
+        cancelled, already = [], []
+        changes_rows = []
+        for i, row in enumerate(data[1:], start=2):
+            if not row or row[0] not in names:
+                continue
+            current = row[8].strip() if len(row) > 8 else ''
+            if current == '抹消':
+                already.append(row[0])
+                continue
+            ws.update(f'I{i}', [['抹消']])
+            changes_rows.append([date_str, row[0], '抹消', current, '抹消'])
+            cancelled.append(row[0])
+
+        if changes_rows:
+            sh.worksheet("Changes").append_rows(changes_rows)
+
+        msg = f"抹消一覧の取り込み完了（{date_str}抹消分・{len(names)}頭）：抹消 {len(cancelled)}件"
+        if already:
+            msg += f"／抹消済み {len(already)}件"
+        msg += f"／未登録 {len(names) - len(cancelled) - len(already)}件"
+        flash(msg)
+        if cancelled:
+            flash("抹消（Changesシートに記録）：" + "、".join(cancelled))
+        return redirect('/import_horses')
+    except Exception as e:
+        flash(f'登録処理中にエラーが発生しました: {e}')
+        return redirect('/import_horses')
+
+
+def parse_sheet_date(value):
+    """シートの年月日（"2026/10/8"・"2026/10/08"・"2026-10-08" など）を date に変換する（変換できなければNone）"""
+    m = re.match(r'^\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})', str(value or ''))
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    except ValueError:
+        return None
+
+@app.route('/weekly')
+def weekly():
+    """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する"""
+    base = parse_sheet_date(request.args.get('date', '')) or datetime.now().date()
+    week_start = base - timedelta(days=base.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    def in_week(d):
+        return d is not None and week_start <= d <= week_end
+
+    def cell(row, i):
+        return row[i].strip() if len(row) > i and row[i] else ''
+
+    registered, cancelled, pasture, changes = [], [], [], []
+    try:
+        sh = gc.open(horse_data)
+
+        horses_data = sh.worksheet("Horses").get_all_values()[1:]
+        stable_of = {}
+        for r in horses_data:
+            name = cell(r, 0)
+            if not name:
+                continue
+            stable_of[name] = f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7)
+            reg_date = parse_sheet_date(cell(r, 13))
+            if in_week(reg_date):
+                registered.append({'date': reg_date, 'name': name, 'gender': cell(r, 1),
+                                   'sire': cell(r, 3), 'dam': cell(r, 4), 'status': cell(r, 8)})
+
+        cancelled_keys = set()
+        for r in sh.worksheet("Changes").get_all_values()[1:]:
+            d = parse_sheet_date(cell(r, 0))
+            if not in_week(d):
+                continue
+            item = {'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)}
+            if item['type'] == '抹消':
+                cancelled_keys.add((d, item['name']))
+                cancelled.append(item)
+            else:
+                changes.append(item)
+
+        # 旧「データ更新」で記録していた抹消シートも対象にする（Changesと重複する分は除く）
+        try:
+            for r in sh.worksheet("抹消").get_all_values()[1:]:
+                d = parse_sheet_date(cell(r, 0))
+                if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
+                    cancelled.append({'date': d, 'name': cell(r, 1), 'type': '抹消', 'old': '', 'new': '抹消'})
+        except gspread.WorksheetNotFound:
+            pass
+
+        try:
+            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+                out_date, in_date = parse_sheet_date(cell(r, 0)), parse_sheet_date(cell(r, 2))
+                if in_week(out_date):
+                    pasture.append({'date': out_date, 'name': cell(r, 1), 'type': '放牧'})
+                if in_week(in_date):
+                    pasture.append({'date': in_date, 'name': cell(r, 1), 'type': '入厩'})
+        except gspread.WorksheetNotFound:
+            pass
+    except Exception as e:
+        flash(f"データの読み込みに失敗しました: {e}")
+        stable_of = {}
+
+    for items in (registered, cancelled, pasture, changes):
+        for item in items:
+            item['stable'] = stable_of.get(item['name'], '')
+            item['date_label'] = f"{item['date'].month}/{item['date'].day}({JP_WEEKDAYS[item['date'].weekday()]})"
+        items.sort(key=lambda x: (x['date'], x['name']))
+
+    def week_label(d):
+        return f"{d.year}年{d.month}月{d.day}日({JP_WEEKDAYS[d.weekday()]})"
+
+    return render_template('weekly.html',
+                           registered=registered, cancelled=cancelled, pasture=pasture, changes=changes,
+                           week_label=f"{week_label(week_start)}〜{week_label(week_end)}",
+                           date_for_input=base.strftime('%Y-%m-%d'),
+                           prev_week=(week_start - timedelta(days=7)).strftime('%Y-%m-%d'),
+                           next_week=(week_start + timedelta(days=7)).strftime('%Y-%m-%d'))
+
+
 @app.route('/add_horse', methods=['POST'])
 @login_required
 def add_horse():
