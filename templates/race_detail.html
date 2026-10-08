@@ -6,7 +6,7 @@
     <section class="race-header-card">
         <h1>{{ race.name if race.name else '' }}</h1>
         <div class="race-info-main">
-            {{ date }} ／ {{ venue }} ／ {{ race.num }}
+            {{ date|jpdate(weekday=True) }} ／ {{ venue }} ／ {{ race.num }}
         </div>
         <div class="race-info-sub">
             <span><strong>発走時刻:</strong> {{ race.time }}</span>

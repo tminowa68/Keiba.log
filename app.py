@@ -155,8 +155,24 @@ def date_year(value):
     parts = split_date(value)
     return parts[0] if parts else None
 
-# テンプレートから日付の分解（入力欄の初期値・表示用）を使えるようにする
+def format_date_jp(value, weekday=False):
+    """画面表示用：日付を「2026年1月1日」形式にする（weekday=Trueなら「2026年1月1日(木)」）。
+    月・日が無い場合は「2026年1月」「2026年」、読み取れない文字列はそのまま返す"""
+    parts = split_date(value)
+    if not parts:
+        return str(value or '')
+    y, m, d = parts
+    text = f"{y}年" + (f"{m}月" if m else '') + (f"{d}日" if m and d else '')
+    if weekday and m and d:
+        try:
+            text += f"({JP_WEEKDAYS[date(y, m, d).weekday()]})"
+        except ValueError:
+            pass
+    return text
+
+# テンプレートから日付の分解（入力欄の初期値用）と表示用の変換（|jpdate）を使えるようにする
 app.jinja_env.globals['split_date'] = split_date
+app.jinja_env.filters['jpdate'] = format_date_jp
 
 # --- 「データ更新」の最終実行日時の記録・取得（Metaシートを使用） ---
 JP_WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
@@ -1549,7 +1565,7 @@ def import_horses():
 
         msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
         if registration_str:
-            msg += f"（登録日：{registration_str}）"
+            msg += f"（登録日：{format_date_jp(registration_str)}）"
         flash(msg)
         return redirect('/import_horses')
     except Exception as e:
@@ -1786,7 +1802,7 @@ def import_trainer_horses():
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
 
-        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{today_str}現在・{len(parsed_horses)}頭）："
+        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{format_date_jp(today_str)}現在・{len(parsed_horses)}頭）："
               f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
             flash("新規登録：" + "、".join(added))
@@ -1921,14 +1937,14 @@ def import_cancel_horses():
                     backfill_failed.append(f"{name}（{err}）")
                 elif cancel_date:
                     cancel_rows.append([cancel_date, name])
-                    backfilled.append(f"{name}（{cancel_date}）")
+                    backfilled.append(f"{name}（{format_date_jp(cancel_date)}）")
 
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
-        msg = f"抹消一覧の取り込み完了（{date_str}抹消分・{len(names)}頭）：抹消 {len(cancelled)}件"
+        msg = f"抹消一覧の取り込み完了（{format_date_jp(date_str)}抹消分・{len(names)}頭）：抹消 {len(cancelled)}件"
         if already:
             msg += f"／抹消済み {len(already)}件"
         msg += f"／未登録 {len(names) - len(cancelled) - len(already)}件"
@@ -2015,7 +2031,7 @@ def weekly():
     for items in (registered, cancelled, pasture, changes):
         for item in items:
             item['stable'] = stable_of.get(item['name'], '')
-            item['date_label'] = f"{item['date'].month}/{item['date'].day}({JP_WEEKDAYS[item['date'].weekday()]})"
+            item['date_label'] = format_date_jp(item['date'], weekday=True)
         items.sort(key=lambda x: (x['date'], x['name']))
 
     if stable_filter:
@@ -2026,12 +2042,9 @@ def weekly():
         registered, cancelled, pasture, changes = (
             [i for i in items if _match(i)] for items in (registered, cancelled, pasture, changes))
 
-    def week_label(d):
-        return f"{d.year}年{d.month}月{d.day}日({JP_WEEKDAYS[d.weekday()]})"
-
     return render_template('weekly.html',
                            registered=registered, cancelled=cancelled, pasture=pasture, changes=changes,
-                           week_label=f"{week_label(week_start)}〜{week_label(week_end)}",
+                           week_label=f"{format_date_jp(week_start, weekday=True)}〜{format_date_jp(week_end, weekday=True)}",
                            stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
                            prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
@@ -2699,12 +2712,7 @@ def horse_detail(name, active_tab):
                         r_condition = race_info_cache[r_num].get('condition', '-')
                         r_course = race_info_cache[r_num].get('course', '-')
 
-            display_date = r_date
-            try:
-                dt = datetime.strptime(r_date, '%Y/%m/%d')
-                display_date = f"{dt.strftime('%Y年%m月%d日')}({['月','火','水','木','金','土','日'][dt.weekday()]})"
-            except Exception:
-                pass
+            display_date = format_date_jp(r_date, weekday=True)
 
             horse_races.append({
                 'sort_date': r_date, 
@@ -2873,7 +2881,7 @@ def race_list():
         dt_obj = parse_date(d)
         display_dates.append({
             'value': d, 
-            'label': f"{dt_obj.month}/{dt_obj.day}({['月','火','水','木','金','土','日'][dt_obj.weekday()]})"
+            'label': format_date_jp(dt_obj, weekday=True)
         })
 
     try:
