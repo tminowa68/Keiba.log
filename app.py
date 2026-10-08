@@ -1812,21 +1812,64 @@ def import_cancel_horses():
         ws = sh.worksheet("Horses")
         data = ws.get_all_values()
 
+        from concurrent.futures import ThreadPoolExecutor
+
+        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+        cancel_sheet_names = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1 and r[1]}
+
         cancelled, already = [], []
-        changes_rows = []
+        changes_rows, cancel_rows = [], []
+        backfill_targets = []  # 抹消済みだが抹消シートに名前が無い馬（一覧に載っていない馬）
         for i, row in enumerate(data[1:], start=2):
-            if not row or row[0] not in names:
+            if not row or not row[0]:
                 continue
+            name = row[0]
             current = row[8].strip() if len(row) > 8 else ''
+            if name not in names:
+                if current == '抹消' and name not in cancel_sheet_names:
+                    backfill_targets.append((name, row[12].strip() if len(row) > 12 else ''))
+                continue
+            if name not in cancel_sheet_names:
+                cancel_rows.append([date_str, name])
+                cancel_sheet_names.add(name)
             if current == '抹消':
-                already.append(row[0])
+                already.append(name)
                 continue
             ws.update(f'I{i}', [['抹消']])
-            changes_rows.append([date_str, row[0], '抹消', current, '抹消'])
-            cancelled.append(row[0])
+            changes_rows.append([date_str, name, '抹消', current, '抹消'])
+            cancelled.append(name)
+
+        # 抹消シートに名前が無い抹消済みの馬は、リンク先（M列のURL）から抹消日を取得して記録する。
+        # 一度に大量に取得するとタイムアウトするため、1回の取り込みで処理する頭数に上限を設ける
+        backfill_limit = 50
+        backfill_targets.sort(key=lambda t: not t[1])  # URLのある馬を先に処理する
+        backfilled, backfill_failed = [], []
+        targets = backfill_targets[:backfill_limit]
+
+        def _fetch_cancel_date(target):
+            name, url = target
+            if not url:
+                return name, None, 'URLが未入力'
+            try:
+                info = fetch_jra_horse_status(url)
+            except Exception as e:
+                return name, None, str(e)
+            if info.get('status') != '抹消' or not info.get('cancel_date'):
+                return name, None, '抹消日を取得できません'
+            return name, info['cancel_date'], None
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for name, cancel_date, err in pool.map(_fetch_cancel_date, targets):
+                if err:
+                    backfill_failed.append(f"{name}（{err}）")
+                else:
+                    cancel_rows.append([cancel_date, name])
+                    backfilled.append(f"{name}（{cancel_date}）")
 
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
+        if cancel_rows:
+            ws_cancel.append_rows(cancel_rows)
 
         msg = f"抹消一覧の取り込み完了（{date_str}抹消分・{len(names)}頭）：抹消 {len(cancelled)}件"
         if already:
@@ -1834,7 +1877,13 @@ def import_cancel_horses():
         msg += f"／未登録 {len(names) - len(cancelled) - len(already)}件"
         flash(msg)
         if cancelled:
-            flash("抹消（Changesシートに記録）：" + "、".join(cancelled))
+            flash("抹消（Changesシート・抹消シートに記録）：" + "、".join(cancelled))
+        if backfilled:
+            flash("抹消日を取得して抹消シートに記録：" + "、".join(backfilled))
+        if backfill_failed:
+            flash("抹消日の取得に失敗：" + "、".join(backfill_failed))
+        if len(backfill_targets) > backfill_limit:
+            flash(f"抹消シートに未記録の抹消馬が残り{len(backfill_targets) - backfill_limit}頭あります。もう一度取り込むと続きを処理します。")
         return redirect('/import_horses')
     except Exception as e:
         flash(f'登録処理中にエラーが発生しました: {e}')
