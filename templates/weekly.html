@@ -10,16 +10,46 @@
         {% endif %}
     {% endwith %}
 
+    {% set stable_q = ('&stable=' ~ (stable|urlencode)) if stable else '' %}
     <div style="margin-bottom: 12px;">
-        <a href="/weekly?date={{ prev_week }}">← 前の週</a>
-        <a href="/weekly" style="margin-left: 10px;">今週</a>
-        <a href="/weekly?date={{ next_week }}" style="margin-left: 10px;">次の週 →</a>
+        <a href="/weekly?date={{ prev_week }}{{ stable_q }}">← 前の週</a>
+        <a href="/weekly?{{ stable_q[1:] }}" style="margin-left: 10px;">今週</a>
+        <a href="/weekly?date={{ next_week }}{{ stable_q }}" style="margin-left: 10px;">次の週 →</a>
         <form method="GET" action="/weekly" style="display: inline-block; margin-left: 15px;">
             <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px;">
+            {% if stable %}<input type="hidden" name="stable" value="{{ stable }}">{% endif %}
             <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
         </form>
     </div>
-    <h2>{{ week_label }}</h2>
+
+    <div class="select-stables">
+        <p>厩舎絞り込み：
+            <span class="kana-btn area-btn active" onclick="updateAreaFilter('全', this)">全</span>
+            <span class="kana-btn area-btn" onclick="updateAreaFilter('美浦', this)">美浦</span>
+            <span class="kana-btn area-btn" onclick="updateAreaFilter('栗東', this)">栗東</span>
+            <button type="button" class="btn-reset" onclick="resetFilter()">リセット</button>
+        </p>
+        <div class="kana-buttons">
+            <div class="kana-group">
+                {% for char in ['あ','か','さ','た','な'] %}
+                <span class="kana-btn reg-kana" onclick="updateStableDropdown('{{ char }}', this)">{{ char }}</span>
+                {% endfor %}
+            </div>
+            <div class="kana-group">
+                {% for char in ['は','ま','や','ら','わ'] %}
+                <span class="kana-btn reg-kana" onclick="updateStableDropdown('{{ char }}', this)">{{ char }}</span>
+                {% endfor %}
+                <span class="kana-btn reg-kana active" onclick="updateStableDropdown('', this)">全</span>
+            </div>
+        </div>
+        <div id="sub_kana_container" class="kana-buttons" style="margin-top: 10px; display: none; padding-left: 10px; border-left: 2px solid #ccc;">
+        </div>
+        <select id="reg_stable_select" onchange="onStableChange()" style="margin-top: 10px;">
+            <option value="">厩舎を選択してください</option>
+        </select>
+    </div>
+
+    <h2 style="margin-top: 15px;">{{ week_label }}{% if stable %}　{{ stable }}{% endif %}</h2>
     <p style="margin: 0; color: #555;">
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
@@ -112,4 +142,128 @@
     <p>この週の変更はありません。</p>
     {% endif %}
 </section>
+<script>
+const allStables = {{ stables | tojson | safe }};
+const selectedStable = {{ stable | tojson }};
+const currentDate = {{ date_for_input | tojson }};
+
+const rowMap = {
+    'あ': ['あ', 'い', 'う', 'え', 'お'],
+    'か': ['か', 'き', 'く', 'け', 'こ', 'が', 'ぎ', 'ぐ', 'げ', 'ご'],
+    'さ': ['さ', 'し', 'す', 'せ', 'そ', 'ざ', 'じ', 'ず', 'ぜ', 'ぞ'],
+    'た': ['た', 'ち', 'つ', 'て', 'と', 'だ', 'ぢ', 'づ', 'で', 'ど'],
+    'な': ['な', 'に', 'ぬ', 'ね', 'の'],
+    'は': ['は', 'ひ', 'ふ', 'へ', 'ほ', 'ば', 'び', 'ぶ', 'べ', 'ぼ', 'ぱ', 'ぴ', 'ぷ', 'ぺ', 'ぽ'],
+    'ま': ['ま', 'み', 'む', 'め', 'も'],
+    'や': ['や', 'ゆ', 'よ'],
+    'ら': ['ら', 'り', 'る', 'れ', 'ろ'],
+    'わ': ['わ', 'を', 'ん']
+};
+
+let currentArea = '全';
+let currentFilterChar = '';
+let currentFilterIsSub = false;
+
+function getRowRegex(char) {
+    const kanaMap = {
+        'あ': /^[あ-お]/, 'か': /^[か-こが-ご]/, 'さ': /^[さ-そざ-ぞ]/,
+        'た': /^[た-とだ-ど]/, 'な': /^[な-の]/, 'は': /^[は-ほば-ぼぱ-ぽ]/,
+        'ま': /^[ま-も]/, 'や': /^[や-よ]/, 'ら': /^[ら-ろ]/, 'わ': /^[わをん]/
+    };
+    return kanaMap[char] || /.*/;
+}
+
+function updateAreaFilter(area, btn) {
+    document.querySelectorAll('.area-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentArea = area;
+    rebuildStableOptions();
+}
+
+function setActiveRowButton(char) {
+    const rowButtons = document.querySelectorAll('.kana-group .reg-kana');
+    rowButtons.forEach(b => b.classList.remove('active'));
+    const target = Array.from(rowButtons).find(b => (char === '' ? b.textContent === '全' : b.textContent === char));
+    if (target) target.classList.add('active');
+}
+
+function updateStableDropdown(char, btn, isSubChar = false) {
+    const subContainer = document.getElementById('sub_kana_container');
+    if (!isSubChar) {
+        setActiveRowButton(char);
+        subContainer.innerHTML = '';
+        if (char && rowMap[char]) {
+            createSubButtons(char);
+            subContainer.style.display = 'flex';
+        } else {
+            subContainer.style.display = 'none';
+        }
+    } else {
+        document.querySelectorAll('.sub-kana-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+    }
+    currentFilterChar = char;
+    currentFilterIsSub = isSubChar;
+    rebuildStableOptions();
+}
+
+function createSubButtons(rowChar) {
+    const subContainer = document.getElementById('sub_kana_container');
+    const allBtn = document.createElement('span');
+    allBtn.className = 'kana-btn sub-kana-btn active';
+    allBtn.textContent = '全';
+    allBtn.onclick = function() { updateStableDropdown(rowChar, this, false); };
+    subContainer.appendChild(allBtn);
+
+    rowMap[rowChar].forEach(c => {
+        if (allStables.some(s => s.kana && s.kana.startsWith(c))) {
+            const btn = document.createElement('span');
+            btn.className = 'kana-btn sub-kana-btn';
+            btn.textContent = c;
+            btn.onclick = function() { updateStableDropdown(c, this, true); };
+            subContainer.appendChild(btn);
+        }
+    });
+}
+
+// エリア・行・五十音の選択状態で厩舎の選択肢を作り直す（表示中の厩舎は選択したままにする）
+function rebuildStableOptions() {
+    const select = document.getElementById('reg_stable_select');
+    const char = currentFilterChar;
+    const regex = currentFilterIsSub ? new RegExp('^' + char) : getRowRegex(char);
+
+    select.innerHTML = '<option value="">厩舎を選択してください</option>';
+    const filtered = allStables
+        .filter(s => currentArea === '全' || s.area === currentArea)
+        .filter(s => !char || (s.kana && regex.test(s.kana)))
+        .filter(s => !s.retirement || s.display_name === selectedStable)
+        .sort((a, b) => a.kana.localeCompare(b.kana, 'ja'));
+
+    filtered.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.display_name;
+        opt.textContent = s.display_name;
+        select.appendChild(opt);
+    });
+    if (selectedStable && filtered.some(s => s.display_name === selectedStable)) {
+        select.value = selectedStable;
+    }
+}
+
+// 厩舎を選択したら、表示中の週のままその厩舎で絞り込んだレポートを開く
+function onStableChange() {
+    const value = document.getElementById('reg_stable_select').value;
+    let url = '/weekly?date=' + encodeURIComponent(currentDate);
+    if (value) url += '&stable=' + encodeURIComponent(value);
+    location.href = url;
+}
+
+function resetFilter() {
+    location.href = '/weekly?date=' + encodeURIComponent(currentDate);
+}
+
+window.onload = function() {
+    updateStableDropdown('', null);
+};
+</script>
 {% endblock %}

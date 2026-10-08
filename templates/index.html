@@ -45,7 +45,14 @@
             </span><br id="total_horses_break">
             <span id="active_horses_row">入厩頭数 / 馬房数：
                 <span id="active_horses"></span> / <span id="stable_capacity"></span>
-            </span>
+            </span><br id="active_horses_break">
+            <a id="stable_weekly_link" href="/weekly">所属馬の動きを確認する</a>
+        </p>
+
+        <p id="stable_status_filter" style="display: none; margin: 5px; padding-left: 10px;">状態：
+            <span class="kana-btn status-btn active" onclick="updateStatusFilter('', this)">全</span>
+            <span class="kana-btn status-btn" onclick="updateStatusFilter('入厩', this)">入厩</span>
+            <span class="kana-btn status-btn" onclick="updateStatusFilter('放牧', this)">放牧</span>
         </p>
     </div>
 
@@ -168,6 +175,7 @@ function goToPage(page) {
 }
 
 let currentArea = '全';
+let currentStatusFilter = '';    // 所属馬の状態での絞り込み（''：全／'入厩'／'放牧'）
 let currentFilterChar = '';      // 実際に絞り込みに使う文字（行 or 個別かな）
 let currentFilterIsSub = false;  // true: 個別かな文字での絞り込み, false: 行(または「全」)での絞り込み
 
@@ -180,8 +188,18 @@ function updateAreaFilter(area, btn) {
     rebuildStableOptions();
 }
 
+function updateStatusFilter(status, btn) {
+    document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    currentStatusFilter = status;
+    renderAgeTables();
+}
+
 function resetFilter() {
     currentPage = 1; // リセット時は1ページ目に戻す
+
+    // 状態の絞り込みを「全」に戻す
+    updateStatusFilter('', document.querySelector('.status-btn'));
 
     // エリア（全/美浦/栗東）を「全」に戻す
     currentArea = '全';
@@ -285,6 +303,8 @@ function onStableChange() {
     if (!selectedStable) {
         if (basicInfo) basicInfo.style.display = 'none';
         if (statusInfo) statusInfo.style.display = 'none';
+        const statusFilterEl = document.getElementById('stable_status_filter');
+        if (statusFilterEl) statusFilterEl.style.display = 'none';
         renderAgeTables(); // 選択解除時もテーブル更新
         return;
     }
@@ -310,8 +330,8 @@ function onStableChange() {
 
         // 2. 所属頭数などの計算・反映
         const filteredHorses = allHorsesData.filter(h => h.stable === selectedStable);
-        // 状態が「抹消」の馬は所属頭数に含めない
-        const totalHorses = filteredHorses.filter(h => h.status !== '抹消').length;
+        // 状態が「抹消」「早期」の馬は所属頭数に含めない
+        const totalHorses = filteredHorses.filter(h => h.status !== '抹消' && h.status !== '早期').length;
         // 入厩頭数：抹消・放牧・早期の馬は含めない
         const activeHorses = filteredHorses.filter(h => h.status !== '抹消' && h.status !== '放牧' && h.status !== '早期').length;
 
@@ -350,6 +370,14 @@ function onStableChange() {
         if (totalRow) totalRow.style.display = rowDisplay;
         if (activeRow) activeRow.style.display = rowDisplay;
         if (totalBreak) totalBreak.style.display = rowDisplay;
+        const activeBreak = document.getElementById('active_horses_break');
+        if (activeBreak) activeBreak.style.display = rowDisplay;
+
+        // 週間レポートへのリンク（この厩舎を選択した状態で開く）
+        const weeklyLink = document.getElementById('stable_weekly_link');
+        if (weeklyLink) weeklyLink.href = '/weekly?stable=' + encodeURIComponent(selectedStable);
+        const statusFilterEl = document.getElementById('stable_status_filter');
+        if (statusFilterEl) statusFilterEl.style.display = 'block';
     }
     
     // 最後に必ずテーブルを更新する
@@ -489,8 +517,9 @@ function renderAgeTables() {
         return;
     }
 
-    // 選択された厩舎の馬をフィルタリング（年齢別テーブル）
-    const filtered = allHorsesData.filter(h => h.stable === selectedStable);
+    // 選択された厩舎の馬をフィルタリング（年齢別テーブル）。状態ボタンで入厩／放牧に絞り込む
+    const filtered = allHorsesData.filter(h => h.stable === selectedStable)
+        .filter(h => !currentStatusFilter || h.status === currentStatusFilter);
     
     const groups = {
         '1歳': filtered.filter(h => h.age === 1),
@@ -545,7 +574,7 @@ function renderAgeTables() {
     container.innerHTML = html;
 }
 
-// 全厩舎について所属頭数（抹消を除く）／入厩頭数（抹消・放牧・早期を除く）が
+// 全厩舎について所属頭数（抹消・早期を除く）／入厩頭数（抹消・放牧・早期を除く）が
 // 上限（馬房数×2.5／馬房数）を超えていないかを判定し、超過している厩舎名の一覧を返す
 function getOverLimitStables() {
     const overLimit = [];
@@ -554,7 +583,7 @@ function getOverLimitStables() {
         if (s.capacity === '技術調教師') return; // 技術調教師は馬房数管理の対象外
 
         const horses = allHorsesData.filter(h => h.stable === s.display_name);
-        const totalHorses = horses.filter(h => h.status !== '抹消').length;
+        const totalHorses = horses.filter(h => h.status !== '抹消' && h.status !== '早期').length;
         const activeHorses = horses.filter(h => h.status !== '抹消' && h.status !== '放牧' && h.status !== '早期').length;
 
         const stallBase = parseInt(s.raw_capacity, 10);
