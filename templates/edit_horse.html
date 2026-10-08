@@ -878,6 +878,12 @@ function formatBirthDateForConfirm(year, month, day) {
     return year + '年' + (month || '?') + '月' + (day || '?') + '日';
 }
 
+// 競走馬登録日を確認モーダル用に「2026年9月24日」形式にする（未入力の部分は省く）
+function formatRegistrationForConfirm(year, month, day) {
+    if (!year) return '';
+    return year + '年' + (month ? month + '月' + (day ? day + '日' : '') : '');
+}
+
 // 現在のフォーム内容をスナップショットとして取得する
 function getFormSnapshot() {
     const form = document.querySelector('form');
@@ -895,9 +901,9 @@ function getFormSnapshot() {
         birthplace_region: (document.getElementById('region_select') || {}).value || '',
         birthplace_detail: (document.getElementById('detail_select') || {}).value || '',
         breeder: (form.querySelector('[name="breeder"]') || {}).value || '',
-        registration: ['reg_year', 'reg_month', 'reg_day']
-            .map(n => ((form.querySelector('[name="' + n + '"]') || {}).value || '').toString().trim())
-            .filter(v => v !== '').join('/')
+        registration: formatRegistrationForConfirm(
+            ...['reg_year', 'reg_month', 'reg_day']
+                .map(n => ((form.querySelector('[name="' + n + '"]') || {}).value || '').toString().trim()))
     };
 }
 
