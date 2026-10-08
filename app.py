@@ -1875,7 +1875,7 @@ def import_cancel_horses():
         cancel_sheet_names = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1 and r[1]}
 
         cancelled, already = [], []
-        changes_rows, cancel_rows = [], []
+        cancel_rows = []
         # 抹消シートに名前が無く、リンク先から抹消日を取得する馬：(馬名, URL, Horsesシートの抹消馬か)
         backfill_targets = []
         for i, row in enumerate(data[1:], start=2):
@@ -1894,7 +1894,6 @@ def import_cancel_horses():
                 already.append(name)
                 continue
             ws.update(f'I{i}', [['抹消']])
-            changes_rows.append([date_str, name, '抹消', current, '抹消'])
             cancelled.append(name)
 
         # Sire・DamシートでI列にJRAのURLがある馬も対象にする（抹消されていなければ何もしない）
@@ -1939,8 +1938,6 @@ def import_cancel_horses():
                     cancel_rows.append([cancel_date, name])
                     backfilled.append(f"{name}（{format_date_jp(cancel_date)}）")
 
-        if changes_rows:
-            sh.worksheet("Changes").append_rows(changes_rows)
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
@@ -1950,7 +1947,7 @@ def import_cancel_horses():
         msg += f"／未登録 {len(names) - len(cancelled) - len(already)}件"
         flash(msg)
         if cancelled:
-            flash("抹消（Changesシート・抹消シートに記録）：" + "、".join(cancelled))
+            flash("抹消（抹消シートに記録）：" + "、".join(cancelled))
         if backfilled:
             flash("抹消日を取得して抹消シートに記録：" + "、".join(backfilled))
         if backfill_failed:
@@ -1993,24 +1990,18 @@ def weekly():
                 registered.append({'date': reg_date, 'name': name, 'gender': cell(r, 1),
                                    'sire': cell(r, 3), 'dam': cell(r, 4), 'status': cell(r, 8)})
 
-        cancelled_keys = set()
+        # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
         for r in sh.worksheet("Changes").get_all_values()[1:]:
             d = parse_full_date(cell(r, 0))
-            if not in_week(d):
-                continue
-            item = {'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)}
-            if item['type'] == '抹消':
-                if (d, item['name']) not in cancelled_keys:
-                    cancelled_keys.add((d, item['name']))
-                    cancelled.append(item)
-            else:
-                changes.append(item)
+            if in_week(d) and cell(r, 2) != '抹消':
+                changes.append({'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)})
 
-        # 旧「データ更新」で記録していた抹消シートも対象にする（Changesと重複する分は除く）
+        cancelled_keys = set()
         try:
             for r in sh.worksheet("抹消").get_all_values()[1:]:
                 d = parse_full_date(cell(r, 0))
                 if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
+                    cancelled_keys.add((d, cell(r, 1)))
                     cancelled.append({'date': d, 'name': cell(r, 1), 'type': '抹消', 'old': '', 'new': '抹消'})
         except gspread.WorksheetNotFound:
             pass
@@ -2276,7 +2267,7 @@ def update_single_horse(row_index):
         new_owner = info.get('owner')
         if new_owner and new_owner != current_owner:
             ws_horses.update(f'F{row_index}', [[new_owner]])
-            ws_changes.append_row([today_str, horse_name, '変更', current_owner, new_owner])
+            ws_changes.append_row([today_str, horse_name, '馬主変更', current_owner, new_owner])
 
         # ④-2 調教師名（厩舎）変更
         trainer_raw = info.get('trainer_raw')
@@ -2438,6 +2429,10 @@ def update_horse():
                 ]]
                 # 13列分（A〜M）更新
                 ws.update(f'A{i+1}:M{i+1}', update_values)
+                # 馬名を変更した場合はChangesシートに記録する
+                old_name = request.form.get('old_name')
+                if old_name and new_name and new_name != old_name:
+                    sh.worksheet("Changes").append_row([today8(), new_name, '馬名変更', old_name, new_name])
                 # 競走馬登録（N列）：入力欄がある場合のみ更新（無い場合は既存の値を保持）
                 if has_reg_fields:
                     if len(data[0]) < 14:
