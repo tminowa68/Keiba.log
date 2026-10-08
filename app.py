@@ -1639,19 +1639,15 @@ def import_trainer_horses():
                 r.append('')
         name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
 
-        # リンク先の取得が必要な馬（未登録馬・空欄のある登録済み馬）をまとめて並列取得する
-        need_fetch = [h for h in parsed_horses
-                      if h['name'] not in name_to_index
-                      or any(_blank(rows[name_to_index[h['name']]][c]) for c in fill_cols)]
-
+        # 一覧の全馬のリンク先をまとめて並列取得する（新規登録・空欄補完・馬主変更／去勢の判定に使う）
         def _fetch(h):
             try:
                 return h['name'], fetch_jra_horse_info(h['url']), None
             except Exception as e:
                 return h['name'], None, e
 
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            fetched = {name: (info, err) for name, info, err in pool.map(_fetch, need_fetch)}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            fetched = {name: (info, err) for name, info, err in pool.map(_fetch, parsed_horses)}
 
         all_stables = get_stables_list()
         trainer_match = find_stable_match(all_stables, '', trainer_name) if trainer_name else None
@@ -1659,6 +1655,7 @@ def import_trainer_horses():
 
         added, status_changed, filled, failed = [], [], [], []
         pasture_changes = []
+        changes_rows, change_msgs = [], []
 
         for h in parsed_horses:
             name = h['name']
@@ -1697,6 +1694,35 @@ def import_trainer_horses():
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
                 pasture_changes.append((name, current, new_status))
 
+            # 転厩：管理馬一覧の調教師（一致する厩舎が無ければリンク先の調教師名）と拠点・厩舎が異なる場合
+            new_stable = None
+            if trainer_match:
+                new_stable = (trainer_match['area'], trainer_match['display_name'].split('・', 1)[1])
+            elif info and info.get('trainer_raw'):
+                t_name, t_area = parse_trainer_field(info['trainer_raw'])
+                match = find_stable_match(all_stables, t_area, t_name)
+                if match:
+                    new_stable = (match['area'], match['display_name'].split('・', 1)[1])
+            if new_stable and not _blank(row[7]) and (row[6], row[7]) != new_stable:
+                current_full = f"{row[6]}・{row[7]}" if row[6] else row[7]
+                new_full = f"{new_stable[0]}・{new_stable[1]}"
+                row[6], row[7] = new_stable
+                changes_rows.append([today_str, name, '転厩', current_full, new_full])
+                change_msgs.append(f"{name}：転厩 {current_full}→{new_full}")
+
+            # 馬主変更（馬主名が空欄の場合は下の空欄補完で埋める）
+            new_owner = info.get('owner') if info else None
+            if new_owner and not _blank(row[5]) and row[5] != new_owner:
+                changes_rows.append([today_str, name, '馬主変更', row[5], new_owner])
+                change_msgs.append(f"{name}：馬主変更 {row[5]}→{new_owner}")
+                row[5] = new_owner
+
+            # 去勢
+            if info and row[1] == '牡' and info.get('gender') == 'せん':
+                row[1] = 'せん'
+                changes_rows.append([today_str, name, '去勢', '牡', 'せん'])
+                change_msgs.append(f"{name}：去勢")
+
             # 空欄の項目だけ埋める（URLはリンク先を取得できなくても埋める）
             changed = False
             if _blank(row[12]):
@@ -1716,13 +1742,17 @@ def import_trainer_horses():
 
         for name, old, new in pasture_changes:
             record_pasture_change(sh, name, old, new, today_str)
+        if changes_rows:
+            sh.worksheet("Changes").append_rows(changes_rows)
 
         flash(f"管理馬一覧の取り込み完了（{trainer_name}・{len(parsed_horses)}頭）："
-              f"新規 {len(added)}件／状態更新 {len(status_changed)}件／空欄補完 {len(filled)}件")
+              f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
             flash("新規登録：" + "、".join(added))
         if status_changed:
             flash("状態更新：" + "、".join(status_changed))
+        if change_msgs:
+            flash("変更（Changesシートに記録）：" + "、".join(change_msgs))
         if filled:
             flash("空欄補完：" + "、".join(filled))
         if failed:
