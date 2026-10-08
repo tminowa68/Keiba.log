@@ -281,7 +281,9 @@ function rebuildStableOptions() {
 // 満年齢計算関数
 function calculateAge(birthDateStr) {
     if (!birthDateStr) return '-';
-    const birthDate = new Date(birthDateStr);
+    // 「20261008」形式（旧形式の「2026/10/8」も可）を日付に変換する
+    const m8 = String(birthDateStr).match(/^(\d{4})(\d{2})(\d{2})$/);
+    const birthDate = m8 ? new Date(+m8[1], +m8[2] - 1, +m8[3]) : new Date(birthDateStr);
     if (isNaN(birthDate.getTime())) return '-';
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();

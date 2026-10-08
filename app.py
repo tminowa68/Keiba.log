@@ -4,7 +4,7 @@ import json
 import requests
 import email
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -101,6 +101,63 @@ except gspread.WorksheetNotFound:
 def kana_to_hira(text):
     return "".join([chr(ord(c) - 96) if "ァ" <= c <= "ヶ" else c for c in text])
 
+# --- 日付の表記（スプレッドシートには「20261008」のように年月日を数字8桁で記入する） ---
+# 年月日を区切る形式（2026/10/8・2026-10-08・2026年10月8日）と、数字だけの形式（20261008・202610・2026）の両方を読み取る
+_DATE_SEP_RE = re.compile(r'^\s*(\d{4})\s*[/\-.年]\s*(\d{1,2})\s*(?:[/\-.月]\s*(\d{1,2})\s*日?)?')
+_DATE_DIGITS_RE = re.compile(r'^\s*(\d{4})(\d{2})?(\d{2})?(?!\d)')
+
+def split_date(value):
+    """日付の文字列を (年, 月, 日) の整数に分解する。月・日が無い場合は None（読み取れなければ None を返す）"""
+    if isinstance(value, (datetime, date)):
+        return value.year, value.month, value.day
+    text = str(value or '').strip().lstrip("'")
+    m = _DATE_SEP_RE.match(text) or _DATE_DIGITS_RE.match(text)
+    if not m:
+        return None
+    y, mo, d = (int(g) if g else None for g in m.groups())
+    if (mo is not None and not 1 <= mo <= 12) or (d is not None and not 1 <= d <= 31):
+        return None
+    return y, mo, d
+
+def format_date8(y, m=None, d=None):
+    """年・月・日を「20261008」形式にする（日が無ければ「202610」、年だけなら「2026」）"""
+    y = str(y or '').strip()
+    if not y:
+        return ''
+    if not str(m or '').strip():
+        return y
+    if not str(d or '').strip():
+        return f"{int(y):04d}{int(m):02d}"
+    return f"{int(y):04d}{int(m):02d}{int(d):02d}"
+
+def to_date8(value):
+    """日付の文字列を「20261008」形式に揃える（読み取れない文字列はそのまま返す）"""
+    parts = split_date(value)
+    if not parts:
+        return str(value or '').strip()
+    return format_date8(*parts)
+
+def today8():
+    return format_date8(*split_date(datetime.now()))
+
+def parse_full_date(value):
+    """年月日がそろった日付の文字列を date に変換する（変換できなければ None）"""
+    parts = split_date(value)
+    if not parts or parts[1] is None or parts[2] is None:
+        return None
+    try:
+        return date(*parts)
+    except ValueError:
+        return None
+
+def date_year(value):
+    """日付の文字列から西暦（整数）を取り出す（取り出せなければ None）"""
+    parts = split_date(value)
+    return parts[0] if parts else None
+
+# テンプレートから日付の分解（入力欄の初期値・表示用）を使えるようにする
+app.jinja_env.globals['split_date'] = split_date
+
 # --- 「データ更新」の最終実行日時の記録・取得（Metaシートを使用） ---
 JP_WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
 
@@ -138,11 +195,11 @@ def set_last_updated(dt_str):
         print(f"最終更新日時の保存に失敗しました: {e}")
 
 def format_last_updated(dt_str):
-    """Meta保存形式（YYYY/MM/DD HH:MM）を「年月日(曜日)」の表示形式に変換する"""
+    """Meta保存形式（YYYYMMDD HH:MM。旧形式 YYYY/MM/DD HH:MM も可）を「年月日(曜日)」の表示形式に変換する"""
     if not dt_str:
         return None
     dt = None
-    for fmt in ('%Y/%m/%d %H:%M', '%Y/%m/%d'):
+    for fmt in ('%Y%m%d %H:%M', '%Y%m%d', '%Y/%m/%d %H:%M', '%Y/%m/%d'):
         try:
             dt = datetime.strptime(dt_str, fmt)
             break
@@ -220,7 +277,7 @@ def _parse_status_from_header(soup):
         cancel_date = None
         m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', text)
         if m:
-            cancel_date = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+            cancel_date = format_date8(m.group(1), m.group(2), m.group(3))
         return '抹消', cancel_date
 
     return ('放牧' if rest_span else '入厩'), None
@@ -571,25 +628,17 @@ def get_stables_list():
 
                         # 貸付終了日（I列）が過去の日付なら、臨時貸付は馬房数の計算に含めない
                         if loan_end_str:
-                            loan_end_date = None
-                            for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
-                                try:
-                                    loan_end_date = datetime.strptime(loan_end_str.strip(), fmt)
-                                    break
-                                except ValueError:
-                                    continue
-                            if loan_end_date and loan_end_date.date() < datetime.now().date():
+                            loan_end_date = parse_full_date(loan_end_str)
+                            if loan_end_date and loan_end_date < datetime.now().date():
                                 temp_loan_str = "0"
                         
                         # --- 〇年目の計算（開業の年月日の西暦から数える） ---
                         years_active = ""
                         if opening:
-                            try:
-                                # YYYY/MM/DD や YYYY-MM-DD から西暦部分を抽出
-                                open_y = int(opening.split('/')[0]) if '/' in opening else int(opening[:4])
+                            # YYYYMMDD・YYYY/MM/DD・YYYY-MM-DD から西暦部分を抽出
+                            open_y = date_year(opening)
+                            if open_y:
                                 years_active = f"{current_year - open_y + 1}年目"
-                            except ValueError:
-                                pass
                                 
                         # --- 馬房数と臨時貸付の合計・文字装飾 ---
                         display_capacity = capacity_str
@@ -633,10 +682,7 @@ def calc_added_prize(rank, condition, race_name, horse_birthday_str, race_date_s
     except (ValueError, TypeError): return 0
 
     race_year = int(race_date_str[:4])
-    try:
-        birth_year = int(horse_birthday_str.split('/')[0]) if '/' in horse_birthday_str else int(horse_birthday_str[:4])
-    except ValueError:
-        birth_year = race_year - 3 # フォールバック
+    birth_year = date_year(horse_birthday_str) or race_year - 3 # 読み取れない場合のフォールバック
 
     age = race_year - birth_year
 
@@ -696,10 +742,7 @@ def get_class_from_results(horse_name, target_date_str, all_results_dict, horse_
             
     race_year = target_dt.year
     race_month = target_dt.month
-    try:
-        birth_year = int(horse_birthday_str.split('/')[0]) if '/' in horse_birthday_str else int(horse_birthday_str[:4])
-    except ValueError:
-        birth_year = race_year - 3
+    birth_year = date_year(horse_birthday_str) or race_year - 3
 
     age = race_year - birth_year
     return judge_class_by_prize(total_prize, len(past_races) > 0, age, race_month)
@@ -896,22 +939,10 @@ def get_race_info_from_sheet(ws_race_data, search_text, target_r_num=None):
     return races_info
 
 def extract_year(date_str):
-    """ '2000/1/1', '2000-01-01', '2000' などの文字列から西暦を抽出 """
-    if not date_str: 
+    """ '20000101', '2000/1/1', '2000-01-01', '2000' などの文字列から西暦を抽出 """
+    if not date_str:
         return None
-    date_str = str(date_str).strip()
-    
-    # スラッシュやハイフン区切りの形式
-    match = re.search(r'^(\d{4})[/-]', date_str)
-    if match:
-        return int(match.group(1))
-    
-    # 西暦のみの形式
-    match = re.search(r'^(\d{4})', date_str)
-    if match:
-        return int(match.group(1))
-        
-    return None
+    return date_year(date_str)
 
 _NAME_DAM_YEAR_RE = re.compile(r'^(.*?)\s*\((.*?)\s*-\s*(\d{4})[年]?\)$')
 
@@ -1132,10 +1163,8 @@ def index():
         if len(horse) > 8 and str(horse[8] or '').strip() == '抹消':
             continue
         if len(horse) > 2:
-            try:
-                horse[2] = datetime.strptime(horse[2], '%Y/%m/%d')
-            except (ValueError, TypeError):
-                horse[2] = datetime.now()
+            birth = parse_full_date(horse[2])
+            horse[2] = datetime(birth.year, birth.month, birth.day) if birth else datetime.now()
         results.append(horse)
 
     if stable_filter:
@@ -1330,8 +1359,8 @@ def parse_jra_registration_page(html_text):
     """
     JRAの「競走馬登録」ページ（HTML／MHTMLで保存したもの）を解析し、
     (registration_str, [horse_dict, ...]) を返す。
-    registration_str は "YYYY/M/D" 形式（見出しの日付が見つからなければ空文字）。
-    horse_dict のキー: name, gender, birth(=YYYY/M/D), area(拠点), stable(厩舎名),
+    registration_str は "YYYYMMDD" 形式（見出しの日付が見つからなければ空文字）。
+    horse_dict のキー: name, gender, birth(=YYYYMMDD), area(拠点), stable(厩舎名),
                        region(産地), detail(地域), breeder(生産牧場), owner(馬主名), sire, dam
     """
     soup = BeautifulSoup(html_text, 'html.parser')
@@ -1341,7 +1370,7 @@ def parse_jra_registration_page(html_text):
     if main_div:
         m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', main_div.get_text())
         if m:
-            registration_str = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+            registration_str = format_date8(m.group(1), m.group(2), m.group(3))
 
     horses = []
     for tr in soup.select('tbody tr'):
@@ -1363,7 +1392,7 @@ def parse_jra_registration_page(html_text):
         if len(lines) > 1:
             m2 = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', lines[1])
             if m2:
-                birth_date_str = f"{int(m2.group(1))}/{int(m2.group(2))}/{int(m2.group(3))}"
+                birth_date_str = format_date8(m2.group(1), m2.group(2), m2.group(3))
 
         # 預託きゅう舎（拠点・厩舎名）／産地・生産牧場／馬主名
         stable_lines = [l.strip() for l in tds[1].get_text(separator='\n').split('\n') if l.strip()]
@@ -1452,9 +1481,9 @@ def import_horses():
 
         reg_y, reg_m = '', ''
         if registration_str:
-            reg_parts = registration_str.split('/')
-            reg_y = reg_parts[0] if len(reg_parts) > 0 else ''
-            reg_m = reg_parts[1] if len(reg_parts) > 1 else ''
+            reg_parts = split_date(registration_str)
+            reg_y = str(reg_parts[0]) if reg_parts else ''
+            reg_m = str(reg_parts[1]) if reg_parts and reg_parts[1] else ''
 
         added = updated = skipped = 0
 
@@ -1463,7 +1492,7 @@ def import_horses():
 
             if name not in name_to_index:
                 # 新規登録：状態・URLは空欄のまま（早期登録の時期に該当する場合のみ状態を「早期」にする）
-                birth_year = h['birth'].split('/')[0] if h['birth'] else ''
+                birth_year = date_year(h['birth']) or ''
                 status = resolve_registration_status('', birth_year, reg_y, reg_m)
 
                 new_row = [''] * len(headers)
@@ -1503,7 +1532,7 @@ def import_horses():
                 # 競走馬登録日が未入力だった場合のみ設定し、早期登録の時期に該当すれば状態を更新する
                 if _blank(row[13]) and registration_str:
                     row[13] = registration_str
-                    birth_year = row[2].split('/')[0] if row[2] else ''
+                    birth_year = date_year(row[2]) or ''
                     new_status = resolve_registration_status(row[8], birth_year, reg_y, reg_m)
                     if new_status != row[8]:
                         row[8] = new_status
@@ -1531,7 +1560,8 @@ def import_horses():
 def parse_jra_trainer_horses_page(html_text):
     """
     JRAの調教師「管理馬一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
-    (trainer_name, [horse_dict, ...]) を返す。
+    (trainer_name, as_of_date, [horse_dict, ...]) を返す。
+    as_of_date は見出し「管理馬一覧（2026年10月8日現在）」の日付（"YYYYMMDD"。見つからなければ空文字）。
     horse_dict のキー: name, url, gender(性齢から馬齢を除いたもの), status(管理馬の状態欄), early(早期特例登録馬か)
     """
     soup = BeautifulSoup(html_text, 'html.parser')
@@ -1541,6 +1571,13 @@ def parse_jra_trainer_horses_page(html_text):
     txt_span = soup.select_one('h1 span.txt')
     if txt_span:
         trainer_name = ''.join(txt_span.find_all(string=True, recursive=False)).strip()
+
+    as_of_date = ''
+    header = soup.select_one('div.contents_header h2')
+    if header:
+        m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', header.get_text())
+        if m:
+            as_of_date = format_date8(m.group(1), m.group(2), m.group(3))
 
     horses = []
     for content in soup.select('div.content.mt10'):
@@ -1564,7 +1601,7 @@ def parse_jra_trainer_horses_page(html_text):
                     'status': tds[1] if len(tds) > 1 else '',
                     'early': early,
                 })
-    return trainer_name, horses
+    return trainer_name, as_of_date, horses
 
 def resolve_trainer_page_status(current, horse):
     """管理馬一覧の内容から、Horsesシートの状態（I列）の新しい値を決める"""
@@ -1584,7 +1621,7 @@ def jra_info_to_columns(info, all_stables):
         5: info.get('owner', ''), 11: info.get('breeder', ''),
     }
     if info.get('birth_year'):
-        values[2] = f"{info['birth_year']}/{info['birth_month']}/{info['birth_day']}"
+        values[2] = format_date8(info['birth_year'], info['birth_month'], info['birth_day'])
     if info.get('trainer_raw'):
         t_name, t_area = parse_trainer_field(info['trainer_raw'])
         match = find_stable_match(all_stables, t_area, t_name)
@@ -1614,7 +1651,7 @@ def import_trainer_horses():
         return redirect('/import_horses')
 
     try:
-        trainer_name, parsed_horses = parse_jra_trainer_horses_page(_extract_html_from_upload(file.read()))
+        trainer_name, as_of_date, parsed_horses = parse_jra_trainer_horses_page(_extract_html_from_upload(file.read()))
     except Exception as e:
         flash(f'ファイルの解析に失敗しました: {e}')
         return redirect('/import_horses')
@@ -1654,7 +1691,8 @@ def import_trainer_horses():
 
         all_stables = get_stables_list()
         trainer_match = find_stable_match(all_stables, '', trainer_name) if trainer_name else None
-        today_str = datetime.now().strftime('%Y/%m/%d')
+        # 放牧入厩・Changesシートに記録する日付は、見出し「管理馬一覧（2026年10月8日現在）」の日付
+        today_str = as_of_date or today8()
 
         added, status_changed, filled, failed = [], [], [], []
         pasture_changes = []
@@ -1748,7 +1786,7 @@ def import_trainer_horses():
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
 
-        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{len(parsed_horses)}頭）："
+        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{today_str}現在・{len(parsed_horses)}頭）："
               f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
             flash("新規登録：" + "、".join(added))
@@ -1769,7 +1807,7 @@ def import_trainer_horses():
 def parse_jra_cancel_page(html_text):
     """
     JRAの「抹消一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
-    (cancel_date_str, [馬名, ...]) を返す。cancel_date_str は見出し「抹消一覧 2026年10月8日抹消分」の "YYYY/M/D"
+    (cancel_date_str, [馬名, ...]) を返す。cancel_date_str は見出し「抹消一覧 2026年10月8日抹消分」の "YYYYMMDD"
     （見つからなければ空文字）。
     """
     soup = BeautifulSoup(html_text, 'html.parser')
@@ -1780,7 +1818,7 @@ def parse_jra_cancel_page(html_text):
     if caption:
         m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', caption.get_text())
         if m:
-            cancel_date_str = f"{int(m.group(1))}/{int(m.group(2))}/{int(m.group(3))}"
+            cancel_date_str = format_date8(m.group(1), m.group(2), m.group(3))
 
     names = []
     for th in root.select('tbody th[scope="row"]'):
@@ -1808,7 +1846,7 @@ def import_cancel_horses():
         flash('抹消馬が見つかりませんでした。ファイルの形式をご確認ください。')
         return redirect('/import_horses')
 
-    date_str = cancel_date_str or datetime.now().strftime('%Y/%m/%d')
+    date_str = cancel_date_str or today8()
 
     try:
         sh = gc.open(horse_data)
@@ -1909,20 +1947,10 @@ def import_cancel_horses():
         return redirect('/import_horses')
 
 
-def parse_sheet_date(value):
-    """シートの年月日（"2026/10/8"・"2026/10/08"・"2026-10-08" など）を date に変換する（変換できなければNone）"""
-    m = re.match(r'^\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})', str(value or ''))
-    if not m:
-        return None
-    try:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
-    except ValueError:
-        return None
-
 @app.route('/weekly')
 def weekly():
     """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
-    base = parse_sheet_date(request.args.get('date', '')) or datetime.now().date()
+    base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
     stable_filter = request.args.get('stable', '').strip()
     week_start = base - timedelta(days=base.weekday())
     week_end = week_start + timedelta(days=6)
@@ -1944,14 +1972,14 @@ def weekly():
             if not name:
                 continue
             stable_of[name] = f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7)
-            reg_date = parse_sheet_date(cell(r, 13))
+            reg_date = parse_full_date(cell(r, 13))
             if in_week(reg_date):
                 registered.append({'date': reg_date, 'name': name, 'gender': cell(r, 1),
                                    'sire': cell(r, 3), 'dam': cell(r, 4), 'status': cell(r, 8)})
 
         cancelled_keys = set()
         for r in sh.worksheet("Changes").get_all_values()[1:]:
-            d = parse_sheet_date(cell(r, 0))
+            d = parse_full_date(cell(r, 0))
             if not in_week(d):
                 continue
             item = {'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)}
@@ -1965,7 +1993,7 @@ def weekly():
         # 旧「データ更新」で記録していた抹消シートも対象にする（Changesと重複する分は除く）
         try:
             for r in sh.worksheet("抹消").get_all_values()[1:]:
-                d = parse_sheet_date(cell(r, 0))
+                d = parse_full_date(cell(r, 0))
                 if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
                     cancelled.append({'date': d, 'name': cell(r, 1), 'type': '抹消', 'old': '', 'new': '抹消'})
         except gspread.WorksheetNotFound:
@@ -1973,7 +2001,7 @@ def weekly():
 
         try:
             for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
-                out_date, in_date = parse_sheet_date(cell(r, 0)), parse_sheet_date(cell(r, 2))
+                out_date, in_date = parse_full_date(cell(r, 0)), parse_full_date(cell(r, 2))
                 if in_week(out_date):
                     pasture.append({'date': out_date, 'name': cell(r, 1), 'type': '放牧'})
                 if in_week(in_date):
@@ -2006,8 +2034,8 @@ def weekly():
                            week_label=f"{week_label(week_start)}〜{week_label(week_end)}",
                            stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
-                           prev_week=(week_start - timedelta(days=7)).strftime('%Y-%m-%d'),
-                           next_week=(week_start + timedelta(days=7)).strftime('%Y-%m-%d'))
+                           prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
+                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
 
 
 @app.route('/add_horse', methods=['POST'])
@@ -2018,7 +2046,7 @@ def add_horse():
         ws = sh.worksheet("Horses")
         name = request.form.get('name')
         y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-        birth_date_str = f"{y}/{m}/{d}"
+        birth_date_str = format_date8(y, m, d)
 
         existing_data = ws.col_values(1)
         if name in existing_data[1:]:
@@ -2029,12 +2057,7 @@ def add_horse():
         reg_y = (request.form.get('reg_year') or '').strip()
         reg_m = (request.form.get('reg_month') or '').strip()
         reg_d = (request.form.get('reg_day') or '').strip()
-        if reg_y and reg_m and reg_d:
-            registration_str = f"{reg_y}/{reg_m}/{reg_d}"
-        elif reg_y and reg_m:
-            registration_str = f"{reg_y}/{reg_m}"
-        else:
-            registration_str = ''
+        registration_str = format_date8(reg_y, reg_m, reg_d) if reg_y and reg_m else ''
         status = resolve_registration_status(request.form.get('status'), y, reg_y, reg_m)
 
         # 競走馬登録列（N列）の見出しが無ければ追加する
@@ -2072,12 +2095,12 @@ def add_stable():
     year = request.form.get('year')
     month = request.form.get('month')
     day = request.form.get('day')
-    birth_date_str = f"{year}/{month}/{day}" if year and month and day else ""
+    birth_date_str = format_date8(year, month, day) if year and month and day else ""
     license_year = request.form.get('license_year')
     
     # --- 新規追加項目 ---
-    opening = request.form.get('opening')
-    retirement = request.form.get('retirement')
+    opening = to_date8(request.form.get('opening'))
+    retirement = to_date8(request.form.get('retirement'))
     temp_loan = request.form.get('temp_loan') or "0"
     
     capacity = request.form.get('capacity')
@@ -2212,7 +2235,7 @@ def update_single_horse(row_index):
 
         ws_changes = sh.worksheet("Changes")
         all_stables = get_stables_list()
-        today_str = datetime.now().strftime('%Y/%m/%d')
+        today_str = today8()
 
         # ① 抹消判定
         if info.get('status') == '抹消':
@@ -2267,7 +2290,7 @@ def update_single_horse(row_index):
 def finish_update_horses():
     """3. 全ての更新完了後に最終更新日時を設定するAPI"""
     try:
-        set_last_updated(datetime.now().strftime('%Y/%m/%d %H:%M'))
+        set_last_updated(datetime.now().strftime('%Y%m%d %H:%M'))
         return jsonify({"status": "success", "message": "データ更新が完了しました。"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2287,7 +2310,7 @@ def add_parent():
                 ws.append_row(["馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "URL"])
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-            birth_date_str = f"{y}/{m}/{d}" if y and m and d else (str(y) if y else "")
+            birth_date_str = format_date8(y, m, d) if y and m and d else (str(y) if y else "")
 
             # 「同名の馬を登録する」がチェックされている場合は、既存の同名データを
             # 上書きせず、常に新規レコードとして追加する
@@ -2338,11 +2361,11 @@ def add_parent():
         ws = sh.worksheet(p_type)
         row = next((r for r in ws.get_all_values() if len(r)>0 and r[0] == p_name), None)
         if row:
-            if len(row) > 1 and row[1]:
-                parts = re.split(r'[-/]', row[1].strip())
-                if len(parts) >= 1: existing_data["year"] = parts[0].strip()
-                if len(parts) >= 2: existing_data["month"] = parts[1].strip()
-                if len(parts) >= 3: existing_data["day"] = parts[2].strip()
+            parts = split_date(row[1]) if len(row) > 1 else None
+            if parts:
+                existing_data["year"] = str(parts[0])
+                if parts[1]: existing_data["month"] = str(parts[1])
+                if parts[2]: existing_data["day"] = str(parts[2])
                     
             if len(row) > 2: existing_data["sire"] = row[2]
             if len(row) > 3: existing_data["dam"] = row[3]
@@ -2366,7 +2389,7 @@ def update_horse():
     try:
         new_name = request.form.get('name')
         y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
-        birth_date_str = f"{y}/{m}/{d}"
+        birth_date_str = format_date8(y, m, d)
         
         sh = gc.open(horse_data)
         ws = sh.worksheet("Horses")
@@ -2377,12 +2400,7 @@ def update_horse():
         reg_y = (request.form.get('reg_year') or '').strip()
         reg_m = (request.form.get('reg_month') or '').strip()
         reg_d = (request.form.get('reg_day') or '').strip()
-        if reg_y and reg_m and reg_d:
-            registration_str = f"{reg_y}/{reg_m}/{reg_d}"
-        elif reg_y and reg_m:
-            registration_str = f"{reg_y}/{reg_m}"
-        else:
-            registration_str = ''
+        registration_str = format_date8(reg_y, reg_m, reg_d) if reg_y and reg_m else ''
 
         for i, row in enumerate(data):
             if len(row) > 0 and row[0] == request.form.get('old_name'):
@@ -2411,7 +2429,8 @@ def update_horse():
                 if has_reg_fields:
                     if len(data[0]) < 14:
                         ws.update_acell('N1', '競走馬登録')
-                    ws.update_acell(f'N{i+1}', registration_str)
+                    # update_acell は数値として解釈されるため、他の日付と同じく文字列のまま書き込む
+                    ws.update(f'N{i+1}', [[registration_str]])
                 record_cancel_date_from_url(sh, new_name, request.form.get('jra_url'))
                 break
         return redirect(f"/horse/{new_name}")
@@ -2435,7 +2454,7 @@ def save_change():
     t_year = request.form.get('t_year')
     t_month = request.form.get('t_month')
     t_day = request.form.get('t_day')
-    date_str = f"{t_year or ''}/{t_month or ''}/{t_day or ''}".strip('/') if (t_year or t_month or t_day) else ""
+    date_str = format_date8(t_year, t_month, t_day) if t_year else ""
         
     old_val = request.form.get('old_val', '')
     new_val = request.form.get('new_val', '')
@@ -2468,16 +2487,11 @@ def save_change():
                 def get_sort_key(r):
                     d = str(r[0]).strip() if len(r) > 0 else ""
                     name = str(r[1]).strip() if len(r) > 1 else ""
-                    if not d:
-                        d_sort = "9999/99/99"
+                    parts = split_date(d) if d else None
+                    if not parts:
+                        d_sort = "99999999"
                     else:
-                        d_sort = d.replace('-', '/')
-                        parts = d_sort.split('/')
-                        if len(parts) == 3:
-                            try:
-                                d_sort = f"{int(parts[0]):04d}/{int(parts[1]):02d}/{int(parts[2]):02d}"
-                            except ValueError:
-                                pass
+                        d_sort = f"{parts[0]:04d}{parts[1] or 0:02d}{parts[2] or 0:02d}"
                     return (d_sort, name)
                     
                 rows.sort(key=get_sort_key)
@@ -2550,7 +2564,7 @@ def transfer_stable(name):
     # 年月日を結合（入力がない場合は空欄にする）
     date_str = ""
     if t_year or t_month or t_day:
-        date_str = f"{t_year or ''}/{t_month or ''}/{t_day or ''}".strip('/')
+        date_str = format_date8(t_year, t_month, t_day) if t_year else ""
         
     try:
         sh = gc.open(horse_data)
@@ -2740,13 +2754,9 @@ def horse_detail(name, active_tab):
 
     if horse and len(horse) > 2 and isinstance(horse[2], str):
         horse = list(horse)
-        try:
-            horse[2] = datetime.strptime(horse[2], '%Y/%m/%d')
-        except ValueError:
-            try:
-                horse[2] = datetime.strptime(horse[2], '%Y-%m-%d')
-            except ValueError:
-                pass
+        birth = parse_full_date(horse[2])
+        if birth:
+            horse[2] = datetime(birth.year, birth.month, birth.day)
     
     base_birth_year = None
     if isinstance(horse[2], datetime):
@@ -2957,7 +2967,7 @@ def race_detail():
             horse_birthday_str = h[2]
 
             try:
-                b_year = int(horse_birthday_str.split('/')[0]) if '/' in horse_birthday_str else int(horse_birthday_str[:4])
+                b_year = date_year(horse_birthday_str)
                 calculated_age = int(target_year) - b_year
             except:
                 calculated_age = "不明"
