@@ -1819,7 +1819,8 @@ def import_cancel_horses():
 
         cancelled, already = [], []
         changes_rows, cancel_rows = [], []
-        backfill_targets = []  # 抹消済みだが抹消シートに名前が無い馬（一覧に載っていない馬）
+        # 抹消シートに名前が無く、リンク先から抹消日を取得する馬：(馬名, URL, Horsesシートの抹消馬か)
+        backfill_targets = []
         for i, row in enumerate(data[1:], start=2):
             if not row or not row[0]:
                 continue
@@ -1827,7 +1828,7 @@ def import_cancel_horses():
             current = row[8].strip() if len(row) > 8 else ''
             if name not in names:
                 if current == '抹消' and name not in cancel_sheet_names:
-                    backfill_targets.append((name, row[12].strip() if len(row) > 12 else ''))
+                    backfill_targets.append((name, row[12].strip() if len(row) > 12 else '', True))
                 continue
             if name not in cancel_sheet_names:
                 cancel_rows.append([date_str, name])
@@ -1839,7 +1840,21 @@ def import_cancel_horses():
             changes_rows.append([date_str, name, '抹消', current, '抹消'])
             cancelled.append(name)
 
-        # 抹消シートに名前が無い抹消済みの馬は、リンク先（M列のURL）から抹消日を取得して記録する。
+        # Sire・DamシートでI列にJRAのURLがある馬も対象にする（抹消されていなければ何もしない）
+        target_names = {t[0] for t in backfill_targets} | cancel_sheet_names
+        for sheet_name in ("Sire", "Dam"):
+            try:
+                parent_rows = sh.worksheet(sheet_name).get_all_values()[1:]
+            except gspread.WorksheetNotFound:
+                continue
+            for r in parent_rows:
+                p_name = r[0].strip() if r and r[0] else ''
+                p_url = r[8].strip() if len(r) > 8 else ''
+                if p_name and p_name not in target_names and is_jra_url(p_url):
+                    backfill_targets.append((p_name, p_url, False))
+                    target_names.add(p_name)
+
+        # 抹消シートに名前が無い馬は、リンク先（URL）から抹消日を取得して記録する。
         # 一度に大量に取得するとタイムアウトするため、1回の取り込みで処理する頭数に上限を設ける
         backfill_limit = 50
         backfill_targets.sort(key=lambda t: not t[1])  # URLのある馬を先に処理する
@@ -1847,7 +1862,7 @@ def import_cancel_horses():
         targets = backfill_targets[:backfill_limit]
 
         def _fetch_cancel_date(target):
-            name, url = target
+            name, url, is_cancelled_horse = target
             if not url:
                 return name, None, 'URLが未入力'
             try:
@@ -1855,14 +1870,15 @@ def import_cancel_horses():
             except Exception as e:
                 return name, None, str(e)
             if info.get('status') != '抹消' or not info.get('cancel_date'):
-                return name, None, '抹消日を取得できません'
+                # Sire・Damの馬が抹消されていない場合はエラー扱いにしない
+                return name, None, '抹消日を取得できません' if is_cancelled_horse else None
             return name, info['cancel_date'], None
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             for name, cancel_date, err in pool.map(_fetch_cancel_date, targets):
                 if err:
                     backfill_failed.append(f"{name}（{err}）")
-                else:
+                elif cancel_date:
                     cancel_rows.append([cancel_date, name])
                     backfilled.append(f"{name}（{cancel_date}）")
 
@@ -1883,7 +1899,7 @@ def import_cancel_horses():
         if backfill_failed:
             flash("抹消日の取得に失敗：" + "、".join(backfill_failed))
         if len(backfill_targets) > backfill_limit:
-            flash(f"抹消シートに未記録の抹消馬が残り{len(backfill_targets) - backfill_limit}頭あります。もう一度取り込むと続きを処理します。")
+            flash(f"抹消日を確認する馬が残り{len(backfill_targets) - backfill_limit}頭あります。もう一度取り込むと続きを処理します。")
         return redirect('/import_horses')
     except Exception as e:
         flash(f'登録処理中にエラーが発生しました: {e}')
@@ -2027,6 +2043,7 @@ def add_horse():
             registration_str
         ])
         sort_and_resize_table(ws, sort_col_index=0)
+        record_cancel_date_from_url(sh, name, request.form.get('jra_url'))
         return redirect(f"/horse/{name}")
     except Exception as e:
         flash(f"エラーが発生しました: {e}")
@@ -2080,6 +2097,29 @@ def add_stable():
         except Exception as e:
             flash(f"厩舎の追加に失敗しました: {e}")
     return redirect('/add_horse')
+
+def is_jra_url(url):
+    """JRA公式サイトのURLかどうか"""
+    from urllib.parse import urlparse
+    parsed = urlparse(url or '')
+    return parsed.scheme in ("http", "https") and any(parsed.netloc.endswith(h) for h in JRA_ALLOWED_HOSTS)
+
+def record_cancel_date_from_url(sh, horse_name, url):
+    """抹消シートに名前が無ければ、JRAのURLのリンク先から抹消日を取得して抹消シートに記録する。
+    記録した抹消日を返す（抹消されていない・取得できない場合はNone）。保存処理を止めないよう例外は外に出さない"""
+    try:
+        if not horse_name or not is_jra_url(url):
+            return None
+        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+        if any(len(r) > 1 and r[1] == horse_name for r in ws_cancel.get_all_values()[1:]):
+            return None
+        info = fetch_jra_horse_status(url)
+        if info.get('status') == '抹消' and info.get('cancel_date'):
+            ws_cancel.append_row([info['cancel_date'], horse_name])
+            return info['cancel_date']
+    except Exception as e:
+        print(f"抹消日の記録に失敗しました（{horse_name}）: {e}")
+    return None
 
 def record_pasture_change(sh, horse_name, old_status, new_status, today_str):
     """放牧／入厩の切り替えを履歴（放牧入厩シート）に残す（「早期」→「入厩」の切り替えも含む）"""
@@ -2268,6 +2308,7 @@ def add_parent():
                     request.form.get('jra_url')
                 ])
             sort_and_resize_table(ws, sort_col_index=0)
+            record_cancel_date_from_url(sh, p_name, request.form.get('jra_url'))
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
         return redirect(f"/horse/{origin}") if origin else redirect('/')
@@ -2357,6 +2398,7 @@ def update_horse():
                     if len(data[0]) < 14:
                         ws.update_acell('N1', '競走馬登録')
                     ws.update_acell(f'N{i+1}', registration_str)
+                record_cancel_date_from_url(sh, new_name, request.form.get('jra_url'))
                 break
         return redirect(f"/horse/{new_name}")
     except Exception as e:
