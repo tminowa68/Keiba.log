@@ -19,6 +19,9 @@
         <a href="/races" class="{% if request.path == '/races' or request.path == '/edit_race' %}active{% endif %}">
             <span>レース</span><span>情報</span>
         </a>
+        <a href="/weekly" class="{% if request.path == '/weekly' %}active{% endif %}">
+            <span>週間</span><span>レポート</span>
+        </a>
         <a href="/add_horse" class="{% if request.path == '/add_horse' or request.path == '/add_parent' %}active{% endif %}">
             <span>データ</span><span>登録</span>
         </a>
