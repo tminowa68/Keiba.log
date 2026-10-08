@@ -52,8 +52,8 @@
                     <p class="m-0">
                     <strong>生年月日：</strong>
                     {% if horse[2] is string %}
-                        {% set d = horse[2].replace('-', '/').split('/') %}
-                        {{ d[0] }}年 {{ d[1] }}月 {{ d[2] }}日
+                        {% set d = split_date(horse[2]) %}
+                        {% if d %}{{ d[0] }}年{% if d[1] %} {{ d[1] }}月{% endif %}{% if d[2] %} {{ d[2] }}日{% endif %}{% else %}{{ horse[2] }}{% endif %}
                     {% else %}
                         {{ horse[2].year }}年 {{ horse[2].month }}月 {{ horse[2].day }}日
                     {% endif %}
@@ -601,7 +601,7 @@ function openCandidateModal(btnElement) {
 
     candidates.forEach(c => {
         const birthStr = String(c['生年月日'] || '');
-        const birthYear = birthStr.split('/')[0] || birthStr.split('-')[0] || '不明'; // 年だけを抽出
+        const birthYear = (birthStr.match(/^\d{4}/) || ['不明'])[0]; // 年だけを抽出（20261008・2026/10/8 のどちらの形式でも先頭4桁）
         const region = c['地域'] || c['産地'] || '海外';
         const dam = c['母'] || '不明';
         
