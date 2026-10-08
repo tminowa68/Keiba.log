@@ -1525,6 +1525,214 @@ def import_horses():
         return redirect('/import_horses')
 
 
+def parse_jra_trainer_horses_page(html_text):
+    """
+    JRAの調教師「管理馬一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
+    (trainer_name, [horse_dict, ...]) を返す。
+    horse_dict のキー: name, url, gender(性齢から馬齢を除いたもの), status(管理馬の状態欄), early(早期特例登録馬か)
+    """
+    soup = BeautifulSoup(html_text, 'html.parser')
+
+    # 見出し「<span class="opt">管理馬一覧</span>相沢 郁<span class="kana">…</span>」から調教師名を取得
+    trainer_name = ''
+    txt_span = soup.select_one('h1 span.txt')
+    if txt_span:
+        trainer_name = ''.join(txt_span.find_all(string=True, recursive=False)).strip()
+
+    horses = []
+    for content in soup.select('div.content.mt10'):
+        for table in content.find_all('table'):
+            caption = table.select_one('caption .main')
+            label = caption.get_text(strip=True) if caption else ''
+            early = label.startswith('早期特例登録馬')
+            if not early and not label.startswith('管理馬'):
+                continue
+            for tr in table.select('tbody tr'):
+                th = tr.find('th', attrs={'scope': 'row'})
+                link = th.find('a') if th else None
+                if not link or not link.get_text(strip=True):
+                    continue
+                tds = [td.get_text(strip=True) for td in tr.find_all('td')]
+                horses.append({
+                    'name': link.get_text(strip=True),
+                    'url': requests.compat.urljoin('https://www.jra.go.jp/', link.get('href', '')),
+                    'gender': re.sub(r'\d', '', tds[0]) if tds else '',
+                    # 管理馬の状態欄（放牧 or 空欄）。早期特例登録馬の表には状態欄が無い
+                    'status': tds[1] if len(tds) > 1 else '',
+                    'early': early,
+                })
+    return trainer_name, horses
+
+def resolve_trainer_page_status(current, horse):
+    """管理馬一覧の内容から、Horsesシートの状態（I列）の新しい値を決める"""
+    if horse['early']:
+        # 早期特例登録馬は「早期」のまま（空欄の場合のみ「早期」にする）
+        return current or '早期'
+    if horse['status'] == '放牧':
+        return '放牧' if current in ('入厩', '早期', '') else current
+    if horse['status'] == '':
+        return '入厩' if current in ('放牧', '早期', '') else current
+    return current
+
+def jra_info_to_columns(info, all_stables):
+    """fetch_jra_horse_info の結果を Horsesシートの列番号 → 値 の辞書に変換する"""
+    values = {
+        1: info.get('gender', ''), 3: info.get('sire', ''), 4: info.get('dam', ''),
+        5: info.get('owner', ''), 11: info.get('breeder', ''),
+    }
+    if info.get('birth_year'):
+        values[2] = f"{info['birth_year']}/{info['birth_month']}/{info['birth_day']}"
+    if info.get('trainer_raw'):
+        t_name, t_area = parse_trainer_field(info['trainer_raw'])
+        match = find_stable_match(all_stables, t_area, t_name)
+        if match:
+            values[6] = match['area']
+            values[7] = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
+        else:
+            values[6], values[7] = t_area, t_name
+    if info.get('birthplace'):
+        match = find_birthplace_match(info['birthplace'])
+        if match:
+            values[9], values[10] = match['region'], match['detail'] or ''
+        else:
+            # 一致しない場合は産地にそのまま入れておく（地域は空欄）
+            values[9] = info['birthplace']
+    return {k: v for k, v in values.items() if v}
+
+@app.route('/import_trainer_horses', methods=['POST'])
+@login_required
+def import_trainer_horses():
+    """JRAの調教師「管理馬一覧」ページ（HTML／MHTML保存）をアップロードして、状態の更新と未登録馬の登録を行う"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    file = request.files.get('trainer_file')
+    if not file or not file.filename:
+        flash('ファイルが選択されていません。')
+        return redirect('/import_horses')
+
+    try:
+        trainer_name, parsed_horses = parse_jra_trainer_horses_page(_extract_html_from_upload(file.read()))
+    except Exception as e:
+        flash(f'ファイルの解析に失敗しました: {e}')
+        return redirect('/import_horses')
+
+    if not parsed_horses:
+        flash('管理馬が見つかりませんでした。ファイルの形式をご確認ください。')
+        return redirect('/import_horses')
+
+    def _blank(v):
+        return v is None or str(v).strip() == ''
+
+    # 空欄を埋める対象の列（状態・競走馬登録は対象外）
+    fill_cols = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11]
+
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("Horses")
+        data = ws.get_all_values()
+        headers = list(data[0]) if data else []
+        rows = [list(r) for r in data[1:]]
+        while len(headers) < 14:
+            headers.append('')
+        for r in rows:
+            while len(r) < len(headers):
+                r.append('')
+        name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
+
+        # リンク先の取得が必要な馬（未登録馬・空欄のある登録済み馬）をまとめて並列取得する
+        need_fetch = [h for h in parsed_horses
+                      if h['name'] not in name_to_index
+                      or any(_blank(rows[name_to_index[h['name']]][c]) for c in fill_cols)]
+
+        def _fetch(h):
+            try:
+                return h['name'], fetch_jra_horse_info(h['url']), None
+            except Exception as e:
+                return h['name'], None, e
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            fetched = {name: (info, err) for name, info, err in pool.map(_fetch, need_fetch)}
+
+        all_stables = get_stables_list()
+        trainer_match = find_stable_match(all_stables, '', trainer_name) if trainer_name else None
+        today_str = datetime.now().strftime('%Y/%m/%d')
+
+        added, status_changed, filled, failed = [], [], [], []
+        pasture_changes = []
+
+        for h in parsed_horses:
+            name = h['name']
+            info, err = fetched.get(name, (None, None))
+            if err is not None:
+                failed.append(f"{name}（{err}）")
+
+            if name not in name_to_index:
+                if not info:
+                    if err is None:
+                        failed.append(f"{name}（情報を取得できませんでした）")
+                    continue
+                values = jra_info_to_columns(info, all_stables)
+                values.setdefault(1, h['gender'])
+                if trainer_match:
+                    values.setdefault(6, trainer_match['area'])
+                    values.setdefault(7, trainer_match['display_name'].split('・', 1)[1])
+                new_row = [''] * len(headers)
+                new_row[0] = name
+                for col, val in values.items():
+                    new_row[col] = val
+                new_row[8] = resolve_trainer_page_status('', h)
+                new_row[12] = h['url']
+                rows.append(new_row)
+                name_to_index[name] = len(rows) - 1
+                added.append(name)
+                continue
+
+            row = rows[name_to_index[name]]
+
+            # 状態（I列）の更新
+            current = row[8].strip()
+            new_status = resolve_trainer_page_status(current, h)
+            if new_status != current:
+                row[8] = new_status
+                status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
+                pasture_changes.append((name, current, new_status))
+
+            # 空欄の項目だけ埋める（URLはリンク先を取得できなくても埋める）
+            changed = False
+            if _blank(row[12]):
+                row[12] = h['url']
+                changed = True
+            if info:
+                for col, val in jra_info_to_columns(info, all_stables).items():
+                    if col in fill_cols and _blank(row[col]):
+                        row[col] = val
+                        changed = True
+            if changed:
+                filled.append(name)
+
+        rows.sort(key=lambda r: r[0] if r and r[0] else '')
+        ws.clear()
+        ws.update(range_name='A1', values=[headers] + rows)
+
+        for name, old, new in pasture_changes:
+            record_pasture_change(sh, name, old, new, today_str)
+
+        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{len(parsed_horses)}頭）："
+              f"新規 {len(added)}件／状態更新 {len(status_changed)}件／空欄補完 {len(filled)}件")
+        if added:
+            flash("新規登録：" + "、".join(added))
+        if status_changed:
+            flash("状態更新：" + "、".join(status_changed))
+        if filled:
+            flash("空欄補完：" + "、".join(filled))
+        if failed:
+            flash("情報の取得に失敗：" + "、".join(failed))
+        return redirect('/import_horses')
+    except Exception as e:
+        flash(f'登録処理中にエラーが発生しました: {e}')
+        return redirect('/import_horses')
+
+
 @app.route('/add_horse', methods=['POST'])
 @login_required
 def add_horse():
@@ -1626,6 +1834,30 @@ def add_stable():
             flash(f"厩舎の追加に失敗しました: {e}")
     return redirect('/add_horse')
 
+def record_pasture_change(sh, horse_name, old_status, new_status, today_str):
+    """放牧／入厩の切り替えを履歴（放牧入厩シート）に残す（「早期」→「入厩」の切り替えも含む）"""
+    if old_status not in ('放牧', '入厩', '早期') or new_status not in ('放牧', '入厩'):
+        return
+    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日"])
+    pasture_data = ws_pasture.get_all_values()
+
+    if new_status == '放牧':
+        ws_pasture.append_row([today_str, horse_name, ''])
+    else:  # new_status == '入厩'
+        open_row_idx = None
+        for idx in range(len(pasture_data) - 1, 0, -1):
+            prow = pasture_data[idx]
+            p_name = prow[1] if len(prow) > 1 else ''
+            p_checkin = prow[2] if len(prow) > 2 else ''
+            if p_name == horse_name and not p_checkin:
+                open_row_idx = idx
+                break
+        if open_row_idx is not None:
+            sheet_row_num = open_row_idx + 1
+            ws_pasture.update(f'C{sheet_row_num}', [[today_str]])
+        else:
+            ws_pasture.append_row(['', horse_name, today_str])
+
 @app.route('/api/get_target_horses', methods=['GET'])
 @login_required
 def get_target_horses():
@@ -1696,27 +1928,7 @@ def update_single_horse(row_index):
         if new_status != status:
             ws_horses.update(f'I{row_index}', [[new_status]])
 
-            # 「早期」→「入厩」の切り替えも履歴（放牧入厩シート）に残す
-            if status in ('放牧', '入厩', '早期') and new_status in ('放牧', '入厩'):
-                ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日"])
-                pasture_data = ws_pasture.get_all_values()
-
-                if new_status == '放牧':
-                    ws_pasture.append_row([today_str, horse_name, ''])
-                else:  # new_status == '入厩'
-                    open_row_idx = None
-                    for idx in range(len(pasture_data) - 1, 0, -1):
-                        prow = pasture_data[idx]
-                        p_name = prow[1] if len(prow) > 1 else ''
-                        p_checkin = prow[2] if len(prow) > 2 else ''
-                        if p_name == horse_name and not p_checkin:
-                            open_row_idx = idx
-                            break
-                    if open_row_idx is not None:
-                        sheet_row_num = open_row_idx + 1
-                        ws_pasture.update(f'C{sheet_row_num}', [[today_str]])
-                    else:
-                        ws_pasture.append_row(['', horse_name, today_str])
+            record_pasture_change(sh, horse_name, status, new_status, today_str)
 
         # ③ 去勢判定
         if current_gender == '牡' and info.get('gender') == 'せん':

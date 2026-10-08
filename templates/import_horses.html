@@ -29,4 +29,24 @@
         </div>
     </form>
 </section>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>管理馬一覧 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの調教師「管理馬一覧」ページを保存したファイル（.mhtml／.html）をアップロードすると、状態を更新します。<br>
+        ・管理馬：状態欄が「放牧」の馬は、入厩／早期／空欄なら「放牧」に、状態欄が空欄の馬は、放牧／早期／空欄なら「入厩」にします。<br>
+        ・早期特例登録馬：状態は「早期」のままにします。<br>
+        未登録の馬はリンク先の競走馬情報から登録し、登録済みの馬は空欄の項目だけをリンク先の情報で埋めます。
+    </p>
+
+    <form method="POST" action="/import_trainer_horses" enctype="multipart/form-data" style="margin-top:20px;">
+        <div style="margin-bottom:15px;">
+            <label>ファイル：</label><br>
+            <input type="file" name="trainer_file" accept=".mhtml,.mht,.html,.htm" required style="margin-top:5px;">
+        </div>
+        <div style="margin-top:20px;">
+            <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>
+        </div>
+    </form>
+</section>
 {% endblock %}
