@@ -1481,6 +1481,9 @@ def import_horses():
 
     try:
         html_text = _extract_html_from_upload(file.read())
+        if detect_jra_page_kind(html_text) in ('trainer', 'cancel'):
+            flash(check_jra_page_kind(html_text, 'registration'))
+            return redirect('/import_horses')
         registration_str, parsed_horses = parse_jra_registration_page(html_text)
     except Exception as e:
         flash(f'ファイルの解析に失敗しました: {e}')
@@ -1585,6 +1588,39 @@ def import_horses():
         return redirect('/import_horses')
 
 
+def detect_jra_page_kind(html_text):
+    """保存されたJRAのページの種類を判定する：'trainer'（管理馬一覧）／'cancel'（抹消一覧）／
+    'registration'（競走馬登録）／''（不明）"""
+    soup = BeautifulSoup(html_text, 'html.parser')
+    if soup.select_one('#meikan_management'):
+        return 'trainer'
+    if soup.select_one('#entry_erasure'):
+        return 'cancel'
+    caption = soup.select_one('caption .main')
+    caption_text = caption.get_text(strip=True) if caption else ''
+    title = soup.title.get_text(strip=True) if soup.title else ''
+    if '抹消一覧' in caption_text or '抹消一覧' in title:
+        return 'cancel'
+    if '管理馬一覧' in title:
+        return 'trainer'
+    if '競走馬登録' in caption_text or '競走馬登録' in title:
+        return 'registration'
+    return ''
+
+JRA_PAGE_KIND_LABEL = {'trainer': '管理馬一覧', 'cancel': '抹消一覧', 'registration': '競走馬登録'}
+
+def check_jra_page_kind(html_text, expected):
+    """アップロードされたページが想定と違う種類なら、エラーメッセージを返す（問題なければ None）。
+    例：管理馬一覧のファイルを抹消一覧の欄で取り込むと、一覧の馬がすべて抹消になってしまうため"""
+    kind = detect_jra_page_kind(html_text)
+    if kind == expected:
+        return None
+    detected = JRA_PAGE_KIND_LABEL.get(kind)
+    msg = f"{JRA_PAGE_KIND_LABEL[expected]}のページではありません。"
+    if detected:
+        msg += f"選ばれたファイルは「{detected}」のページです。取り込む欄を確認してください。"
+    return msg + "（何も変更していません）"
+
 def parse_jra_trainer_horses_page(html_text):
     """
     JRAの調教師「管理馬一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
@@ -1679,7 +1715,12 @@ def import_trainer_horses():
         return redirect('/import_horses')
 
     try:
-        trainer_name, as_of_date, parsed_horses = parse_jra_trainer_horses_page(_extract_html_from_upload(file.read()))
+        html_text = _extract_html_from_upload(file.read())
+        page_error = check_jra_page_kind(html_text, 'trainer')
+        if page_error:
+            flash(page_error)
+            return redirect('/import_horses')
+        trainer_name, as_of_date, parsed_horses = parse_jra_trainer_horses_page(html_text)
     except Exception as e:
         flash(f'ファイルの解析に失敗しました: {e}')
         return redirect('/import_horses')
@@ -1725,6 +1766,7 @@ def import_trainer_horses():
         added, status_changed, filled, failed = [], [], [], []
         pasture_changes = []
         changes_rows, change_msgs = [], []
+        restored = []  # 抹消になっていたが管理馬一覧に載っていた馬
 
         for h in parsed_horses:
             name = h['name']
@@ -1757,7 +1799,12 @@ def import_trainer_horses():
 
             # 状態（I列）の更新
             current = row[8].strip()
-            new_status = resolve_trainer_page_status(current, h)
+            if current == '抹消':
+                # 管理馬一覧に載っている＝現役なので、抹消は誤り。一覧の内容から状態を決め直す
+                new_status = resolve_trainer_page_status('', h)
+                restored.append(name)
+            else:
+                new_status = resolve_trainer_page_status(current, h)
             if new_status != current:
                 row[8] = new_status
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
@@ -1809,8 +1856,18 @@ def import_trainer_horses():
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
 
-        for name, old, new in pasture_changes:
-            record_pasture_change(sh, name, old, new, today_str)
+        record_pasture_changes(sh, pasture_changes, today_str)
+        if restored:
+            # 誤って記録された抹消シートの行も取り除く
+            try:
+                ws_cancel = sh.worksheet("抹消")
+                cancel_data = ws_cancel.get_all_values()
+                kept = [r for r in cancel_data[1:] if not (len(r) > 1 and r[1] in restored)]
+                if len(kept) != len(cancel_data) - 1:
+                    ws_cancel.clear()
+                    ws_cancel.update(range_name='A1', values=[cancel_data[0]] + kept)
+            except gspread.WorksheetNotFound:
+                pass
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
 
@@ -1820,6 +1877,8 @@ def import_trainer_horses():
             flash("新規登録：" + "、".join(added))
         if status_changed:
             flash("状態更新：" + "、".join(status_changed))
+        if restored:
+            flash("抹消を解除（管理馬一覧に載っているため）：" + "、".join(restored))
         if change_msgs:
             flash("変更（Changesシートに記録）：" + "、".join(change_msgs))
         if filled:
@@ -1865,7 +1924,12 @@ def import_cancel_horses():
         return redirect('/import_horses')
 
     try:
-        cancel_date_str, names = parse_jra_cancel_page(_extract_html_from_upload(file.read()))
+        html_text = _extract_html_from_upload(file.read())
+        page_error = check_jra_page_kind(html_text, 'cancel')
+        if page_error:
+            flash(page_error)
+            return redirect('/import_horses')
+        cancel_date_str, names = parse_jra_cancel_page(html_text)
     except Exception as e:
         flash(f'ファイルの解析に失敗しました: {e}')
         return redirect('/import_horses')
@@ -1888,6 +1952,7 @@ def import_cancel_horses():
 
         cancelled, already = [], []
         cancel_rows = []
+        status_updates = []  # 状態（I列）の書き込みは途中で止まらないよう最後にまとめて1回で行う
         # 抹消シートに名前が無く、リンク先から抹消日を取得する馬：(馬名, URL, Horsesシートの抹消馬か)
         backfill_targets = []
         for i, row in enumerate(data[1:], start=2):
@@ -1905,7 +1970,7 @@ def import_cancel_horses():
             if current == '抹消':
                 already.append(name)
                 continue
-            ws.update(f'I{i}', [['抹消']])
+            status_updates.append({'range': f'I{i}', 'values': [['抹消']]})
             cancelled.append(name)
 
         # Sire・DamシートでI列にJRAのURLがある馬も対象にする（抹消されていなければ何もしない）
@@ -1950,6 +2015,8 @@ def import_cancel_horses():
                     cancel_rows.append([cancel_date, name])
                     backfilled.append(f"{name}（{format_date_jp(cancel_date)}）")
 
+        if status_updates:
+            ws.batch_update(status_updates)
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
@@ -2218,14 +2285,25 @@ def record_cancel_date_from_url(sh, horse_name, url):
 
 def record_pasture_change(sh, horse_name, old_status, new_status, today_str):
     """放牧／入厩の切り替えを履歴（放牧入厩シート）に残す（「早期」→「入厩」の切り替えも含む）"""
-    if old_status not in ('放牧', '入厩', '早期') or new_status not in ('放牧', '入厩'):
+    record_pasture_changes(sh, [(horse_name, old_status, new_status)], today_str)
+
+def record_pasture_changes(sh, changes, today_str):
+    """複数頭の放牧／入厩の切り替えをまとめて放牧入厩シートに記録する。
+    Googleの1分あたりの読み書き回数の上限にかからないよう、読み込み1回・書き込みは最大2回にまとめる。
+    changes: [(馬名, 旧状態, 新状態), ...]"""
+    changes = [(n, o, nw) for n, o, nw in changes
+               if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
+    if not changes:
         return
     ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日"])
     pasture_data = ws_pasture.get_all_values()
 
-    if new_status == '放牧':
-        ws_pasture.append_row([today_str, horse_name, ''])
-    else:  # new_status == '入厩'
+    append_rows, cell_updates = [], []
+    for horse_name, _, new_status in changes:
+        if new_status == '放牧':
+            append_rows.append([today_str, horse_name, ''])
+            continue
+        # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）
         open_row_idx = None
         for idx in range(len(pasture_data) - 1, 0, -1):
             prow = pasture_data[idx]
@@ -2235,10 +2313,14 @@ def record_pasture_change(sh, horse_name, old_status, new_status, today_str):
                 open_row_idx = idx
                 break
         if open_row_idx is not None:
-            sheet_row_num = open_row_idx + 1
-            ws_pasture.update(f'C{sheet_row_num}', [[today_str]])
+            cell_updates.append({'range': f'C{open_row_idx + 1}', 'values': [[today_str]]})
         else:
-            ws_pasture.append_row(['', horse_name, today_str])
+            append_rows.append(['', horse_name, today_str])
+
+    if cell_updates:
+        ws_pasture.batch_update(cell_updates)
+    if append_rows:
+        ws_pasture.append_rows(append_rows)
 
 @app.route('/api/get_target_horses', methods=['GET'])
 @login_required
