@@ -59,7 +59,7 @@
         {% set m_val = data.month|int if data and data.month else 0 %}
         {% set is_sh = m_val >= 7 %}
         
-        <select name="month" id="parent_month" style="padding:8px;">
+        <select name="month" id="parent_month" data-initial="{{ m_val if m_val else '' }}" style="padding:8px;">
             <option value="" {% if not m_val %}selected{% endif %}></option>
             {% set start_m = 7 if is_sh else 1 %}
             {% set end_m = 12 if is_sh else 8 %}
@@ -205,8 +205,6 @@ async function fetchFromJra() {
             yearInput.dispatchEvent(new Event('input'));
         }
 
-        if (data.birth_month && monthSelect) setSelectValueRobust(monthSelect, data.birth_month);
-        if (data.birth_day && daySelect) setSelectValueRobust(daySelect, data.birth_day);
 
         if (data.birthplace) {
             const regionSelect = document.getElementById('region_select');
@@ -221,6 +219,17 @@ async function fetchFromJra() {
                     detailSelect.dispatchEvent(new Event('change'));
                 }
             }
+        }
+
+        // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする。
+        // セット後に change を発火させ、地域の選択肢を生年月日に合わせて再計算する
+        if (data.birth_month && monthSelect) {
+            setSelectValueRobust(monthSelect, data.birth_month);
+            monthSelect.dispatchEvent(new Event('change'));
+        }
+        if (data.birth_day && daySelect) {
+            setSelectValueRobust(daySelect, data.birth_day);
+            daySelect.dispatchEvent(new Event('change'));
         }
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
@@ -459,9 +468,6 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     const detailSelect = document.getElementById('detail_select');
     if (!regionSelect || !detailSelect) return;
 
-    // Jinja2テンプレートから南半球判定のみ受け取る
-    const isSH = {{ 'true' if is_sh else 'false' }};
-
     // 産地（第1階層）の選択肢を生成
     regionSelect.innerHTML = '';
     for (const region in locationData) {
@@ -576,27 +582,31 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     if (monthSelectForListener) monthSelectForListener.addEventListener('change', refreshDetailAvailability);
     if (birthDaySelect) birthDaySelect.addEventListener('change', refreshDetailAvailability);
 
-    // 初期データのマッピング処理 (data-initial属性を利用)
+    // 初期表示：既存データの「産地 → 地域 → 誕生月」の順にセットする
+    // （月の選択肢は南半球かどうかで変わるため、産地を先にセットしないと誕生月を選べない）
+    const initialMonthSelect = document.getElementById(monthSelectId);
+    const initialMonth = initialMonthSelect ? (initialMonthSelect.getAttribute('data-initial') || '') : '';
     const initialRegion = regionSelect.getAttribute('data-initial');
-    
+    const initialDetail = detailSelect.getAttribute('data-initial');
+    function setInitialMonth() {
+        if (!initialMonthSelect || !initialMonth) return;
+        updateMonthByLocation(monthSelectId, detailSelect.value || initialDetail, hasEmptyOption);
+        // 範囲外の月（産地が未入力の南半球産など）でも、既存の値は消さずに残す
+        setSelectValueRobust(initialMonthSelect, initialMonth);
+    }
+
+    // 地域の存続期間の判定に誕生月を使うため、地域の一覧を作る前に月をセットしておく
+    setInitialMonth();
     if (initialRegion) {
         regionSelect.value = initialRegion;
-    } else if (isSH) {
-        // 産地データはないが月データから南半球と判定できる場合
-        regionSelect.value = "海外";
     }
-
-    // イベントを発火させて詳細(detailSelect)の選択肢を生成
+    // regionSelect の変更イベントを発火させ、detailSelect の選択肢を生成する
     regionSelect.dispatchEvent(new Event('change'));
-
-    const initialDetail = detailSelect.getAttribute('data-initial');
     if (initialDetail && [...detailSelect.options].some(o => o.value === initialDetail)) {
         detailSelect.value = initialDetail;
-        detailSelect.dispatchEvent(new Event('change'));
-    } else if (!initialRegion && isSH) {
-        detailSelect.value = "オーストラリア";
-        detailSelect.dispatchEvent(new Event('change'));
     }
+    // 地域に合わせて月の選択肢（南半球なら7〜12月）を作り直し、誕生月をセットし直す
+    setInitialMonth();
 }
 
 function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {

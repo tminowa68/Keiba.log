@@ -482,8 +482,6 @@ async function fetchFromJra() {
             yearInput.dispatchEvent(new Event('input'));
         }
 
-        if (data.birth_month && monthSelect) setSelectValueRobust(monthSelect, data.birth_month);
-        if (data.birth_day && daySelect) setSelectValueRobust(daySelect, data.birth_day);
 
         if (data.trainer_raw && stableSelect) {
             const { name: trainerName, area: trainerArea } = parseTrainerField(data.trainer_raw);
@@ -507,6 +505,17 @@ async function fetchFromJra() {
                     detailSelect.dispatchEvent(new Event('change'));
                 }
             }
+        }
+
+        // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする。
+        // セット後に change を発火させ、地域の選択肢を生年月日に合わせて再計算する
+        if (data.birth_month && monthSelect) {
+            setSelectValueRobust(monthSelect, data.birth_month);
+            monthSelect.dispatchEvent(new Event('change'));
+        }
+        if (data.birth_day && daySelect) {
+            setSelectValueRobust(daySelect, data.birth_day);
+            daySelect.dispatchEvent(new Event('change'));
         }
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
