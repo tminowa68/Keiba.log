@@ -22,7 +22,7 @@
         <a href="/weekly" class="{% if request.path == '/weekly' %}active{% endif %}">
             <span>週間</span><span>レポート</span>
         </a>
-        <a href="/add_horse" class="{% if request.path == '/add_horse' or request.path == '/add_parent' %}active{% endif %}">
+        <a href="/register" class="{% if request.path in ['/register', '/add_horse', '/add_parent', '/add_stable', '/stable_capacity', '/import_horses'] %}active{% endif %}">
             <span>データ</span><span>登録</span>
         </a>
         <a href="/update_horses" id="nav-update-horses" class="{% if request.path == '/update_horses' %}active{% endif %}" onclick="return confirmUpdateHorses(event)">

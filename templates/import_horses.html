@@ -2,6 +2,7 @@
 {% block title %}競走馬登録 一括インポート - keiba.log{% endblock %}
 {% block content %}
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with large = False %}{% include "_register_nav.html" %}{% endwith %}
     {% with messages = get_flashed_messages() %}
         {% if messages %}
             {% for message in messages %}

@@ -1835,3 +1835,53 @@ form .select-stables {
         white-space: nowrap;
     }
 }
+
+/* --- データ登録：競走馬の登録／厩舎の登録／HTMLのアップロード の切り替えボタン --- */
+.register-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+.register-nav-btn {
+    flex: 1 1 0;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 2px solid #4CAF50;
+    border-radius: 8px;
+    background: #fff;
+    text-align: center;
+    text-decoration: none;
+}
+.register-nav-btn:link, .register-nav-btn:visited {
+    color: #2e7d32;
+}
+.register-nav-btn:hover {
+    background: #f0f8f0;
+}
+.register-nav-btn.active,
+.register-nav-btn.active:link,
+.register-nav-btn.active:visited {
+    background: #4CAF50;
+    color: #fff;
+}
+.register-nav-label {
+    font-weight: bold;
+    font-size: 1em;
+}
+.register-nav-large .register-nav-btn {
+    min-height: 140px;
+    padding: 20px;
+}
+.register-nav-large .register-nav-label {
+    font-size: 1.4em;
+}
+.register-nav-desc {
+    font-size: 0.85em;
+    color: #666;
+}

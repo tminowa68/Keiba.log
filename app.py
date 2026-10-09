@@ -78,9 +78,9 @@ except gspread.SpreadsheetNotFound:
     ws1.update_title("Horses")
     ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場", "URL"])
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
-    ws_miho.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
+    ws_miho.append_row(["厩舎名", "ヨミガナ", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
-    ws_ritto.append_row(["厩舎名", "よみがな", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
+    ws_ritto.append_row(["厩舎名", "ヨミガナ", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
 
 try:
     sh.worksheet("Changes")
@@ -100,6 +100,14 @@ except gspread.WorksheetNotFound:
 
 def kana_to_hira(text):
     return "".join([chr(ord(c) - 96) if "ァ" <= c <= "ヶ" else c for c in text])
+
+def hira_to_kana(text):
+    return "".join([chr(ord(c) + 96) if "ぁ" <= c <= "ゖ" else c for c in text])
+
+def stable_kana_key(kana):
+    """厩舎のヨミガナを並べ替え・五十音の絞り込み用にそろえる（ひらがな・空白なし）。
+    ヨミガナはカタカナ（空白あり）で登録するが、以前の登録分はひらがな（空白なし）のため"""
+    return kana_to_hira(re.sub(r'\s+', '', str(kana or '')))
 
 # --- 日付の表記（スプレッドシートには「20261008」のように年月日を数字8桁で記入する） ---
 # 年月日を区切る形式（2026/10/8・2026-10-08・2026年10月8日）と、数字だけの形式（20261008・202610・2026）の両方を読み取る
@@ -674,7 +682,7 @@ def get_stables_list():
 
                         all_stables.append({
                             'display_name': f"{sheet_name}・{row[0]}", 
-                            'kana': row[1],
+                            'kana': stable_kana_key(row[1]),
                             'area': sheet_name,
                             'birth_date': row[2] if len(row) > 2 else "",
                             'license_year': row[3] if len(row) > 3 else "",
@@ -829,14 +837,15 @@ def extract_race_course(race_col_data):
     return f"{cource_part} {straight_part} {distance_part}m".strip()
 
 # --- ファイル操作・整理の共通処理 ---
-def sort_and_resize_table(ws, sort_col_index=0):
-    """スプレッドシートのデータをメモリ上でソートし一括更新する"""
+def sort_and_resize_table(ws, sort_col_index=0, key=None):
+    """スプレッドシートのデータをメモリ上でソートし一括更新する（key を指定するとその値で並べ替える）"""
     data = ws.get_all_values()
     if len(data) <= 1: return
     headers = data[0]
     rows = [r for r in data[1:] if r and len(r) > sort_col_index and r[sort_col_index]]
     
-    rows.sort(key=lambda x: x[sort_col_index] if x[sort_col_index] else "")
+    key = key or (lambda v: v)
+    rows.sort(key=lambda x: key(x[sort_col_index]) if x[sort_col_index] else "")
     ws.clear()
     ws.update(range_name='A1', values=[headers] + rows)
 
@@ -2093,54 +2102,96 @@ def add_horse():
         flash(f"エラーが発生しました: {e}")
         return redirect('/add_horse')
 
-@app.route('/add_stable', methods=['POST'])
+@app.route('/register')
+@login_required
+def register():
+    """データ登録のトップ：競走馬の登録／厩舎の登録／HTMLのアップロードのボタンを表示する"""
+    return render_template('register.html')
+
+@app.route('/add_stable', methods=['GET', 'POST'])
 @login_required
 def add_stable():
-    name = request.form.get('stable_name')
-    kana = request.form.get('kana')
+    if request.method == 'GET':
+        return render_template('add_stable.html')
+
+    name = (request.form.get('stable_name') or '').strip()
+    # ヨミガナはカタカナに変換し、空白はそのまま残す（前後の空白だけ除く）
+    kana = hira_to_kana((request.form.get('kana') or '').strip())
     area = request.form.get('area')
-    year = request.form.get('year')
-    month = request.form.get('month')
-    day = request.form.get('day')
+    year, month, day = request.form.get('year'), request.form.get('month'), request.form.get('day')
     birth_date_str = format_date8(year, month, day) if year and month and day else ""
-    license_year = request.form.get('license_year')
-    
-    # --- 新規追加項目 ---
-    opening = to_date8(request.form.get('opening'))
-    retirement = to_date8(request.form.get('retirement'))
-    temp_loan = request.form.get('temp_loan') or "0"
-    
-    capacity = request.form.get('capacity')
-    is_technical = request.form.get('is_technical')
-    if is_technical:
-        capacity = "技術調教師"
+    license_year = (request.form.get('license_year') or '').strip()
 
-    if name and area and area in ["美浦", "栗東"]:
-        try:
-            sh = gc.open(horse_data)
-            sheet = sh.worksheet(area)
-            existing_names = sheet.col_values(1)
-            
-            if name in existing_names[1:]:
-                flash(f"エラー: {name}厩舎は既に{area}に登録されています。")
-                return redirect('/add_horse')
+    # 開業年月日・引退年月日（任意。生年月日と同じく年・月・日で入力）
+    def _optional_date(prefix):
+        y = (request.form.get(prefix + 'year') or '').strip()
+        m = (request.form.get(prefix + 'month') or '').strip()
+        d = (request.form.get(prefix + 'day') or '').strip()
+        return format_date8(y, m, d if m else '') if y else ''
+    opening = _optional_date('opening_')
+    retirement = _optional_date('retirement_')
 
-            # スプレッドシートへ書き込む列の順番を変更
-            sheet.append_row([
-                name,
-                kana_to_hira(re.sub(r'\s+', '', kana)),
-                birth_date_str,
-                license_year,
-                opening,      # E列: 開業
-                retirement,   # F列: 引退
-                capacity,     # G列: 馬房数
-                temp_loan     # H列: 臨時貸付
-            ])
+    if not (name and kana and birth_date_str and license_year and area in ["美浦", "栗東"]):
+        flash("厩舎名・ヨミガナ・拠点・生年月日・免許取得年を入力してください。")
+        return redirect('/add_stable')
 
-            sort_and_resize_table(sheet, sort_col_index=1)
-        except Exception as e:
-            flash(f"厩舎の追加に失敗しました: {e}")
-    return redirect('/add_horse')
+    try:
+        sh = gc.open(horse_data)
+        sheet = sh.worksheet(area)
+        existing_names = sheet.col_values(1)
+
+        if name in existing_names[1:]:
+            flash(f"エラー: {name}厩舎は既に{area}に登録されています。")
+            return redirect('/add_stable')
+
+        # 馬房数（G列）・臨時貸付（H列）・貸付終了（I列）は「馬房数を変更する」で管理する
+        sheet.append_row([
+            name,
+            kana,
+            birth_date_str,
+            license_year,
+            opening,      # E列: 開業
+            retirement,   # F列: 引退
+        ])
+
+        sort_and_resize_table(sheet, sort_col_index=1, key=stable_kana_key)
+        flash(f"{area}・{name}厩舎を登録しました。", 'success')
+    except Exception as e:
+        flash(f"厩舎の追加に失敗しました: {e}")
+    return redirect('/add_stable')
+
+@app.route('/stable_capacity')
+@login_required
+def stable_capacity():
+    """美浦／栗東の厩舎ごとの馬房数・臨時貸付などを一覧表示する（引退済みの厩舎は除く）"""
+    area = request.args.get('area', '美浦')
+    if area not in ("美浦", "栗東"):
+        area = "美浦"
+
+    stables = []
+    try:
+        rows = gc.open(horse_data).worksheet(area).get_all_values()[1:]
+        today = datetime.now().date()
+
+        def cell(r, i):
+            return r[i].strip() if len(r) > i and r[i] else ''
+
+        for r in rows:
+            if not cell(r, 0):
+                continue
+            retirement = parse_full_date(cell(r, 5))
+            if retirement and retirement <= today:
+                continue
+            stables.append({
+                'name': cell(r, 0), 'kana': cell(r, 1), 'birth_date': cell(r, 2),
+                'license_year': cell(r, 3), 'opening': cell(r, 4), 'capacity': cell(r, 6),
+                'temp_loan': cell(r, 7), 'loan_end': cell(r, 8),
+            })
+        stables.sort(key=lambda x: stable_kana_key(x['kana']))
+    except Exception as e:
+        flash(f"厩舎データの読み込みに失敗しました: {e}")
+
+    return render_template('stable_capacity.html', area=area, stables=stables)
 
 def is_jra_url(url):
     """JRA公式サイトのURLかどうか"""
