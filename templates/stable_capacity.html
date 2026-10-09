@@ -1,0 +1,58 @@
+{% extends "layout.html" %}
+{% block title %}馬房数 - keiba.log{% endblock %}
+{% block content %}
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with large = False %}{% include "_register_nav.html" %}{% endwith %}
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+            <div style="color: red; padding: 10px; font-size:0.9em;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <p style="margin-top:0;"><a href="/add_stable" style="font-size:0.9em;">← 厩舎の登録に戻る</a></p>
+    <h2>2026年3月4日以降</h2>
+
+    <p>
+        {% for a in ['美浦', '栗東'] %}
+        <a href="/stable_capacity?area={{ a }}" class="kana-btn area-btn {{ 'active' if a == area else '' }}" style="text-decoration:none;">{{ a }}</a>
+        {% endfor %}
+        <span style="margin-left:10px; color:#555;">{{ stables|length }}厩舎</span>
+    </p>
+
+    {% if stables %}
+    <table>
+        <thead>
+            <tr>
+                <th>厩舎名</th>
+                <th>ヨミガナ</th>
+                <th>生年月日</th>
+                <th>免許取得年</th>
+                <th>開業</th>
+                <th>馬房数</th>
+                <th>臨時貸付</th>
+                <th>貸付終了</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in stables %}
+            <tr>
+                <td>{{ s.name }}</td>
+                <td>{{ s.kana }}</td>
+                <td>{{ s.birth_date|jpdate }}</td>
+                <td>{{ s.license_year }}{% if s.license_year %}年{% endif %}</td>
+                <td>{{ s.opening|jpdate }}</td>
+                <td style="text-align:right;">{{ s.capacity }}</td>
+                <td style="text-align:right;">{{ s.temp_loan }}</td>
+                <td>{{ s.loan_end|jpdate }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>{{ area }}の厩舎は登録されていません。</p>
+    {% endif %}
+</section>
+{% endblock %}

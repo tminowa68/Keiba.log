@@ -1,0 +1,14 @@
+{# データ登録の3つのボタン（large=True：データ登録トップ用の大きいボタン／False：各ページ上部の切り替え用） #}
+{% set register_pages = [
+    ('/add_horse', '競走馬の登録', 'URLや手入力で1頭ずつ登録', ['/add_horse']),
+    ('/add_stable', '厩舎の登録', '厩舎の登録・馬房数の確認', ['/add_stable', '/stable_capacity']),
+    ('/import_horses', 'HTMLのアップロード', 'JRAのページ（mhtml／html）から取り込み', ['/import_horses']),
+] %}
+<div class="register-nav {{ 'register-nav-large' if large else '' }}">
+    {% for href, label, desc, paths in register_pages %}
+    <a href="{{ href }}" class="register-nav-btn {{ 'active' if request.path in paths else '' }}">
+        <span class="register-nav-label">{{ label }}</span>
+        {% if large %}<span class="register-nav-desc">{{ desc }}</span>{% endif %}
+    </a>
+    {% endfor %}
+</div>
