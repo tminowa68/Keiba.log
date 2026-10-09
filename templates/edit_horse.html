@@ -50,7 +50,7 @@
                 {% set birth_month = birth_parts[1] if birth_parts and birth_parts[1] else '' %}
                 {% set birth_day = birth_parts[2] if birth_parts and birth_parts[2] else '' %}
             <input type="number" name="year" value="{{ birth_year }}" style="width:50px; padding:8px;" required>年
-            <select name="month" id="horse_month" style="padding:8px;" required>
+            <select name="month" id="horse_month" data-initial="{{ birth_month }}" style="padding:8px;" required>
                 {% for m in range(1, 9) %}
                 <option value="{{ m }}" {% if m|string == birth_month|string %}selected{% endif %}>{{ m }}</option>
                 {% endfor %}
@@ -452,8 +452,6 @@ async function fetchFromJra() {
             yearInput.dispatchEvent(new Event('input'));
         }
 
-        if (data.birth_month && monthSelect) setSelectValueRobust(monthSelect, data.birth_month);
-        if (data.birth_day && daySelect) setSelectValueRobust(daySelect, data.birth_day);
 
         if (data.trainer_raw && stableSelect) {
             const { name: trainerName, area: trainerArea } = parseTrainerField(data.trainer_raw);
@@ -477,6 +475,17 @@ async function fetchFromJra() {
                     detailSelect.dispatchEvent(new Event('change'));
                 }
             }
+        }
+
+        // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする。
+        // セット後に change を発火させ、地域の選択肢を生年月日に合わせて再計算する
+        if (data.birth_month && monthSelect) {
+            setSelectValueRobust(monthSelect, data.birth_month);
+            monthSelect.dispatchEvent(new Event('change'));
+        }
+        if (data.birth_day && daySelect) {
+            setSelectValueRobust(daySelect, data.birth_day);
+            daySelect.dispatchEvent(new Event('change'));
         }
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
@@ -529,6 +538,9 @@ const locationData = {
         ],
         "渡島総合振興局": [
             "函館市", "森町"
+        ],
+        "根室振興局": [
+            "別海町", "別海村"
         ]
     },
     "青森県": [],
@@ -631,7 +643,10 @@ const municipalityValidity = {
     "千歳町":     { start: "1939-04-01",  end: "1958-07-01" },
 
     "函館市":     { start: "1922-08-01",  end: null },
-    "森町":       { start: "1921-04-01",  end: null }
+    "森町":       { start: "1921-04-01",  end: null },
+
+    "別海町":     { start: "1971-04-01",  end: null },
+    "別海村":     { start: "1921-04-01",  end: "1971-04-01" }
 };
 
 function _parseISODate(str) {
@@ -793,21 +808,31 @@ function initBirthplaceFields(monthSelectId, hasEmptyOption) {
     if (monthSelectForListener) monthSelectForListener.addEventListener('change', refreshDetailAvailability);
     if (birthDaySelect) birthDaySelect.addEventListener('change', refreshDetailAvailability);
 
-    // 初期表示を実行
+    // 初期表示：既存データの「産地 → 地域 → 誕生月」の順にセットする
+    // （月の選択肢は南半球かどうかで変わるため、産地を先にセットしないと誕生月を選べない）
+    const initialMonthSelect = document.getElementById(monthSelectId);
+    const initialMonth = initialMonthSelect ? (initialMonthSelect.getAttribute('data-initial') || '') : '';
     const initialRegion = regionSelect.getAttribute('data-initial');
+    const initialDetail = detailSelect.getAttribute('data-initial');
+    function setInitialMonth() {
+        if (!initialMonthSelect || !initialMonth) return;
+        updateMonthByLocation(monthSelectId, detailSelect.value || initialDetail, hasEmptyOption);
+        // 範囲外の月（産地が未入力の南半球産など）でも、既存の値は消さずに残す
+        setSelectValueRobust(initialMonthSelect, initialMonth);
+    }
+
+    // 地域の存続期間の判定に誕生月を使うため、地域の一覧を作る前に月をセットしておく
+    setInitialMonth();
     if (initialRegion) {
         regionSelect.value = initialRegion;
     }
     // regionSelect の変更イベントを発火させ、detailSelect の選択肢を生成する
     regionSelect.dispatchEvent(new Event('change'));
-
-    // 生成された detailSelect の選択肢に対して初期値をセット
-    const initialDetail = detailSelect.getAttribute('data-initial');
     if (initialDetail && [...detailSelect.options].some(o => o.value === initialDetail)) {
         detailSelect.value = initialDetail;
-        // 月の再計算などのために change イベントを発火
-        detailSelect.dispatchEvent(new Event('change'));
     }
+    // 地域に合わせて月の選択肢（南半球なら7〜12月）を作り直し、誕生月をセットし直す
+    setInitialMonth();
 }
 
 function updateMonthByLocation(monthSelectId, detailValue, hasEmptyOption) {
