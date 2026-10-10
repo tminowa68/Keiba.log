@@ -1670,8 +1670,9 @@ def parse_jra_trainer_horses_page(html_text):
 def resolve_trainer_page_status(current, horse):
     """管理馬一覧の内容から、Horsesシートの状態（I列）の新しい値を決める"""
     if horse['early']:
-        # 早期特例登録馬は「早期」のまま（空欄の場合のみ「早期」にする）
-        return current or '早期'
+        # 早期特例登録馬は「早期」にする。競走馬登録画面でJRAのURLから取得すると、ページの放牧マーク
+        # （span.rest）で「放牧」になって登録されるため、「放牧」も「早期」に直す（「入厩」はそのまま）
+        return '早期' if current in ('', '放牧', '早期') else current
     if horse['status'] == '放牧':
         return '放牧' if current in ('入厩', '早期', '') else current
     if horse['status'] == '':
