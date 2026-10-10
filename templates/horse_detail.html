@@ -301,16 +301,14 @@
     <!-- 仔（2代子孫）・孫（3代子孫）は、同じ親の下の馬をまとめて枠で囲み、枠の左側に世代の数だけ線を引く -->
     {% macro render_relative_row(row, depth) %}
         <div class="relatives-row {{ 'row-self' if row.is_self else ('row-muted' if row.is_muted else '') }}">
-            <div class="relatives-cell cell-relation relation-depth-{{ depth }}">
+            <div class="relatives-cell cell-relation relation-depth-{{ depth }} {{ 'female-text' if row.gender == '牝' else '' }}">
                 <span class="relation-text">{{ row.relation }}</span>
             </div>
-            <div class="relatives-cell cell-status">
+            <div class="relatives-cell cell-status {{ {'繁殖': 'status-broodmare', '種馬': 'status-stallion'}.get(row.status, '') }}">
                 {% if row.linkable and not row.has_url %}
                     <a href="/edit_horse/{{ row.name }}" class="btn-url">URLを追加</a>
                 {% elif row.status in ['放牧', '入厩'] %}
                     現役
-                {% elif row.status == '抹消' %}
-                    引退
                 {% else %}
                     {{ row.status or '-' }}
                 {% endif %}
@@ -332,7 +330,7 @@
 
     {% macro render_relatives_table(table) %}
         <div class="relatives-table">
-            <div class="relatives-title">{{ table.label }}</div>
+            <div class="relatives-title">{{ table.label }}<span class="relatives-title-suffix">からの3代子孫</span></div>
             <div class="relatives-row relatives-head-row">
                 <div class="relatives-cell">関係</div>
                 <div class="relatives-cell">状態</div>

@@ -700,14 +700,18 @@ form .select-stables {
     border: 1px solid #ddd;
     border-radius: 5px;
 }
-/* --- 兄弟馬・近親馬テーブル：divベースのgridレイアウト ---
-   入れ子の枠や左側の線で行をまとめても、各列（性別・生年など）の位置が
-   ずれないよう、テーブル構造ではなくグリッドで各列の幅を固定している。
-   枠と線は ::before／::after で重ねて描くため、列の位置には影響しない。 */
+/* --- 兄弟馬・近親馬テーブル ---
+   テーブル全体を1つのグリッドにし、各行・まとまり（.relatives-group）は subgrid で列を共有する。
+   関係列を内容に合わせた幅（auto）にしても、入れ子のまとまりの中の行も含めて全行の列がそろう。
+   枠は ::after で重ねて描くため、列の位置には影響しない。 */
+#relatives-results,
+#close-relatives-results {
+    overflow-x: auto;
+}
 .relatives-table {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
+    display: grid;
+    grid-template-columns: auto 92px minmax(9rem, auto) 64px 74px minmax(9rem, auto);
+    width: max-content; /* 列を伸ばさず中身に合わせた幅にする */
     margin-top: 10px;
     border: 2px solid #555;
     font-size: 0.95em;
@@ -715,7 +719,17 @@ form .select-stables {
 .relatives-table + .relatives-table {
     margin-top: 20px;
 }
-/* 見出し：「母：〇〇（2015）からの3代子孫」 */
+.relatives-title,
+.relatives-row,
+.relatives-group {
+    grid-column: 1 / -1;
+}
+.relatives-row,
+.relatives-group {
+    display: grid;
+    grid-template-columns: subgrid;
+}
+/* 見出し：「母：〇〇（2015）からの3代子孫」（スマホでは「からの3代子孫」の前で改行） */
 .relatives-title {
     padding: 8px 10px;
     font-weight: bold;
@@ -724,8 +738,6 @@ form .select-stables {
     border-bottom: 1px solid #ddd;
 }
 .relatives-row {
-    display: grid;
-    grid-template-columns: 120px 92px minmax(160px, 1.6fr) 64px 74px minmax(140px, 1.4fr);
     align-items: center;
     border-bottom: 1px solid #eee;
 }
@@ -751,18 +763,26 @@ form .select-stables {
     background-color: #fff9c4;
 }
 
-/* 関係列：左寄せ。2代子孫・3代子孫は左側の線の分だけ右にずらす */
+/* 関係列：左寄せ。2代子孫・3代子孫は左側の線の分だけ右にずらす。牝馬の関係（姉・姪・叔母など）は赤字 */
 .cell-relation {
     text-align: left;
     white-space: nowrap;
 }
 .cell-relation.relation-depth-1 {
     padding-left: 30px;
-    color: #555;
 }
 .cell-relation.relation-depth-2 {
     padding-left: 44px;
-    color: #555;
+}
+.relatives-row .cell-relation.female-text {
+    color: red;
+}
+/* 状態：繁殖は赤字、種馬は青字 */
+.relatives-row .cell-status.status-broodmare {
+    color: red;
+}
+.relatives-row .cell-status.status-stallion {
+    color: blue;
 }
 
 /* --- 同じ親の下の2代子孫・3代子孫のまとまり ---
@@ -785,6 +805,12 @@ form .select-stables {
 }
 .relatives-group-depth-1::after { left: 12px; right: 4px; }
 .relatives-group-depth-2::after { left: 26px; right: 10px; }
+
+@media screen and (max-width: 768px) {
+    .relatives-title-suffix {
+        display: block;
+    }
+}
 
 /* 編集リンクのデザイン */
 .pedigree-cell .add-parent-link.side-action {
