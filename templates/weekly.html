@@ -64,11 +64,11 @@
         {% for h in registered %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td>{{ h.gender }}</td>
             <td>{{ h.sire }}</td>
             <td>{{ h.dam }}</td>
-            <td>{{ h.stable }}</td>
+            <td>{% if h.linkable %}{{ h.stable }}{% else %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% endif %}</td>
             <td>{{ h.status }}</td>
         </tr>
         {% endfor %}
@@ -88,8 +88,8 @@
         {% for h in cancelled %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
-            <td>{{ h.stable }}</td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td>{% if h.linkable %}{{ h.stable }}{% else %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -108,8 +108,8 @@
         {% for h in pasture %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
-            <td>{{ h.stable }}</td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td>{% if h.linkable %}{{ h.stable }}{% else %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% endif %}</td>
             <td>{{ h.type }}</td>
         </tr>
         {% endfor %}
@@ -129,8 +129,8 @@
         {% for h in changes %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
-            <td>{{ h.stable }}</td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td>{% if h.linkable %}{{ h.stable }}{% else %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% endif %}</td>
             <td>{{ h.type }}</td>
             <td>{{ h.old }}</td>
             <td>{{ h.new }}</td>
