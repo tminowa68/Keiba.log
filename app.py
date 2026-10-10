@@ -1670,8 +1670,9 @@ def parse_jra_trainer_horses_page(html_text):
 def resolve_trainer_page_status(current, horse):
     """管理馬一覧の内容から、Horsesシートの状態（I列）の新しい値を決める"""
     if horse['early']:
-        # 早期特例登録馬は「早期」のまま（空欄の場合のみ「早期」にする）
-        return current or '早期'
+        # 早期特例登録馬は「早期」にする。競走馬登録画面でJRAのURLから取得すると、ページの放牧マーク
+        # （span.rest）で「放牧」になって登録されるため、「放牧」も「早期」に直す（「入厩」はそのまま）
+        return '早期' if current in ('', '放牧', '早期') else current
     if horse['status'] == '放牧':
         return '放牧' if current in ('入厩', '早期', '') else current
     if horse['status'] == '':
@@ -3214,10 +3215,11 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     Horsesシートに加えて、Sireシート・Damシートに載っている馬（種牡馬・繁殖牝馬として登録されている
     だけの馬）も血縁馬として拾い上げる。SireシートとDamシートから拾った馬にはリンクを付けない。
 
-    戻り値は (table1_rows, table2_rows) のタプル。各要素は以下のいずれか：
-      - {'kind': 'header', 'label': ...}                 見出し行（母／祖母／曾祖母）
-      - {'kind': 'divider'}                               区切り線行
-      - {'kind': 'row', 'relation':.., 'name':.., ...}    馬の行
+    戻り値は (兄弟馬のテーブル一覧, 近親馬のテーブル一覧) のタプル。各テーブルは
+      {'label': '母：〇〇（2015）からの3代子孫', 'rows': [馬の行, ...]}
+    で、近親馬は祖母からの3代子孫と曾祖母からの3代子孫の2つのテーブルに分かれる。
+    馬の行は {'kind': 'row', 'relation':.., 'name':.., ..., 'children': [その馬の仔の行, ...]} で、
+    仔（2代目）・孫（3代目）は親の行の children に入れ子で入る。
     """
     if not dam_full_name:
         return [], []
@@ -3519,29 +3521,15 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     def _insert_with_children(base_rows, child_rows_by_parent):
         """
-        base_rows（本人の世代の行、あらかじめ生年順に並べたもの）を並べ、各行の直後に、
-        その馬を親とする子（あらかじめ生年順、または既にネスト展開済みの行列）があれば
-        二重線を挟んで差し込む。
-        親＋子のまとまりには太枠で囲むための位置情報（group_pos／group_divider）を付与する。
+        base_rows（本人の世代の行、あらかじめ生年順に並べたもの）の各行に、その馬を親とする子
+        （あらかじめ生年順、または既に孫まで入れ子にした行の一覧）を children として持たせる。
         親が表示されていない子は表示しない。
         """
-        remaining = dict(child_rows_by_parent)
         result = []
         for row in base_rows:
-            children = remaining.pop(row['name'], None)
-            if children:
-                row = dict(row)
-                row['group_pos'] = 'top'
-                result.append(row)
-                result.append({'kind': 'divider', 'group_divider': True})
-                last_idx = len(children) - 1
-                for i, ch in enumerate(children):
-                    ch = dict(ch)
-                    ch['group_pos'] = 'bottom' if i == last_idx else 'mid'
-                    result.append(ch)
-            else:
-                result.append(row)
-        # 親が表示されていない子（どの親にも一致しなかった子）は表示しない
+            row = dict(row)
+            row['children'] = child_rows_by_parent.get(row['name'], [])
+            result.append(row)
         return result
 
     def _group_by_parent(rows):
@@ -3576,8 +3564,10 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     nephews_by_sibling = _nest_two_generations(_group_by_parent(nephews), _group_by_parent(grand_nephews))
 
-    table1 = [{'kind': 'header', 'label': f"母：{dam_name}（{dam_birth_year if dam_birth_year else '不明'}）"}]
-    table1.extend(_insert_with_children(siblings_and_self, nephews_by_sibling))
+    def _table(relation, name, birth_year, rows):
+        return {'label': f"{relation}：{name}（{birth_year if birth_year else '不明'}）からの3代子孫", 'rows': rows}
+
+    table1 = [_table('母', dam_name, dam_birth_year, _insert_with_children(siblings_and_self, nephews_by_sibling))]
 
     # --- テーブル2：祖母（見出し） → 伯父叔父叔母・母（仔がいれば直下にいとこ、孫がいればさらに直下にいとこ甥いとこ姪） ---
     table2 = []
@@ -3598,12 +3588,11 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         cousins_by_parent.pop(dam_name, None)
         cousins_by_uncle = _nest_two_generations(cousins_by_parent, _group_by_parent(cousin_nephews))
 
-        table2.append({'kind': 'header',
-                        'label': f"祖母：{granddam_name}（{granddam_birth_year if granddam_birth_year else '不明'}）"})
-        table2.extend(_insert_with_children(tier2, cousins_by_uncle))
+        table2.append(_table('祖母', granddam_name, granddam_birth_year,
+                             _insert_with_children(tier2, cousins_by_uncle)))
 
-        # --- 続けて、曾祖母（見出し） → 大伯父大叔母・祖母（仔がいれば直下に伯従父叔従母、
-        #     孫がいればさらに直下にはとこ）を同じ近親馬テーブルに追加する ---
+        # --- 曾祖母からの3代子孫：大伯父大叔母・祖母（仔がいれば直下に伯従父叔従母、
+        #     孫がいればさらに直下にはとこ）を、近親馬の2つ目のテーブルにする ---
         if ggranddam_name:
             granddam_own = _find_own(granddam_name, granddam_birth_year)
             if granddam_own:
@@ -3623,10 +3612,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
             itoko_oji_by_parent.pop(granddam_name, None)
             itoko_oji_by_great_uncle = _nest_two_generations(itoko_oji_by_parent, _group_by_parent(hatoko))
 
-            table2.append({'kind': 'header',
-                            'label': f"曾祖母：{ggranddam_name}"
-                                     f"（{ggranddam_birth_year if ggranddam_birth_year else '不明'}）"})
-            table2.extend(_insert_with_children(tier3, itoko_oji_by_great_uncle))
+            table2.append(_table('曾祖母', ggranddam_name, ggranddam_birth_year,
+                                 _insert_with_children(tier3, itoko_oji_by_great_uncle)))
 
     return table1, table2
 

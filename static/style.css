@@ -701,15 +701,27 @@ form .select-stables {
     border-radius: 5px;
 }
 /* --- 兄弟馬・近親馬テーブル：divベースのgridレイアウト ---
-   関係列の矢印表示で行をインデントしても、他の列（性別・生年など）の位置が
-   ずれないよう、テーブル構造ではなくグリッドで各列の幅を固定している。 */
+   入れ子の枠や左側の線で行をまとめても、各列（性別・生年など）の位置が
+   ずれないよう、テーブル構造ではなくグリッドで各列の幅を固定している。
+   枠と線は ::before／::after で重ねて描くため、列の位置には影響しない。 */
 .relatives-table {
     display: flex;
     flex-direction: column;
     width: 100%;
     margin-top: 10px;
-    border: 1px solid #ddd;
+    border: 2px solid #555;
     font-size: 0.95em;
+}
+.relatives-table + .relatives-table {
+    margin-top: 20px;
+}
+/* 見出し：「母：〇〇（2015）からの3代子孫」 */
+.relatives-title {
+    padding: 8px 10px;
+    font-weight: bold;
+    background-color: #f5f5f5;
+    color: #333;
+    border-bottom: 1px solid #ddd;
 }
 .relatives-row {
     display: grid;
@@ -731,24 +743,6 @@ form .select-stables {
 .relatives-cell.cell-sire {
     text-align: left;
 }
-.relatives-cell.relatives-full {
-    grid-column: 1 / -1;
-    text-align: left;
-}
-.relatives-row.relatives-header-row .relatives-full {
-    font-weight: bold;
-    background-color: #f5f5f5;
-    color: #333;
-}
-.relatives-row.relatives-divider-row {
-    border-bottom: none;
-}
-.relatives-row.relatives-divider-row .relatives-full {
-    padding: 0;
-    border-top: 2px solid #999;
-    line-height: 0;
-    height: 0;
-}
 .relatives-row.row-muted {
     background-color: #f0f0f0;
     color: #888;
@@ -756,48 +750,41 @@ form .select-stables {
 .relatives-row.row-self {
     background-color: #fff9c4;
 }
-.relatives-row.row-nested .cell-relation {
-    color: #666;
-}
 
-/* 関係列：矢印を左寄せで表示し、その後に関係名を表示する */
+/* 関係列：左寄せ。2代子孫・3代子孫は左側の線の分だけ右にずらす */
 .cell-relation {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 4px;
     text-align: left;
     white-space: nowrap;
 }
-.relation-arrow {
-    color: #666;
-    flex-shrink: 0;
-}
 .cell-relation.relation-depth-1 {
-    padding-left: 14px;
+    padding-left: 30px;
+    color: #555;
 }
 .cell-relation.relation-depth-2 {
-    padding-left: 28px;
+    padding-left: 44px;
+    color: #555;
 }
 
-/* --- 姉妹／叔母とその仔をひとつの家族グループとして太枠で囲む --- */
-.relatives-row.family-group {
-    border-left: 3px solid #333;
-    border-right: 3px solid #333;
+/* --- 同じ親の下の2代子孫・3代子孫のまとまり ---
+   まとまりを ::after の外枠で囲み、外枠の左辺（濃い線）を世代の線にする。
+   2代子孫の行には1本、3代子孫の行には親のまとまりの線と合わせて2本の線が引かれ、
+   同じ親の下の兄弟が線で繋がって見える。 */
+.relatives-group {
+    position: relative;
 }
-.relatives-row.family-group-top {
-    border-top: 3px solid #333;
+.relatives-group::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 1;
+    border: 1px solid #aaa;
+    border-left: 3px solid #555;
+    border-radius: 2px;
 }
-.relatives-row.family-group-bottom {
-    border-bottom: 3px solid #333;
-}
-.relatives-row.family-group-divider {
-    border-left: 3px solid #333;
-    border-right: 3px solid #333;
-}
-.relatives-row.family-group-divider .relatives-full {
-    border-top: 4px double #333;
-}
+.relatives-group-depth-1::after { left: 12px; right: 4px; }
+.relatives-group-depth-2::after { left: 26px; right: 10px; }
 
 /* 編集リンクのデザイン */
 .pedigree-cell .add-parent-link.side-action {
