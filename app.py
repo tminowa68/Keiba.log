@@ -3216,7 +3216,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     だけの馬）も血縁馬として拾い上げる。SireシートとDamシートから拾った馬にはリンクを付けない。
 
     戻り値は (兄弟馬のテーブル一覧, 近親馬のテーブル一覧) のタプル。各テーブルは
-      {'label': '母：〇〇（2015）からの3代子孫', 'rows': [馬の行, ...]}
+      {'label': '母：〇〇（2015）', 'rows': [馬の行, ...]}（画面では見出しの後に「からの3代子孫」を付ける）
     で、近親馬は祖母からの3代子孫と曾祖母からの3代子孫の2つのテーブルに分かれる。
     馬の行は {'kind': 'row', 'relation':.., 'name':.., ..., 'children': [その馬の仔の行, ...]} で、
     仔（2代目）・孫（3代目）は親の行の children に入れ子で入る。
@@ -3565,7 +3565,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     nephews_by_sibling = _nest_two_generations(_group_by_parent(nephews), _group_by_parent(grand_nephews))
 
     def _table(relation, name, birth_year, rows):
-        return {'label': f"{relation}：{name}（{birth_year if birth_year else '不明'}）からの3代子孫", 'rows': rows}
+        # 「からの3代子孫」はスマホで改行できるようテンプレート側で付ける
+        return {'label': f"{relation}：{name}（{birth_year if birth_year else '不明'}）", 'rows': rows}
 
     table1 = [_table('母', dam_name, dam_birth_year, _insert_with_children(siblings_and_self, nephews_by_sibling))]
 
