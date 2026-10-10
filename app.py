@@ -2082,11 +2082,14 @@ def weekly():
 
         horses_data = sh.worksheet("Horses").get_all_values()[1:]
         stable_of = {}
+        has_url_names = set()  # Horsesシートで URL（M列）が入力されている馬
         for r in horses_data:
             name = cell(r, 0)
             if not name:
                 continue
             stable_of[name] = f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7)
+            if cell(r, 12):
+                has_url_names.add(name)
             reg_date = parse_full_date(cell(r, 13))
             if in_week(reg_date):
                 registered.append({'date': reg_date, 'name': name, 'gender': cell(r, 1),
@@ -2119,12 +2122,14 @@ def weekly():
             pass
     except Exception as e:
         flash(f"データの読み込みに失敗しました: {e}")
-        stable_of = {}
+        stable_of, has_url_names = {}, set()
 
     for items in (registered, cancelled, pasture, changes):
         for item in items:
-            # Horsesシートに登録されている馬だけ詳細ページへのリンクを付ける（未登録の馬は厩舎の列にURLボタン）
+            # Horsesシートに登録されている馬だけ詳細ページへのリンクを付ける。厩舎の列には、
+            # 未登録の馬は競走馬の登録、登録済みでURLが無い馬は編集画面へ進む「URL」ボタンを表示する
             item['linkable'] = item['name'] in stable_of
+            item['has_url'] = item['name'] in has_url_names
             item['stable'] = stable_of.get(item['name'], '')
             item['date_label'] = format_date_jp(item['date'], weekday=True)
         items.sort(key=lambda x: (x['date'], x['name']))
