@@ -128,8 +128,9 @@ const allHorsesData = [
 // そのまま渡すと五十音順として不自然な位置（ウより前、または末尾）にきてしまう。
 // 比較用のキーとしてのみ「ヴ」を「ウ」+ 順序調整用の特殊文字に置き換えることで、
 // 「ウ」と「エ」の間に並ぶようにする。
+// 同様に長音「ー」は「ン」の後に並ぶよう、比較用のキーでは「ン」+ 順序調整用の特殊文字に置き換える。
 function kanaSortKey(str) {
-    return (str || '').replace(/ヴ/g, 'ウ\uFFFF');
+    return (str || '').replace(/ヴ/g, 'ウ\uFFFF').replace(/ー/g, 'ン\uFFFF');
 }
 function compareHorseName(a, b) {
     return kanaSortKey(a.name).localeCompare(kanaSortKey(b.name), 'ja');
