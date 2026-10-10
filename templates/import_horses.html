@@ -56,14 +56,15 @@
     <h2>抹消一覧 インポート</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         JRAの「抹消一覧」ページを保存したファイル（.mhtml／.html）をアップロードすると、
-        登録済みの馬の状態を「抹消」にして、抹消シートに記録します（年月日は見出しの抹消日）。<br>
+        登録済みの馬の状態を「抹消」にして、抹消シートに記録します（年月日は見出しの抹消日）。ファイルは複数まとめて選べます。<br>
+        未登録の馬も抹消シートに記録し、週間レポートの抹消馬にリンクなしで表示します。<br>
         あわせて、既に抹消になっているのに抹消シートに名前が無い馬と、Sire・DamシートにJRAのURLがある馬は、リンク先から抹消日を取得して抹消シートに記録します（1回につき50頭まで）。
     </p>
 
     <form method="POST" action="/import_cancel_horses" enctype="multipart/form-data" style="margin-top:20px;">
         <div style="margin-bottom:15px;">
             <label>ファイル：</label><br>
-            <input type="file" name="cancel_file" accept=".mhtml,.mht,.html,.htm" required style="margin-top:5px;">
+            <input type="file" name="cancel_file" accept=".mhtml,.mht,.html,.htm" multiple required style="margin-top:5px;">
         </div>
         <div style="margin-top:20px;">
             <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>

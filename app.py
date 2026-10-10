@@ -1895,8 +1895,8 @@ def import_trainer_horses():
 def parse_jra_cancel_page(html_text):
     """
     JRAの「抹消一覧」ページ（HTML／MHTMLで保存したもの）を解析し、
-    (cancel_date_str, [馬名, ...]) を返す。cancel_date_str は見出し「抹消一覧 2026年10月8日抹消分」の "YYYYMMDD"
-    （見つからなければ空文字）。
+    (cancel_date_str, [(馬名, 調教師名), ...]) を返す。cancel_date_str は見出し「抹消一覧 2026年10月8日抹消分」の
+    "YYYYMMDD"（見つからなければ空文字）。
     """
     soup = BeautifulSoup(html_text, 'html.parser')
     root = soup.select_one('#entry_erasure') or soup
@@ -1908,38 +1908,45 @@ def parse_jra_cancel_page(html_text):
         if m:
             cancel_date_str = format_date8(m.group(1), m.group(2), m.group(3))
 
-    names = []
+    horses = []
     for th in root.select('tbody th[scope="row"]'):
         name = th.get_text(strip=True)
         if name:
-            names.append(name)
-    return cancel_date_str, names
+            trainer_td = th.find_next_sibling('td')
+            horses.append((name, trainer_td.get_text(strip=True) if trainer_td else ''))
+    return cancel_date_str, horses
 
 @app.route('/import_cancel_horses', methods=['POST'])
 @login_required
 def import_cancel_horses():
     """JRAの「抹消一覧」ページ（HTML／MHTML保存）をアップロードして、登録済みの馬の状態を抹消にする"""
-    file = request.files.get('cancel_file')
-    if not file or not file.filename:
+    files = [f for f in request.files.getlist('cancel_file') if f and f.filename]
+    if not files:
         flash('ファイルが選択されていません。')
         return redirect('/import_horses')
 
-    try:
-        html_text = _extract_html_from_upload(file.read())
-        page_error = check_jra_page_kind(html_text, 'cancel')
-        if page_error:
-            flash(page_error)
-            return redirect('/import_horses')
-        cancel_date_str, names = parse_jra_cancel_page(html_text)
-    except Exception as e:
-        flash(f'ファイルの解析に失敗しました: {e}')
-        return redirect('/import_horses')
+    # 複数のファイル（日ごとの抹消一覧）をまとめて取り込む。抹消一覧ではないファイルは飛ばす
+    entries = {}        # 馬名 → (抹消日, 調教師名)
+    file_summaries = []
+    for file in files:
+        try:
+            html_text = _extract_html_from_upload(file.read())
+            page_error = check_jra_page_kind(html_text, 'cancel')
+            if page_error:
+                flash(f"{file.filename}：{page_error}")
+                continue
+            cancel_date_str, horses = parse_jra_cancel_page(html_text)
+        except Exception as e:
+            flash(f'{file.filename}：ファイルの解析に失敗しました: {e}')
+            continue
+        date_str = cancel_date_str or today8()
+        for name, trainer in horses:
+            entries.setdefault(name, (date_str, trainer))
+        file_summaries.append(f"{format_date_jp(date_str)}抹消分 {len(horses)}頭")
 
-    if not names:
+    if not entries:
         flash('抹消馬が見つかりませんでした。ファイルの形式をご確認ください。')
         return redirect('/import_horses')
-
-    date_str = cancel_date_str or today8()
 
     try:
         sh = gc.open(horse_data)
@@ -1948,31 +1955,56 @@ def import_cancel_horses():
 
         from concurrent.futures import ThreadPoolExecutor
 
-        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
-        cancel_sheet_names = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1 and r[1]}
+        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名", "厩舎"])
+        cancel_data = ws_cancel.get_all_values()
+        cancel_sheet_names = {r[1] for r in cancel_data[1:] if len(r) > 1 and r[1]}
+        if cancel_data and (len(cancel_data[0]) < 3 or not cancel_data[0][2]):
+            # C列（厩舎）の見出しが無ければ追加する：未登録の馬も週間レポートで厩舎を表示・絞り込みできるようにするため
+            ws_cancel.update(range_name='C1', values=[['厩舎']])
 
-        cancelled, already = [], []
+        all_stables = get_stables_list()
+
+        def _stable_of_trainer(trainer):
+            """抹消一覧の調教師名から「拠点・厩舎名」を求める（登録済みの厩舎に無ければ調教師名のまま）"""
+            if not trainer:
+                return ''
+            match = find_stable_match(all_stables, '', trainer)
+            return match['display_name'] if match else trainer
+
+        cancelled, already, unregistered = [], [], []
         cancel_rows = []
         status_updates = []  # 状態（I列）の書き込みは途中で止まらないよう最後にまとめて1回で行う
         # 抹消シートに名前が無く、リンク先から抹消日を取得する馬：(馬名, URL, Horsesシートの抹消馬か)
         backfill_targets = []
+        registered_names = set()
         for i, row in enumerate(data[1:], start=2):
             if not row or not row[0]:
                 continue
             name = row[0]
+            registered_names.add(name)
             current = row[8].strip() if len(row) > 8 else ''
-            if name not in names:
+            if name not in entries:
                 if current == '抹消' and name not in cancel_sheet_names:
                     backfill_targets.append((name, row[12].strip() if len(row) > 12 else '', True))
                 continue
+            date_str, trainer = entries[name]
             if name not in cancel_sheet_names:
-                cancel_rows.append([date_str, name])
+                cancel_rows.append([date_str, name, _stable_of_trainer(trainer)])
                 cancel_sheet_names.add(name)
             if current == '抹消':
                 already.append(name)
                 continue
             status_updates.append({'range': f'I{i}', 'values': [['抹消']]})
             cancelled.append(name)
+
+        # 未登録の馬も抹消シートに記録する（週間レポートの抹消馬に、リンクなしで表示する）
+        for name, (date_str, trainer) in entries.items():
+            if name in registered_names:
+                continue
+            unregistered.append(name)
+            if name not in cancel_sheet_names:
+                cancel_rows.append([date_str, name, _stable_of_trainer(trainer)])
+                cancel_sheet_names.add(name)
 
         # Sire・DamシートでI列にJRAのURLがある馬も対象にする（抹消されていなければ何もしない）
         target_names = {t[0] for t in backfill_targets} | cancel_sheet_names
@@ -2013,7 +2045,7 @@ def import_cancel_horses():
                 if err:
                     backfill_failed.append(f"{name}（{err}）")
                 elif cancel_date:
-                    cancel_rows.append([cancel_date, name])
+                    cancel_rows.append([cancel_date, name, ''])
                     backfilled.append(f"{name}（{format_date_jp(cancel_date)}）")
 
         if status_updates:
@@ -2021,13 +2053,15 @@ def import_cancel_horses():
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
-        msg = f"抹消一覧の取り込み完了（{format_date_jp(date_str)}抹消分・{len(names)}頭）：抹消 {len(cancelled)}件"
+        msg = f"抹消一覧の取り込み完了（{'、'.join(file_summaries)}）：抹消 {len(cancelled)}件"
         if already:
             msg += f"／抹消済み {len(already)}件"
-        msg += f"／未登録 {len(names) - len(cancelled) - len(already)}件"
+        msg += f"／未登録 {len(unregistered)}件"
         flash(msg)
         if cancelled:
             flash("抹消（抹消シートに記録）：" + "、".join(cancelled))
+        if unregistered:
+            flash("未登録の馬（抹消シートに記録、週間レポートにリンクなしで表示）：" + "、".join(unregistered))
         if backfilled:
             flash("抹消日を取得して抹消シートに記録：" + "、".join(backfilled))
         if backfill_failed:
@@ -2082,7 +2116,9 @@ def weekly():
                 d = parse_full_date(cell(r, 0))
                 if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
                     cancelled_keys.add((d, cell(r, 1)))
-                    cancelled.append({'date': d, 'name': cell(r, 1), 'type': '抹消', 'old': '', 'new': '抹消'})
+                    # C列（厩舎）は、Horsesシートに未登録の馬の厩舎表示・絞り込みに使う
+                    cancelled.append({'date': d, 'name': cell(r, 1), 'type': '抹消', 'old': '', 'new': '抹消',
+                                      'sheet_stable': cell(r, 2)})
         except gspread.WorksheetNotFound:
             pass
 
@@ -2101,7 +2137,9 @@ def weekly():
 
     for items in (registered, cancelled, pasture, changes):
         for item in items:
-            item['stable'] = stable_of.get(item['name'], '')
+            # Horsesシートに登録されている馬だけ詳細ページへのリンクを付ける
+            item['linkable'] = item['name'] in stable_of
+            item['stable'] = stable_of.get(item['name']) or item.get('sheet_stable', '')
             item['date_label'] = format_date_jp(item['date'], weekday=True)
         items.sort(key=lambda x: (x['date'], x['name']))
 
@@ -2273,7 +2311,7 @@ def record_cancel_date_from_url(sh, horse_name, url):
     try:
         if not horse_name or not is_jra_url(url):
             return None
-        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+        ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名", "厩舎"])
         if any(len(r) > 1 and r[1] == horse_name for r in ws_cancel.get_all_values()[1:]):
             return None
         info = fetch_jra_horse_status(url)
@@ -2381,7 +2419,7 @@ def update_single_horse(row_index):
         # ① 抹消判定
         if info.get('status') == '抹消':
             ws_horses.update(f'I{row_index}', [['抹消']])
-            ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+            ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名", "厩舎"])
             ws_cancel.append_row([info.get('cancel_date', ''), horse_name])
             return jsonify({"status": "success", "result": "抹消", "horse_name": horse_name})
 

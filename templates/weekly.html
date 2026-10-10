@@ -64,7 +64,7 @@
         {% for h in registered %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td>{{ h.gender }}</td>
             <td>{{ h.sire }}</td>
             <td>{{ h.dam }}</td>
@@ -88,7 +88,7 @@
         {% for h in cancelled %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td>{{ h.stable }}</td>
         </tr>
         {% endfor %}
@@ -108,7 +108,7 @@
         {% for h in pasture %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td>{{ h.stable }}</td>
             <td>{{ h.type }}</td>
         </tr>
@@ -129,7 +129,7 @@
         {% for h in changes %}
         <tr>
             <td>{{ h.date_label }}</td>
-            <td><a href="/horse/{{ h.name }}">{{ h.name }}</a></td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td>{{ h.stable }}</td>
             <td>{{ h.type }}</td>
             <td>{{ h.old }}</td>
