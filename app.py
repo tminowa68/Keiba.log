@@ -736,7 +736,7 @@ def parse_equibase_text(text):
             result[key] = value
     return result
 
-def fetch_other_horse_info(p_name, p_type, direct_url=None):
+def fetch_other_horse_info(p_name, p_type, direct_url=None, overseas=False):
     """
     直接URLが指定されていればそのページから、指定がなければJBISサーチで馬名から特定した
     馬のページから、父・母の名前を取得する。
@@ -756,6 +756,11 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None):
     # 馬名（<h1>ココナフレイバー</h1>）と英馬名（<span class="hdg1-search__sub">Cocona Flavor(JPN)</span>）
     heading = detail_soup.select_one('div.hdg1-search')
     if heading:
+        # 馬名の後ろの国名が(JPN)以外なら海外産の馬として扱う
+        for el in heading.select('h1, span.hdg1-search__sub'):
+            m = re.search(r'[（(]\s*([A-Za-z]{2,4})\s*[）)]\s*$', el.get_text(strip=True))
+            if m and m.group(1).upper() != 'JPN':
+                overseas = True
         h1 = heading.select_one('h1')
         sub = heading.select_one('span.hdg1-search__sub')
         h1_name = _strip_country_suffix(h1.get_text(strip=True)) if h1 else ''
@@ -765,14 +770,14 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None):
             if value:
                 result.setdefault('name_en' if is_english_name(value) else 'name', value)
 
-    # 登録する馬の名前が英字で、父・母がカタカナ表記の場合は、父・母のページの
-    # <span class="hdg1-search__sub">（例：Swan River(IRE)）から英字の馬名を取得する
-    english_horse = is_english_name(p_name)
+    # 登録する馬の名前が英字、または産地が海外で、父・母がカタカナ表記の場合は、父・母のページの
+    # <span class="hdg1-search__sub">（例：Danehill(USA)）から英字の馬名を取得する
+    english_horse = is_english_name(p_name) or overseas
 
     def _parent_name(name, url):
         if english_horse:
             # 英字の馬の父・母は英字で揃える（英字表記の父・母はそのまま使う）
-            return _resolve_jbis_sub_name(name, url) if _KATAKANA_NAME_RE.match(name or '') else name
+            return _resolve_jbis_sub_name(name, url) if name and not is_english_name(name) else name
         return _resolve_jbis_display_name(name, url)
 
     sire_info = _extract_jbis_parent(detail_soup, 'data-3__male', ['父', 'Sire'])
@@ -1516,10 +1521,12 @@ def api_fetch_other_horse():
     p_name = request.args.get('p_name', '').strip()
     p_type = request.args.get('p_type', 'Sire').strip()
     direct_url = request.args.get('url', '').strip() or None
+    # 画面で産地に「海外」を選んでいる場合は、父・母を英字で取得する
+    overseas = request.args.get('region', '').strip() == '海外'
     if not p_name and not direct_url:
         return jsonify({"error": "馬名またはURLが取得できませんでした。"}), 400
     try:
-        data = fetch_other_horse_info(p_name, p_type, direct_url=direct_url)
+        data = fetch_other_horse_info(p_name, p_type, direct_url=direct_url, overseas=overseas)
         if not data.get('sire') and not data.get('dam'):
             return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
         return jsonify(data), 200

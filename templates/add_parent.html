@@ -384,12 +384,14 @@ async function fetchFromOther() {
     const pName = document.querySelector('input[name="p_name"]').value;
     const pType = {{ p_type | tojson }};
 
-    let query;
+    // 馬名・産地も送り、英字の馬・海外産の馬は父・母を英字で取得する
+    const region = (document.getElementById('region_select') || {}).value || '';
+    let query = 'p_name=' + encodeURIComponent(pName) + '&p_type=' + encodeURIComponent(pType)
+        + '&region=' + encodeURIComponent(region);
     if (url) {
-        query = 'url=' + encodeURIComponent(url);
+        query += '&url=' + encodeURIComponent(url);
         statusEl.textContent = '取得中...';
     } else {
-        query = 'p_name=' + encodeURIComponent(pName) + '&p_type=' + encodeURIComponent(pType);
         statusEl.textContent = '検索中...';
     }
     statusEl.style.color = '#666';
