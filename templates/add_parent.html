@@ -40,7 +40,7 @@
         <div class="jbis-url-slot"></div>
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>②地方競馬情報サイトのURL：</label><br>
-            <textarea id="nar_url_input" name="nar_url" placeholder="https://www.keiba.go.jp/KeibaWeb/DataRoom/RaceHorseInfo?..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;"></textarea>
+            <textarea id="nar_url_input" name="nar_url" placeholder="https://www.keiba.go.jp/KeibaWeb/DataRoom/RaceHorseInfo?..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.nar_url if data and data.nar_url else '' }}</textarea>
             <button type="button" onclick="fetchFromNar()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
             <span id="nar_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
@@ -72,6 +72,17 @@
             <input type="checkbox" id="force_new_checkbox" name="force_new" value="1">
             同名の馬を登録する
         </label>
+    </div>
+
+    {# 馬名が和名なら英馬名、英字なら和名を入力する（取得ボタンで自動入力される） #}
+    <div style="margin-bottom: 15px;">
+        {% if p_name_is_english %}
+        <label>馬名（和名）：</label>
+        <textarea name="name_ja" id="other_name_input" data-kind="name" placeholder="和名" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 30ch;">{{ data.name_ja if data and data.name_ja else '' }}</textarea>
+        {% else %}
+        <label>英馬名：</label>
+        <textarea name="name_en" id="other_name_input" data-kind="name_en" placeholder="英馬名" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 30ch;">{{ data.name_en if data and data.name_en else '' }}</textarea>
+        {% endif %}
     </div>
 
     <div style="margin-bottom:15px;">
@@ -236,9 +247,18 @@ function findBirthplaceMatch(raw) {
     return null;
 }
 
+// 取得した馬名のうち、登録する馬名と別の表記（和名の馬なら英馬名、英字の馬なら和名）を入力する
+function applyOtherName(data) {
+    const input = document.getElementById('other_name_input');
+    if (!input) return;
+    const value = data[input.dataset.kind];
+    if (value) { input.value = value; autoResizeTextarea(input); }
+}
+
 // 取得した競走馬情報（父・母・馬主名・生産牧場・生年月日・産地）をフォームへ入力する
 // （JRA・地方競馬情報サイトの取得で共通）
 function applyFetchedHorseData(data) {
+    applyOtherName(data);
     const sireInput = document.querySelector('[name="sire"]');
     const damInput = document.querySelector('[name="dam"]');
     const yearInput = document.querySelector('input[name="year"]');
@@ -390,6 +410,7 @@ async function fetchFromOther() {
         if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
+        applyOtherName(data);
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
         statusEl.style.color = 'green';
@@ -420,6 +441,7 @@ async function applyEquibaseText() {
             return;
         }
 
+        applyOtherName(data);
         const ownerInput = document.querySelector('[name="owner"]');
         const breederInput = document.querySelector('[name="breeder"]');
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
@@ -865,7 +887,7 @@ function clearParentForm() {
     const form = document.querySelector('form[action="/add_parent"]');
     if (!form) return;
 
-    ['sire', 'dam', 'year', 'owner', 'breeder'].forEach(function (fieldName) {
+    ['sire', 'dam', 'year', 'owner', 'breeder', 'name_ja', 'name_en'].forEach(function (fieldName) {
         const el = form.querySelector('[name="' + fieldName + '"]');
         if (el) {
             el.value = '';

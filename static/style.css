@@ -1938,3 +1938,23 @@ form .select-stables {
 .parent-url-panel[hidden] {
     display: none;
 }
+
+/* --- 同一馬のまとめ --- */
+.merge-group {
+    margin: 15px 0 25px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+.merge-group-title {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+.merge-table th {
+    white-space: nowrap;
+}
+.merge-table .merge-conflict td,
+.merge-table .merge-conflict th {
+    background: #fff3e0;
+}

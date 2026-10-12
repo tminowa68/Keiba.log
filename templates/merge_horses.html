@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block title %}同一馬のまとめ - keiba.log{% endblock %}
+{% block content %}
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with messages = get_flashed_messages() %}
+        {% for message in messages %}
+        <div style="color: green; padding: 10px; font-size:0.95em; background:#f0f8f0; border-radius:4px; margin-bottom:10px;">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+    <p style="margin-top:0;"><a href="/migrate_names" style="font-size:0.9em;">← 英馬名の移行に戻る</a></p>
+    <h2>同一馬のまとめ（{{ groups|length }}組）</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        同じシートの中で母と生年が同じ馬を、同一馬と思われるものとして表示しています。
+        チェックを入れた組を1行にまとめます。値が異なる項目は、残す値を選んでください（空欄の項目は、入力されている値で埋めます）。
+    </p>
+
+    {% if groups %}
+    <form method="POST" action="/merge_horses">
+        {% for g in groups %}
+        {% set gi = loop.index0 %}
+        <div class="merge-group">
+            <input type="hidden" name="g{{ gi }}_sig" value="{{ g.signature }}">
+            <label class="merge-group-title">
+                <input type="checkbox" name="g{{ gi }}_merge" value="1" checked>
+                {{ g.sheet }}：母 {{ g.dam }}・{{ g.year }}年生
+                （{% for i, r in g.rows %}{{ r[0] or r[1] }}{{ '／' if not loop.last }}{% endfor %}）
+            </label>
+            <table class="merge-table">
+                <thead><tr><th>項目</th>{% for i, r in g.rows %}<th>{{ i }}行目</th>{% endfor %}<th>まとめた後</th></tr></thead>
+                <tbody>
+                {% for col in g.columns if col['values'] %}
+                <tr class="{{ 'merge-conflict' if col.conflict }}">
+                    <th>{{ col.label }}</th>
+                    {% for i, r in g.rows %}<td>{{ r[col.index] if r|length > col.index else '' }}</td>{% endfor %}
+                    <td>
+                        {% if col.conflict %}
+                            {% for v in col['values'] %}
+                            <label style="display:block;"><input type="radio" name="g{{ gi }}_c{{ col.index }}" value="{{ loop.index0 }}" {{ 'checked' if loop.first }}> {{ v }}</label>
+                            {% endfor %}
+                        {% else %}
+                            {{ col['values'][0] }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+        <button type="submit" style="background:#9C27B0; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;"
+                onclick="return confirm('チェックを入れた組を1行にまとめます。よろしいですか？');">チェックした組をまとめる</button>
+    </form>
+    {% else %}
+    <p>同一馬と思われるものはありません。</p>
+    {% endif %}
+</section>
+{% endblock %}

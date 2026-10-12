@@ -14,9 +14,14 @@
 
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>JRAの公式パソコンサイトのURL：</label><br>
-            <textarea id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ horse[12] }}</textarea>
+            <textarea id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ horse[13] }}</textarea>
             <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
             <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
+
+        <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>地方競馬情報サイトのURL：</label><br>
+            <textarea id="nar_url_input" name="nar_url" placeholder="https://www.keiba.go.jp/KeibaWeb/DataRoom/RaceHorseInfo?..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ horse[14] if horse|length > 14 else '' }}</textarea>
         </div>
 
         <div style="margin-bottom:15px;">    
@@ -27,25 +32,30 @@
         </div>
 
         <div style="margin-bottom:15px;">
+            <label>英馬名：</label>
+            <textarea name="name_en" placeholder="英馬名" rows="1" class="auto-grow-textarea" style="width: 30ch; margin-top:5px;">{{ horse[1] if horse|length > 1 and horse[1] != horse[0] else '' }}</textarea>
+        </div>
+
+        <div style="margin-bottom:15px;">
             <label>血統：</label><br>
-            <textarea name="sire" placeholder="父" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;">{{ horse[3] if horse|length > 3 else '' }}</textarea>
+            <textarea name="sire" placeholder="父" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;">{{ horse[4] if horse|length > 4 else '' }}</textarea>
             ×
-            <textarea name="dam" placeholder="母" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;">{{ horse[4] if horse|length > 4 else '' }}</textarea>
+            <textarea name="dam" placeholder="母" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;">{{ horse[5] if horse|length > 5 else '' }}</textarea>
         </div>
 
         <div style="margin-bottom: 15px;">
             <label>性別：</label>
             <select name="gender" id="gender_select" onchange="updateGenderColor(this)" required>
-                <option value="牡" {% if horse[1] == '牡' %}selected{% endif %}>牡</option>
-                <option value="牝" {% if horse[1] == '牝' %}selected{% endif %}>牝</option>
-                <option value="せん" {% if horse[1] == 'せん' %}selected{% endif %}>せん</option>
+                <option value="牡" {% if horse[2] == '牡' %}selected{% endif %}>牡</option>
+                <option value="牝" {% if horse[2] == '牝' %}selected{% endif %}>牝</option>
+                <option value="せん" {% if horse[2] == 'せん' %}selected{% endif %}>せん</option>
             </select>
         </div>
 
         <div style="margin-bottom:15px;">
             <label>生年月日：</label>
                 {# スプレッドシートからは "20220315"（旧形式は "2022/3/15" や "2022-03-15"）の文字列で届く #}
-                {% set birth_parts = split_date(horse[2]) or [] %}
+                {% set birth_parts = split_date(horse[3]) or [] %}
                 {% set birth_year = birth_parts[0] if birth_parts and birth_parts[0] else '' %}
                 {% set birth_month = birth_parts[1] if birth_parts and birth_parts[1] else '' %}
                 {% set birth_day = birth_parts[2] if birth_parts and birth_parts[2] else '' %}
@@ -64,7 +74,7 @@
 
         <div style="margin-bottom:15px;">
             <label>馬主名：</label>
-            <textarea name="owner" placeholder="馬主名" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;">{{ horse[5] if horse|length > 5 else '' }}</textarea>
+            <textarea name="owner" placeholder="馬主名" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;">{{ horse[6] if horse|length > 6 else '' }}</textarea>
         </div>
             
         <div class="select-stables">
@@ -94,28 +104,28 @@
             </select>
             {# 現在登録されている厩舎値（ドロップダウン構築後に選択復元するため）#}
             <script>
-                const currentStableValue = "{{ (horse[6] ~ '・' ~ horse[7]) if horse|length > 7 and horse[6] and horse[7] else '' }}";
+                const currentStableValue = "{{ (horse[7] ~ '・' ~ horse[8]) if horse|length > 8 and horse[7] and horse[8] else '' }}";
             </script>
 
             <input type="hidden" name="area" id="hidden_area">
             <input type="hidden" name="stable_name" id="hidden_stable_name">
-            <input type="hidden" name="status" id="hidden_status" value="{{ horse[8] if horse|length > 8 else '' }}">
+            <input type="hidden" name="status" id="hidden_status" value="{{ horse[9] if horse|length > 9 else '' }}">
         </div>
 
         <div style="margin-top: 15px;">
             <p class="m-0"><label>産地：</label></p>
-            <p class="m-0"><select name="birthplace_region" id="region_select" data-initial="{{ horse[9] if horse|length > 9 else '' }}" style="padding:6px;">
+            <p class="m-0"><select name="birthplace_region" id="region_select" data-initial="{{ horse[10] if horse|length > 10 else '' }}" style="padding:6px;">
             </select></p>
-            <p class="m-0"><select name="birthplace_detail" id="detail_select" data-initial="{{ horse[10] if horse|length > 10 else '' }}" style="padding:6px; display: none;">
+            <p class="m-0"><select name="birthplace_detail" id="detail_select" data-initial="{{ horse[11] if horse|length > 11 else '' }}" style="padding:6px; display: none;">
             </select></p>
         </div>
 
         <div style="margin-bottom:15px; margin-top: 15px;">
             <label>生産牧場：</label>
-            <textarea name="breeder" placeholder="生産牧場" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;">{{ horse[11] if horse|length > 11 else '' }}</textarea>
+            <textarea name="breeder" placeholder="生産牧場" rows="1" class="auto-grow-textarea" style="width: 100%; max-width: 600px; margin-top:5px;">{{ horse[12] if horse|length > 12 else '' }}</textarea>
         </div>
 
-        {% set reg_parts = split_date(horse[13]) if horse|length > 13 and horse[13] else None %}
+        {% set reg_parts = split_date(horse[15]) if horse|length > 15 and horse[15] else None %}
         <div style="margin-bottom:15px;">
             <label>競走馬登録：</label>
             <input type="number" name="reg_year" value="{{ reg_parts[0] if reg_parts else '' }}" placeholder="年" style="width:70px; padding:8px;">年
@@ -433,6 +443,8 @@ async function fetchFromJra() {
         const stableSelect = document.getElementById('reg_stable_select');
 
         if (data.name && nameInput) { nameInput.value = data.name; autoResizeTextarea(nameInput); }
+        const nameEnInput = document.querySelector('[name="name_en"]');
+        if (data.name_en && nameEnInput) { nameEnInput.value = data.name_en; autoResizeTextarea(nameEnInput); }
         if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
@@ -914,7 +926,9 @@ function getFormSnapshot() {
     const form = document.querySelector('form');
     return {
         jra_url: (document.getElementById('jra_url_input') || {}).value || '',
+        nar_url: (document.getElementById('nar_url_input') || {}).value || '',
         name: (form.querySelector('[name="name"]') || {}).value || '',
+        name_en: (form.querySelector('[name="name_en"]') || {}).value || '',
         sire: (form.querySelector('[name="sire"]') || {}).value || '',
         dam: (form.querySelector('[name="dam"]') || {}).value || '',
         gender: (document.getElementById('gender_select') || {}).value || '',
@@ -946,7 +960,9 @@ function buildConfirmChanges(initial, current) {
     }
 
     addIfChanged('JRAのURL', initial.jra_url, current.jra_url);
+    addIfChanged('NARのURL', initial.nar_url, current.nar_url);
     addIfChanged('馬名', initial.name, current.name);
+    addIfChanged('英馬名', initial.name_en, current.name_en);
     addIfChanged('父', initial.sire, current.sire);
     addIfChanged('母', initial.dam, current.dam);
     addIfChanged('性別', initial.gender, current.gender);
