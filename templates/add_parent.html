@@ -30,7 +30,7 @@
 
     <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
         <label>その他のURL：</label><br>
-        <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
+        <textarea id="other_url_input" name="other_url" placeholder="JBIS（https://www.jbis.or.jp/horse/...）または equibase（https://www.equibase.com/profiles/...）のURL" rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
         <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
         <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
     </div>
@@ -278,6 +278,49 @@ async function fetchFromOther() {
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
 
+        // equibase：生年月日・産地（海外）・地域・馬主名・生産牧場
+        const ownerInput = document.querySelector('[name="owner"]');
+        const breederInput = document.querySelector('[name="breeder"]');
+        if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
+        if (data.breeder && breederInput) { breederInput.value = data.breeder; autoResizeTextarea(breederInput); }
+
+        const yearInput = document.querySelector('input[name="year"]');
+        const monthSelect = document.getElementById('parent_month');
+        const daySelect = document.querySelector('select[name="day"]');
+        if (data.birth_year && yearInput) {
+            yearInput.value = data.birth_year;
+            yearInput.dispatchEvent(new Event('input'));
+        }
+        // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする
+        if (data.birthplace_region) {
+            const regionSelect = document.getElementById('region_select');
+            const detailSelect = document.getElementById('detail_select');
+            if (regionSelect && detailSelect) {
+                setSelectValueRobust(regionSelect, data.birthplace_region);
+                regionSelect.dispatchEvent(new Event('change'));
+                if (data.birthplace_detail) {
+                    setSelectValueRobust(detailSelect, data.birthplace_detail);
+                    detailSelect.dispatchEvent(new Event('change'));
+                }
+            }
+        }
+        if (data.birth_month && monthSelect) {
+            setSelectValueRobust(monthSelect, data.birth_month);
+            monthSelect.dispatchEvent(new Event('change'));
+        }
+        if (data.birth_day && daySelect) {
+            setSelectValueRobust(daySelect, data.birth_day);
+            daySelect.dispatchEvent(new Event('change'));
+        }
+
+        if (data.birthplace_region === '海外' && !data.birthplace_detail) {
+            // 「(KY)」などの略称が無い、または地域変換表シートに無い場合
+            statusEl.textContent = data.origin_code
+                ? `情報を取得しました。産地の略称「${data.origin_code}」が地域変換表シートに無いため、地域は手で選んでください。`
+                : '情報を取得しました。馬名に産地の略称が無いため、地域は手で選んでください。';
+            statusEl.style.color = '#e65100';
+            return;
+        }
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
         statusEl.style.color = 'green';
     } catch (e) {
