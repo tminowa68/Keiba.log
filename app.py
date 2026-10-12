@@ -1325,6 +1325,92 @@ def api_fetch_jra_horse():
     except Exception as e:
         return jsonify({"error": f"解析中にエラーが発生しました: {e}"}), 500
 
+# --- 地方競馬情報サイト（keiba.go.jp）の競走馬情報ページ ---
+NAR_ALLOWED_HOSTS = ("keiba.go.jp",)
+
+def normalize_nar_company_name(text):
+    """馬主名・生産牧場名の表記を揃える：（）→()、株式会社→(株)、有限会社→(有)、
+    ）の後のスペースは除去し、他の全角スペースは半角スペースにする"""
+    text = (text or '').replace('（', '(').replace('）', ')')
+    text = text.replace('株式会社', '(株)').replace('有限会社', '(有)')
+    text = re.sub(r'\)[\s\u3000]+', ')', text)
+    text = text.replace('\u3000', ' ')
+    return re.sub(r' {2,}', ' ', text).strip()
+
+def normalize_nar_owner_name(text):
+    """馬主名：全角スペースが2個以上続くところを半角スペース1個にし、他の全角スペースは除去する
+    （例：「尾　田　　信　夫」→「尾田 信夫」）。そのあと生産牧場と同じ表記の統一を行う"""
+    text = re.sub(r'\u3000{2,}', ' ', (text or '').strip())
+    text = text.replace('\u3000', '')
+    return normalize_nar_company_name(text)
+
+def parse_nar_horse_page(soup):
+    """地方競馬情報サイトの競走馬情報ページから、父・母・生年月日・馬主名・産地・生産牧場を取り出す"""
+    def clean(el):
+        return el.get_text(' ', strip=True).strip() if el else ''
+
+    def raw_text(el):
+        # 馬主名の全角スペースはそのまま残す（前後の空白・改行だけ除く）
+        return el.get_text('', strip=False).strip(' \t\r\n') if el else ''
+
+    def value_after_label(label):
+        for td in soup.find_all('td'):
+            if td.get_text(strip=True) == label:
+                return td.find_next_sibling('td')
+        return None
+
+    result = {}
+    sire_td = soup.find('td', class_='fathername')
+    if clean(sire_td):
+        result['sire'] = clean(sire_td)
+    dam_td = value_after_label('母')
+    if clean(dam_td):
+        result['dam'] = clean(dam_td)
+
+    m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', clean(value_after_label('生年月日')))
+    if m:
+        result['birth_year'], result['birth_month'], result['birth_day'] = (
+            str(int(m.group(1))), str(int(m.group(2))), str(int(m.group(3))))
+
+    owner = normalize_nar_owner_name(raw_text(value_after_label('馬主')))
+    if owner:
+        result['owner'] = owner
+    birthplace = clean(value_after_label('産地')).replace(' ', '')
+    if birthplace:
+        result['birthplace'] = birthplace
+    breeder = normalize_nar_company_name(raw_text(value_after_label('生産牧場')))
+    if breeder:
+        result['breeder'] = breeder
+    return result
+
+def fetch_nar_horse_info(url):
+    from urllib.parse import urlparse
+    parsed = urlparse(url or '')
+    if parsed.scheme not in ("http", "https") or not any(
+            parsed.netloc == h or parsed.netloc.endswith('.' + h) for h in NAR_ALLOWED_HOSTS):
+        raise ValueError("地方競馬情報サイト（keiba.go.jp）のURLを入力してください。")
+    resp = requests.get(url, headers=_JBIS_HEADERS, timeout=25)
+    resp.raise_for_status()
+    return parse_nar_horse_page(BeautifulSoup(resp.content, 'html.parser'))
+
+@app.route('/api/fetch_nar_horse')
+@login_required
+def api_fetch_nar_horse():
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({"error": "URLを入力してください。"}), 400
+    try:
+        data = fetch_nar_horse_info(url)
+        if not data:
+            return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
+        return jsonify(data), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"ページの取得に失敗しました: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"解析中にエラーが発生しました: {e}"}), 500
+
 @app.route('/api/fetch_other_horse')
 @login_required
 def api_fetch_other_horse():
