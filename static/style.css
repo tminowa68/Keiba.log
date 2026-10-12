@@ -1910,3 +1910,31 @@ form .select-stables {
     font-size: 0.85em;
     color: #666;
 }
+
+/* --- 親馬の登録：URL入力欄の「JRA」「その他」タブ --- */
+.parent-url-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 2px solid #2196F3;
+}
+.parent-url-tab {
+    padding: 8px 20px;
+    background: #e0e0e0;
+    color: #333;
+    border: none;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+.parent-url-tab.active {
+    background: #2196F3;
+    color: white;
+    font-weight: bold;
+}
+.parent-url-panel {
+    padding-top: 10px;
+    margin-bottom: 5px;
+}
+.parent-url-panel[hidden] {
+    display: none;
+}

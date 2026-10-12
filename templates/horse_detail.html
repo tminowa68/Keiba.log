@@ -149,7 +149,8 @@
             {% if session.get('login') and node.needs_update %}
                 <div class="horse-edit">
                     {% set parent_type = 'Sire' if node_id % 2 == 0 else 'Dam' %}
-                    <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}" class="add-parent-link">[ 編集 ]</a>
+                    {% set child_of_node = pedigree.get(node_id // 2) %}
+                    <a href="/add_parent?p_name={{ node.name }}&p_type={{ parent_type }}&origin={{ horse[0] }}&child={{ (child_of_node.full_db_name if child_of_node else horse[0])|urlencode }}" class="add-parent-link">[ 編集 ]</a>
                 </div>
             {% endif %}
             

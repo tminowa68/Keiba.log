@@ -21,26 +21,34 @@
         <input type="hidden" name="p_type" value="{{ p_type }}">
     </div>
 
-    <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
-        <label>JRAの公式パソコンサイトのURL：</label><br>
-        <textarea id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." autofocus rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.URL }}</textarea>
-        <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
-        <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+    {# URLの入力欄はタブで切り替える（最初に表示するタブは仔の産地・生年・抹消日から決める） #}
+    <div class="parent-url-tabs">
+        <button type="button" class="parent-url-tab{{ ' active' if initial_tab == 'jra' }}" data-tab="jra" onclick="showParentUrlTab('jra')">JRA</button>
+        <button type="button" class="parent-url-tab{{ ' active' if initial_tab != 'jra' }}" data-tab="other" onclick="showParentUrlTab('other')">その他</button>
     </div>
-
-    <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
-        <label>その他のURL：</label><br>
-        <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
-        <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
-        <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+    <div class="parent-url-panel" id="parent_url_panel_jra"{{ ' hidden' if initial_tab != 'jra' }}>
+        <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>JRAの公式パソコンサイトのURL：</label><br>
+            <textarea id="jra_url_input" name="jra_url" placeholder="https://www.jra.go.jp/JRADB/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.URL }}</textarea>
+            <button type="button" onclick="fetchFromJra()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+            <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
     </div>
+    <div class="parent-url-panel" id="parent_url_panel_other"{{ ' hidden' if initial_tab == 'jra' }}>
+        <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>①JBISのURL：</label><br>
+            <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
+            <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+            <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
 
-    <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
-        <label>equibaseの文章：</label><br>
-        <textarea id="equibase_text_input" rows="6" style="width: 100%; margin-top:5px; box-sizing:border-box;"
-            placeholder="equibaseの競走馬ページの文章をコピーして貼り付けてください（例）&#10;Jealous Wildcat (MD)&#10;TB, B, M, foaled March 26, 1998&#10;Owner: Sally Thomas&#10;Breeder: Howard M. Bender &amp; Sondra Bender"></textarea>
-        <button type="button" onclick="applyEquibaseText()" style="padding:8px 14px; margin-top:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">反映</button>
-        <span id="equibase_status" style="margin-left:10px; font-size:0.9em;"></span>
+        <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>②equibaseの文章：</label><br>
+            <textarea id="equibase_text_input" rows="6" style="width: 100%; margin-top:5px; box-sizing:border-box;"
+                placeholder="equibaseの競走馬ページの文章をコピーして貼り付けてください（例）&#10;Jealous Wildcat (MD)&#10;TB, B, M, foaled March 26, 1998&#10;Owner: Sally Thomas&#10;Breeder: Howard M. Bender &amp; Sondra Bender"></textarea>
+            <button type="button" onclick="applyEquibaseText()" style="padding:8px 14px; margin-top:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">反映</button>
+            <span id="equibase_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
     </div>
 
     <div style="margin-bottom: 15px;">
@@ -109,6 +117,16 @@
 </section>
 
 <script>
+// 「JRA」「その他」のタブを切り替え、表示したタブの最初の入力欄にフォーカスする
+function showParentUrlTab(tab) {
+    document.querySelectorAll('.parent-url-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('parent_url_panel_jra').hidden = tab !== 'jra';
+    document.getElementById('parent_url_panel_other').hidden = tab === 'jra';
+    const first = document.querySelector('#parent_url_panel_' + tab + ' textarea');
+    if (first) first.focus();
+}
+document.addEventListener('DOMContentLoaded', () => showParentUrlTab({{ (initial_tab or 'other') | tojson }}));
+
 // 【JRAページ取得】入力されたJRAのURLから競走馬情報を取得し、フォームへ自動入力する
 function setSelectValueRobust(selectEl, value) {
     if (!selectEl || value === undefined || value === null || value === '') return;
