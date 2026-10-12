@@ -30,9 +30,17 @@
 
     <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
         <label>その他のURL：</label><br>
-        <textarea id="other_url_input" name="other_url" placeholder="JBIS（https://www.jbis.or.jp/horse/...）または equibase（https://www.equibase.com/profiles/...）のURL" rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
+        <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
         <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
         <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+    </div>
+
+    <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+        <label>equibaseの文章：</label><br>
+        <textarea id="equibase_text_input" rows="6" style="width: 100%; margin-top:5px; box-sizing:border-box;"
+            placeholder="equibaseの競走馬ページの文章をコピーして貼り付けてください（例）&#10;Jealous Wildcat (MD)&#10;TB, B, M, foaled March 26, 1998&#10;Owner: Sally Thomas&#10;Breeder: Howard M. Bender &amp; Sondra Bender"></textarea>
+        <button type="button" onclick="applyEquibaseText()" style="padding:8px 14px; margin-top:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">反映</button>
+        <span id="equibase_status" style="margin-left:10px; font-size:0.9em;"></span>
     </div>
 
     <div style="margin-bottom: 15px;">
@@ -278,7 +286,35 @@ async function fetchFromOther() {
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
 
-        // equibase：生年月日・産地（海外）・地域・馬主名・生産牧場
+        statusEl.textContent = '情報を取得しました。内容を確認してください。';
+        statusEl.style.color = 'green';
+    } catch (e) {
+        statusEl.textContent = '通信エラーが発生しました。';
+        statusEl.style.color = 'red';
+    }
+}
+
+// 【equibaseの文章の反映】貼り付けた文章から、地域・生年月日・馬主名・生産牧場を読み取って入力する
+// （略称→地域名の変換にスプレッドシートの「地域変換表」シートを使うため、読み取りはサーバー側で行う）
+async function applyEquibaseText() {
+    const text = document.getElementById('equibase_text_input').value;
+    const statusEl = document.getElementById('equibase_status');
+    statusEl.textContent = '読み取り中...';
+    statusEl.style.color = '#666';
+
+    try {
+        const res = await fetch('/api/parse_equibase_text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            statusEl.textContent = data.error || '読み取りに失敗しました。';
+            statusEl.style.color = 'red';
+            return;
+        }
+
         const ownerInput = document.querySelector('[name="owner"]');
         const breederInput = document.querySelector('[name="breeder"]');
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
@@ -292,16 +328,14 @@ async function fetchFromOther() {
             yearInput.dispatchEvent(new Event('input'));
         }
         // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする
-        if (data.birthplace_region) {
-            const regionSelect = document.getElementById('region_select');
-            const detailSelect = document.getElementById('detail_select');
-            if (regionSelect && detailSelect) {
-                setSelectValueRobust(regionSelect, data.birthplace_region);
-                regionSelect.dispatchEvent(new Event('change'));
-                if (data.birthplace_detail) {
-                    setSelectValueRobust(detailSelect, data.birthplace_detail);
-                    detailSelect.dispatchEvent(new Event('change'));
-                }
+        const regionSelect = document.getElementById('region_select');
+        const detailSelect = document.getElementById('detail_select');
+        if (data.birthplace_region && regionSelect && detailSelect) {
+            setSelectValueRobust(regionSelect, data.birthplace_region);
+            regionSelect.dispatchEvent(new Event('change'));
+            if (data.birthplace_detail) {
+                setSelectValueRobust(detailSelect, data.birthplace_detail);
+                detailSelect.dispatchEvent(new Event('change'));
             }
         }
         if (data.birth_month && monthSelect) {
@@ -313,15 +347,15 @@ async function fetchFromOther() {
             daySelect.dispatchEvent(new Event('change'));
         }
 
-        if (data.birthplace_region === '海外' && !data.birthplace_detail) {
+        if (!data.birthplace_detail) {
             // 「(KY)」などの略称が無い、または地域変換表シートに無い場合
             statusEl.textContent = data.origin_code
-                ? `情報を取得しました。産地の略称「${data.origin_code}」が地域変換表シートに無いため、地域は手で選んでください。`
-                : '情報を取得しました。馬名に産地の略称が無いため、地域は手で選んでください。';
+                ? `反映しました。略称「${data.origin_code}」が地域変換表シートに無いため、地域は手で選んでください。`
+                : '反映しました。馬名の後ろに産地の略称が無いため、地域は手で選んでください。';
             statusEl.style.color = '#e65100';
             return;
         }
-        statusEl.textContent = '情報を取得しました。内容を確認してください。';
+        statusEl.textContent = '反映しました。内容を確認してください。';
         statusEl.style.color = 'green';
     } catch (e) {
         statusEl.textContent = '通信エラーが発生しました。';
