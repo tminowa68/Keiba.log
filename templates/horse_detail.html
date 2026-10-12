@@ -17,11 +17,11 @@
                 <td>
                     <p class="m-0">
                         <strong>性別・馬齢：</strong> 
-                        <span class="{% if horse[1] == '牝' %}female-text{% endif %}">{{ horse[1] }}</span>・
-                        {% if horse[2] is string %}
-                            {{ current_year - horse[2][:4]|int }}歳
+                        <span class="{% if horse[2] == '牝' %}female-text{% endif %}">{{ horse[2] }}</span>・
+                        {% if horse[3] is string %}
+                            {{ current_year - horse[3][:4]|int }}歳
                         {% else %}
-                            {{ current_year - horse[2].year }}歳
+                            {{ current_year - horse[3].year }}歳
                         {% endif %}
                     </p>
                 </td>
@@ -30,8 +30,8 @@
                     <div class="stable-info-container m-0">
                         <p class="m-0"><strong>厩舎：</strong>
                             <span id="current-stable-display">
-                                {% if horse|length > 7 and horse[6] and horse[7] %}
-                                    {{ horse[6] }}・{{ horse[7] }}
+                                {% if horse|length > 8 and horse[7] and horse[8] %}
+                                    {{ horse[7] }}・{{ horse[8] }}
                                 {% endif %}
                             </span>
                         </p>
@@ -51,7 +51,7 @@
                 <td>
                     <p class="m-0">
                     <strong>生年月日：</strong>
-                    {{ horse[2]|jpdate }}
+                    {{ horse[3]|jpdate }}
                     </p>
                 </td>
                 <!-- 2列目: 馬主名 -->
@@ -59,8 +59,8 @@
                     <div class="owner-info-container m-0">
                         <p class="m-0"><strong>馬主名：</strong>
                             <span id="current-owner-display">
-                                {% if horse|length > 5 and horse[5] %}
-                                    {{ horse[5] }}
+                                {% if horse|length > 6 and horse[6] %}
+                                    {{ horse[6] }}
                                 {% else %}
                                     {% if session.get('login') %}
                                         <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
@@ -68,7 +68,7 @@
                                 {% endif %}
                             </span>
                         </p>
-                        {% if session.get('login') and horse[5] %}
+                        {% if session.get('login') and horse[6] %}
                         <div class="owner-actions">
                             <a href="javascript:void(0)" onclick="openOwnerModal()" class="action-link">[ 変更 ]</a>
                         </div>
@@ -80,12 +80,12 @@
                 <!-- 1列目: 産地 -->
                 <td>
                     <p class="m-0"><strong>産地：</strong> 
-                        {% if (horse|length > 9 and horse[9]) or (horse|length > 10 and horse[10]) %}
-                            {% if horse|length > 9 and horse[9] %}
-                                {{ horse[9] }}
-                            {% endif %}
+                        {% if (horse|length > 10 and horse[10]) or (horse|length > 11 and horse[11]) %}
                             {% if horse|length > 10 and horse[10] %}
-                                ・{{ horse[10] }}
+                                {{ horse[10] }}
+                            {% endif %}
+                            {% if horse|length > 11 and horse[11] %}
+                                ・{{ horse[11] }}
                             {% endif %}
                         {% else %}
                             {% if session.get('login') %}
@@ -97,8 +97,8 @@
                 <!-- 2列目: 生産牧場 -->
                 <td>
                     <p class="m-0"><strong>生産牧場：</strong> 
-                        {% if horse|length > 11 and horse[11] %}
-                            {{ horse[11] }}
+                        {% if horse|length > 12 and horse[12] %}
+                            {{ horse[12] }}
                         {% else %}
                             {% if session.get('login') %}
                                 <a href="/edit_horse/{{ horse[0] }}" class="action-link missing-info-link">[ 登録 ]</a>
@@ -462,7 +462,7 @@
             
             <div class="form-group swap-group">
                 <label>旧馬主名</label>
-                <input type="text" id="owner_old_val" name="old_val" value="{% if horse|length > 5 and horse[5] %}{{ horse[5] }}{% endif %}" class="full-width-input" required>
+                <input type="text" id="owner_old_val" name="old_val" value="{% if horse|length > 6 and horse[6] %}{{ horse[6] }}{% endif %}" class="full-width-input" required>
                 <div class="swap-icon" onclick="swapValues('owner_old_val', 'owner_new_val')" aria-label="入れ替え">⇅</div>
                 <label>新馬主名</label>
                 <input type="text" id="owner_new_val" name="new_val" class="full-width-input" required>
@@ -503,7 +503,7 @@
 
             <div class="form-group swap-group">
                 <label>旧厩舎</label>
-                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 7 and horse[6] and horse[7] %}{{ horse[6] }}・{{ horse[7] }}{% endif %}" class="full-width-input readonly-input" readonly autocomplete="off" tabindex="-1">
+                <input type="text" id="transfer_old_val" name="old_val" value="{% if horse|length > 8 and horse[7] and horse[8] %}{{ horse[7] }}・{{ horse[8] }}{% endif %}" class="full-width-input readonly-input" readonly autocomplete="off" tabindex="-1">
                 <div class="swap-icon" onclick="swapValues('transfer_old_val', 'transfer_new_val')" aria-label="入れ替え">⇅</div>
                 <label>新厩舎</label>
                 <input type="text" id="transfer_new_val" name="new_val" class="full-width-input" autocomplete="off" required>
@@ -669,7 +669,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    const horseBirthYear = {{ horse[2].year }};
+    const horseBirthYear = {{ horse[3].year }};
     const currentYear = {{ current_year }};
     const currentMonth = new Date().getMonth() + 1;
     const horseAge = currentYear - horseBirthYear;

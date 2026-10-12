@@ -21,9 +21,11 @@
         <input type="hidden" name="p_type" value="{{ p_type }}">
     </div>
 
-    {# URLの入力欄はタブで切り替える（最初に表示するタブは仔の産地・生年・抹消日から決める） #}
+    {# URLの入力欄はタブで切り替える（最初に表示するタブは仔の産地・生年・抹消日から決める）。
+       ①JBISのURLは「地方」「その他」の両方で使うため、表示中のタブに入力欄を移動する #}
     <div class="parent-url-tabs">
         <button type="button" class="parent-url-tab{{ ' active' if initial_tab == 'jra' }}" data-tab="jra" onclick="showParentUrlTab('jra')">JRA</button>
+        <button type="button" class="parent-url-tab" data-tab="nar" onclick="showParentUrlTab('nar')">地方</button>
         <button type="button" class="parent-url-tab{{ ' active' if initial_tab != 'jra' }}" data-tab="other" onclick="showParentUrlTab('other')">その他</button>
     </div>
     <div class="parent-url-panel" id="parent_url_panel_jra"{{ ' hidden' if initial_tab != 'jra' }}>
@@ -34,17 +36,28 @@
             <span id="jra_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
     </div>
-    <div class="parent-url-panel" id="parent_url_panel_other"{{ ' hidden' if initial_tab == 'jra' }}>
+    <div class="parent-url-panel" id="parent_url_panel_nar" hidden>
+        <div class="jbis-url-slot"></div>
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
+            <label>②地方競馬情報サイトのURL：</label><br>
+            <textarea id="nar_url_input" name="nar_url" placeholder="https://www.keiba.go.jp/KeibaWeb/DataRoom/RaceHorseInfo?..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.nar_url if data and data.nar_url else '' }}</textarea>
+            <button type="button" onclick="fetchFromNar()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+            <span id="nar_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+        </div>
+    </div>
+    <div class="parent-url-panel" id="parent_url_panel_other"{{ ' hidden' if initial_tab == 'jra' }}>
+        <div class="jbis-url-slot">
+        <div id="jbis_url_block" style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>①JBISのURL：</label><br>
             <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
             <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
             <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
+        </div>
 
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>②equibaseの文章：</label><br>
-            <textarea id="equibase_text_input" rows="6" style="width: 100%; margin-top:5px; box-sizing:border-box;"
+            <textarea id="equibase_text_input" rows="9" style="width: 100%; margin-top:5px; box-sizing:border-box; resize:none; overflow-y:hidden;"
                 placeholder="equibaseの競走馬ページの文章をコピーして貼り付けてください（例）&#10;Jealous Wildcat (MD)&#10;TB, B, M, foaled March 26, 1998&#10;Owner: Sally Thomas&#10;Breeder: Howard M. Bender &amp; Sondra Bender"></textarea>
             <button type="button" onclick="applyEquibaseText()" style="padding:8px 14px; margin-top:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">反映</button>
             <span id="equibase_status" style="margin-left:10px; font-size:0.9em;"></span>
@@ -59,6 +72,17 @@
             <input type="checkbox" id="force_new_checkbox" name="force_new" value="1">
             同名の馬を登録する
         </label>
+    </div>
+
+    {# 馬名が和名なら英馬名、英字なら和名を入力する（取得ボタンで自動入力される） #}
+    <div style="margin-bottom: 15px;">
+        {% if p_name_is_english %}
+        <label>馬名（和名）：</label>
+        <textarea name="name_ja" id="other_name_input" data-kind="name" placeholder="和名" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 30ch;">{{ data.name_ja if data and data.name_ja else '' }}</textarea>
+        {% else %}
+        <label>英馬名：</label>
+        <textarea name="name_en" id="other_name_input" data-kind="name_en" placeholder="英馬名" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 30ch;">{{ data.name_en if data and data.name_en else '' }}</textarea>
+        {% endif %}
     </div>
 
     <div style="margin-bottom:15px;">
@@ -117,15 +141,30 @@
 </section>
 
 <script>
-// 「JRA」「その他」のタブを切り替え、表示したタブの最初の入力欄にフォーカスする
+// 「JRA」「地方」「その他」のタブを切り替え、表示したタブの最初の入力欄にフォーカスする
+// （①JBISのURLの入力欄は「地方」「その他」で共通のため、表示するタブへ移動する）
 function showParentUrlTab(tab) {
     document.querySelectorAll('.parent-url-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    document.getElementById('parent_url_panel_jra').hidden = tab !== 'jra';
-    document.getElementById('parent_url_panel_other').hidden = tab === 'jra';
+    ['jra', 'nar', 'other'].forEach(t => {
+        document.getElementById('parent_url_panel_' + t).hidden = t !== tab;
+    });
+    const slot = document.querySelector('#parent_url_panel_' + tab + ' .jbis-url-slot');
+    if (slot) slot.appendChild(document.getElementById('jbis_url_block'));
+    // 非表示の間は高さを計算できないため、表示した後に入力欄の高さを合わせ直す
+    document.querySelectorAll('#parent_url_panel_' + tab + ' textarea').forEach(autoResizeTextarea);
     const first = document.querySelector('#parent_url_panel_' + tab + ' textarea');
     if (first) first.focus();
 }
-document.addEventListener('DOMContentLoaded', () => showParentUrlTab({{ (initial_tab or 'other') | tojson }}));
+document.addEventListener('DOMContentLoaded', () => {
+    showParentUrlTab({{ (initial_tab or 'other') | tojson }});
+    // equibaseの文章の入力欄は9行の高さから、はみ出した分だけ広げる（縦スクロールにしない）
+    const equibaseInput = document.getElementById('equibase_text_input');
+    equibaseInput.addEventListener('input', () => {
+        autoResizeTextarea(equibaseInput);
+        // 枠線の分も足して、入力した文章が全部見えるようにする
+        equibaseInput.style.height = (equibaseInput.scrollHeight + equibaseInput.offsetHeight - equibaseInput.clientHeight) + 'px';
+    });
+});
 
 // 【JRAページ取得】入力されたJRAのURLから競走馬情報を取得し、フォームへ自動入力する
 function setSelectValueRobust(selectEl, value) {
@@ -185,7 +224,86 @@ function findBirthplaceMatch(raw) {
         return { region: '海外', detail: OVERSEAS_ABBREVIATION_MAP[text] };
     }
 
+    // 4. 地方競馬情報サイトの「北海道沙流郡平取町」のような表記は、末尾が一致する産地（詳細）を探す
+    //    （産地（第1階層）で始まるものを優先し、同じ条件なら長い名前を採用する）
+    let best = null;
+    for (const region in locationData) {
+        const regionData = locationData[region];
+        const details = Array.isArray(regionData) ? regionData
+            : (regionData && typeof regionData === 'object') ? Object.values(regionData).flat() : [];
+        details.forEach(detail => {
+            if (!detail || !text.endsWith(detail)) return;
+            const score = (text.startsWith(region) ? 1000 : 0) + detail.length;
+            if (!best || score > best.score) best = { region, detail, score };
+        });
+    }
+    if (best) return { region: best.region, detail: best.detail };
+
+    // 5. 産地（第1階層）で始まる場合は、第1階層だけ選ぶ
+    for (const region in locationData) {
+        if (text.startsWith(region)) return { region, detail: null };
+    }
+
     return null;
+}
+
+// 取得した馬名のうち、登録する馬名と別の表記（和名の馬なら英馬名、英字の馬なら和名）を入力する
+function applyOtherName(data) {
+    const input = document.getElementById('other_name_input');
+    if (!input) return;
+    const value = data[input.dataset.kind];
+    if (value) { input.value = value; autoResizeTextarea(input); }
+}
+
+// 取得した競走馬情報（父・母・馬主名・生産牧場・生年月日・産地）をフォームへ入力する
+// （JRA・地方競馬情報サイトの取得で共通）
+function applyFetchedHorseData(data) {
+    applyOtherName(data);
+    const sireInput = document.querySelector('[name="sire"]');
+    const damInput = document.querySelector('[name="dam"]');
+    const yearInput = document.querySelector('input[name="year"]');
+    const monthSelect = document.getElementById('parent_month');
+    const daySelect = document.querySelector('select[name="day"]');
+    const ownerInput = document.querySelector('[name="owner"]');
+    const breederInput = document.querySelector('[name="breeder"]');
+
+    if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
+    if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
+    if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
+    if (data.breeder && breederInput) { breederInput.value = data.breeder; autoResizeTextarea(breederInput); }
+
+    if (data.birth_year && yearInput) {
+        yearInput.value = data.birth_year;
+        // 産地の選択肢（南半球判定など）を最新の生年に合わせて更新
+        yearInput.dispatchEvent(new Event('input'));
+    }
+
+
+    if (data.birthplace) {
+        const regionSelect = document.getElementById('region_select');
+        const detailSelect = document.getElementById('detail_select');
+        const bp = findBirthplaceMatch(data.birthplace);
+        if (bp && regionSelect && detailSelect) {
+            setSelectValueRobust(regionSelect, bp.region);
+            // 選択した産地（第1階層）に応じて、産地（詳細）の選択肢を再構築させる
+            regionSelect.dispatchEvent(new Event('change'));
+            if (bp.detail) {
+                setSelectValueRobust(detailSelect, bp.detail);
+                detailSelect.dispatchEvent(new Event('change'));
+            }
+        }
+    }
+
+    // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする。
+    // セット後に change を発火させ、地域の選択肢を生年月日に合わせて再計算する
+    if (data.birth_month && monthSelect) {
+        setSelectValueRobust(monthSelect, data.birth_month);
+        monthSelect.dispatchEvent(new Event('change'));
+    }
+    if (data.birth_day && daySelect) {
+        setSelectValueRobust(daySelect, data.birth_day);
+        daySelect.dispatchEvent(new Event('change'));
+    }
 }
 
 async function fetchFromJra() {
@@ -212,54 +330,43 @@ async function fetchFromJra() {
             return;
         }
 
-        const sireInput = document.querySelector('[name="sire"]');
-        const damInput = document.querySelector('[name="dam"]');
-        const yearInput = document.querySelector('input[name="year"]');
-        const monthSelect = document.getElementById('parent_month');
-        const daySelect = document.querySelector('select[name="day"]');
-        const ownerInput = document.querySelector('[name="owner"]');
-        const breederInput = document.querySelector('[name="breeder"]');
-
-        if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
-        if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
-        if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
-        if (data.breeder && breederInput) { breederInput.value = data.breeder; autoResizeTextarea(breederInput); }
-
-        if (data.birth_year && yearInput) {
-            yearInput.value = data.birth_year;
-            // 産地の選択肢（南半球判定など）を最新の生年に合わせて更新
-            yearInput.dispatchEvent(new Event('input'));
-        }
-
-
-        if (data.birthplace) {
-            const regionSelect = document.getElementById('region_select');
-            const detailSelect = document.getElementById('detail_select');
-            const bp = findBirthplaceMatch(data.birthplace);
-            if (bp && regionSelect && detailSelect) {
-                setSelectValueRobust(regionSelect, bp.region);
-                // 選択した産地（第1階層）に応じて、産地（詳細）の選択肢を再構築させる
-                regionSelect.dispatchEvent(new Event('change'));
-                if (bp.detail) {
-                    setSelectValueRobust(detailSelect, bp.detail);
-                    detailSelect.dispatchEvent(new Event('change'));
-                }
-            }
-        }
-
-        // 月の選択肢は産地（南半球かどうか）で変わるため、産地をセットした後に月・日をセットする。
-        // セット後に change を発火させ、地域の選択肢を生年月日に合わせて再計算する
-        if (data.birth_month && monthSelect) {
-            setSelectValueRobust(monthSelect, data.birth_month);
-            monthSelect.dispatchEvent(new Event('change'));
-        }
-        if (data.birth_day && daySelect) {
-            setSelectValueRobust(daySelect, data.birth_day);
-            daySelect.dispatchEvent(new Event('change'));
-        }
+        applyFetchedHorseData(data);
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
         statusEl.style.color = 'green';
+    } catch (e) {
+        statusEl.textContent = '通信エラーが発生しました。';
+        statusEl.style.color = 'red';
+    }
+}
+
+// 【地方競馬情報サイトのページ取得】入力されたURLから父・母・生年月日・馬主名・産地・生産牧場を取得して入力する
+async function fetchFromNar() {
+    const url = document.getElementById('nar_url_input').value.trim();
+    const statusEl = document.getElementById('nar_fetch_status');
+    if (!url) {
+        statusEl.textContent = 'URLを入力してください。';
+        statusEl.style.color = 'red';
+        return;
+    }
+    statusEl.textContent = '取得中...';
+    statusEl.style.color = '#666';
+    try {
+        const res = await fetch('/api/fetch_nar_horse?url=' + encodeURIComponent(url));
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            statusEl.textContent = data.error || '取得に失敗しました。';
+            statusEl.style.color = 'red';
+            return;
+        }
+        applyFetchedHorseData(data);
+        if (data.birthplace && !findBirthplaceMatch(data.birthplace)) {
+            statusEl.textContent = `情報を取得しました。産地「${data.birthplace}」は手で選んでください。`;
+            statusEl.style.color = '#e65100';
+        } else {
+            statusEl.textContent = '情報を取得しました。内容を確認してください。';
+            statusEl.style.color = 'green';
+        }
     } catch (e) {
         statusEl.textContent = '通信エラーが発生しました。';
         statusEl.style.color = 'red';
@@ -303,6 +410,7 @@ async function fetchFromOther() {
         if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
+        applyOtherName(data);
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
         statusEl.style.color = 'green';
@@ -333,6 +441,7 @@ async function applyEquibaseText() {
             return;
         }
 
+        applyOtherName(data);
         const ownerInput = document.querySelector('[name="owner"]');
         const breederInput = document.querySelector('[name="breeder"]');
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
@@ -754,9 +863,13 @@ function initAutoGrowTextareas() {
                 if (el.id === 'jra_url_input' && typeof fetchFromJra === 'function') {
                     fetchFromJra();
                 }
-                // その他のURL欄でEnterが押された場合も同様に「取得」と同じ処理を実行する
+                // JBISのURL欄でEnterが押された場合も同様に「取得」と同じ処理を実行する
                 if (el.id === 'other_url_input' && typeof fetchFromOther === 'function') {
                     fetchFromOther();
+                }
+                // 地方競馬情報サイトのURL欄も同様
+                if (el.id === 'nar_url_input' && typeof fetchFromNar === 'function') {
+                    fetchFromNar();
                 }
             }
         });
@@ -774,7 +887,7 @@ function clearParentForm() {
     const form = document.querySelector('form[action="/add_parent"]');
     if (!form) return;
 
-    ['sire', 'dam', 'year', 'owner', 'breeder'].forEach(function (fieldName) {
+    ['sire', 'dam', 'year', 'owner', 'breeder', 'name_ja', 'name_en'].forEach(function (fieldName) {
         const el = form.querySelector('[name="' + fieldName + '"]');
         if (el) {
             el.value = '';
@@ -814,6 +927,14 @@ function clearParentForm() {
 
     const otherStatusEl = document.getElementById('other_fetch_status');
     if (otherStatusEl) otherStatusEl.textContent = '';
+
+    const narUrlInput = document.getElementById('nar_url_input');
+    if (narUrlInput) {
+        narUrlInput.value = '';
+        autoResizeTextarea(narUrlInput);
+    }
+    const narStatusEl = document.getElementById('nar_fetch_status');
+    if (narStatusEl) narStatusEl.textContent = '';
 }
 
 window.addEventListener('DOMContentLoaded', function() {

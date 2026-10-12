@@ -1,0 +1,82 @@
+{% extends "layout.html" %}
+{% block title %}英馬名の移行 - keiba.log{% endblock %}
+{% block content %}
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+    {% with messages = get_flashed_messages() %}
+        {% for message in messages %}
+        <div style="color: green; padding: 10px; font-size:0.95em; background:#f0f8f0; border-radius:4px; margin-bottom:10px;">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <h2>英馬名の移行</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        Horses・Sire・Damシートの馬名の右に「英馬名」の列を追加し、URLの列を「JRAのURL」「NARのURL」に分けます。
+        馬名は和名ならA列、英字ならB列（英馬名）で探すようになります。
+    </p>
+
+    <h3>① 列の追加</h3>
+    {% if ready %}
+    <p style="color:green;">完了しています。</p>
+    {% else %}
+    <p style="font-size:0.9em; line-height:1.6;">
+        ・馬名の右に「英馬名」の列を挿入し、英字の馬名はB列に移します。<br>
+        ・「URL」の列を「JRAのURL」に変え、その右に「NARのURL」の列を追加して、keiba.go.jp のURLを移します。<br>
+        ・実行前に各シートを「Horses_移行前_日時」のように複製して残します。<br>
+        <strong style="color:#c00;">列の追加が終わるまで、他の画面は使えません。</strong>
+    </p>
+    <form method="POST" action="/migrate_names/columns" onsubmit="this.querySelector('button').disabled = true;">
+        <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">列を追加する</button>
+    </form>
+    {% endif %}
+
+    {% if ready %}
+    <h3 style="margin-top:25px;">② JRAのURLから英馬名を取得</h3>
+    <p style="font-size:0.9em;">JRAのURLがあって英馬名（または和名）が空欄の馬：<strong id="name_target_count">{{ target_count }}</strong>頭</p>
+    <button type="button" id="name_fetch_button" onclick="fetchAllNames()" style="background:#2196F3; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;"{{ ' disabled' if not target_count }}>英馬名を取得する</button>
+    <span id="name_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
+    <div id="name_fetch_errors" style="font-size:0.85em; color:#c00; margin-top:8px;"></div>
+
+    <h3 style="margin-top:25px;">③ 同一馬のまとめ</h3>
+    <p style="font-size:0.9em;">母と生年が同じで同一馬と思われるもの：<strong>{{ group_count }}</strong>組</p>
+    <a href="/merge_horses" style="display:inline-block; background:#9C27B0; color:white; padding:10px 20px; border-radius:4px; text-decoration:none;">確認してまとめる</a>
+    {% endif %}
+</section>
+
+<script>
+// JRAのURLから英馬名を20頭ずつ取得する（途中で止まっても、もう一度押せば残りから続ける）
+async function fetchAllNames() {
+    const button = document.getElementById('name_fetch_button');
+    const statusEl = document.getElementById('name_fetch_status');
+    const errorsEl = document.getElementById('name_fetch_errors');
+    button.disabled = true;
+    errorsEl.innerHTML = '';
+    statusEl.textContent = '対象の馬を確認しています...';
+    try {
+        const targets = (await (await fetch('/api/name_fetch_targets')).json()).targets || [];
+        let done = 0, filled = 0;
+        const errors = [];
+        for (let i = 0; i < targets.length; i += 20) {
+            const res = await fetch('/api/fetch_names', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targets: targets.slice(i, i + 20) })
+            });
+            const data = await res.json();
+            (data.results || []).forEach(r => {
+                if (r.error) errors.push(`${r.sheet} ${r.row}行目：${r.error}`);
+                else if (r.name_en) filled++;
+            });
+            done = Math.min(i + 20, targets.length);
+            statusEl.textContent = `${done} / ${targets.length}頭を処理しました（英馬名 ${filled}頭）`;
+        }
+        statusEl.textContent = `完了しました：${targets.length}頭を処理し、英馬名 ${filled}頭を記録しました。`;
+        statusEl.style.color = 'green';
+        errorsEl.innerHTML = errors.map(e => `<div>${e}</div>`).join('');
+    } catch (e) {
+        statusEl.textContent = '途中でエラーになりました。もう一度押すと残りから続けます。';
+        statusEl.style.color = 'red';
+    }
+    button.disabled = false;
+}
+</script>
+{% endblock %}

@@ -68,6 +68,59 @@ def login_required(f):
     return decorated_function
 
 # ==============================================================================
+# シートの列構成
+# ==============================================================================
+# Horsesシートの列（0始まりの番号）。馬名は和名ならA列、英字ならB列（英馬名）に記録する
+HORSE_COLUMNS = ["馬名", "英馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態",
+                 "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態"]
+(H_NAME, H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE, H_STATUS,
+ H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS) = range(len(HORSE_COLUMNS))
+# Sire・Damシートの列
+PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL"]
+(P_NAME, P_NAME_EN, P_BIRTH, P_SIRE, P_DAM, P_OWNER, P_REGION, P_DETAIL, P_BREEDER,
+ P_JRA_URL, P_NAR_URL) = range(len(PARENT_COLUMNS))
+
+def col_letter(idx):
+    """0始まりの列番号を列記号（A, B, …）にする"""
+    return chr(ord('A') + idx)
+
+_JAPANESE_CHAR_RE = re.compile(r'[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]')
+
+def is_english_name(name):
+    """馬名が英字表記か（英字を含み、かな・漢字を含まない）"""
+    name = str(name or '').strip()
+    return bool(name) and bool(re.search(r'[A-Za-z]', name)) and not _JAPANESE_CHAR_RE.search(name)
+
+def name_column_for(name):
+    """馬名を探す列：和名ならA列（0）、英字ならB列（1）。Horses・Sire・Damシート共通"""
+    return 1 if is_english_name(name) else 0
+
+def row_matches_name(row, name):
+    """シートの行（リスト）が馬名に一致するか（和名はA列、英字はB列で照合する）"""
+    name = str(name or '').strip()
+    col = name_column_for(name)
+    return bool(name) and len(row) > col and str(row[col] or '').strip() == name
+
+def record_matches_name(record, name):
+    """get_all_records の1件が馬名に一致するか（和名は「馬名」、英字は「英馬名」で照合する）"""
+    name = str(name or '').strip()
+    key = '英馬名' if is_english_name(name) else '馬名'
+    return bool(name) and str(record.get(key, '') or '').strip() == name
+
+def display_name_of_row(row):
+    """表示用の馬名：A列（和名）が空欄ならB列（英馬名）"""
+    a = str(row[0] or '').strip() if len(row) > 0 else ''
+    b = str(row[1] or '').strip() if len(row) > 1 else ''
+    return a or b
+
+def normalize_name_records(records):
+    """get_all_records の結果で「馬名」が空欄（英字の馬）の場合は、英馬名を「馬名」として扱う"""
+    for r in records:
+        if not str(r.get('馬名', '') or '').strip() and str(r.get('英馬名', '') or '').strip():
+            r['馬名'] = str(r.get('英馬名')).strip()
+    return records
+
+# ==============================================================================
 # 初期設定 (スプレッドシート)
 # ==============================================================================
 try:
@@ -76,7 +129,7 @@ except gspread.SpreadsheetNotFound:
     sh = gc.create(horse_data)
     ws1 = sh.sheet1
     ws1.update_title("Horses")
-    ws1.append_row(["馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態", "産地", "地域", "生産牧場", "URL"])
+    ws1.append_row(HORSE_COLUMNS)
     ws_miho = sh.add_worksheet(title="美浦", rows=100, cols=20)
     ws_miho.append_row(["厩舎名", "ヨミガナ", "生年月日", "免許取得年", "開業", "引退", "馬房数", "臨時貸付", "貸付終了"])
     ws_ritto = sh.add_worksheet(title="栗東", rows=100, cols=20)
@@ -324,6 +377,16 @@ def fetch_jra_horse_info(url):
         name = _text_after(opt_span)
         if name:
             result['name'] = name
+
+    # 英馬名：<span class="name_en">Dahlia Flavor（JPN）</span>（国名の括弧書きは除く）
+    name_en_span = soup.select_one('span.name_en')
+    if name_en_span:
+        name_en = _strip_country_suffix(name_en_span.get_text(strip=True))
+        if name_en:
+            result['name_en'] = name_en
+            # 馬名の取得で英馬名まで含んでしまった場合は取り除く
+            if result.get('name', '').endswith(name_en_span.get_text(strip=True)):
+                result['name'] = result['name'][:-len(name_en_span.get_text(strip=True))].strip()
 
     sire = _dt_dd_text(soup, '父')
     if sire:
@@ -640,6 +703,10 @@ def parse_equibase_text(text):
         if m:
             code = m.group(1).upper()
             result['origin_code'] = code
+            # 略称の前が馬名（英馬名）
+            name_en = re.sub(r'\s+', ' ', line[:m.start()]).strip()
+            if name_en:
+                result['name_en'] = name_en
             detail = get_region_conversion_map().get(code)
             if detail:
                 result['birthplace_detail'] = detail
@@ -686,9 +753,21 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None):
     detail_soup = _fetch_jbis_soup(horse_url)
     result = {"jbis_url": horse_url}
 
+    # 馬名（<h1>ココナフレイバー</h1>）と英馬名（<span class="hdg1-search__sub">Cocona Flavor(JPN)</span>）
+    heading = detail_soup.select_one('div.hdg1-search')
+    if heading:
+        h1 = heading.select_one('h1')
+        sub = heading.select_one('span.hdg1-search__sub')
+        h1_name = _strip_country_suffix(h1.get_text(strip=True)) if h1 else ''
+        sub_name = _strip_country_suffix(sub.get_text(strip=True)) if sub else ''
+        # 外国産馬は見出しが英字・サブが和名の場合もあるため、表記で振り分ける
+        for value in (h1_name, sub_name):
+            if value:
+                result.setdefault('name_en' if is_english_name(value) else 'name', value)
+
     # 登録する馬の名前が英字で、父・母がカタカナ表記の場合は、父・母のページの
     # <span class="hdg1-search__sub">（例：Swan River(IRE)）から英字の馬名を取得する
-    english_horse = bool(p_name and _ALPHABET_NAME_RE.match(p_name.strip()))
+    english_horse = is_english_name(p_name)
 
     def _parent_name(name, url):
         if english_horse:
@@ -730,10 +809,17 @@ def find_stable_match(all_stables, area, trainer_name):
     return None
 
 def get_all_horses():
+    """Horsesシートの全行を返す（英字の馬はA列が空欄のため、A列の位置に英馬名を入れて返す）"""
     try:
         sh = gc.open(horse_data)
         data = sh.worksheet("Horses").get_all_values()
-        return data[1:] if len(data) > 1 else []
+        rows = []
+        for r in data[1:]:
+            r = list(r)
+            if r and not str(r[0]).strip() and len(r) > 1 and str(r[1]).strip():
+                r[0] = r[1]
+            rows.append(r)
+        return rows
     except Exception:
         return []
 
@@ -948,6 +1034,15 @@ def sort_and_resize_table(ws, sort_col_index=0, key=None):
     data = ws.get_all_values()
     if len(data) <= 1: return
     headers = data[0]
+    if sort_col_index == 0 and len(headers) > 1 and headers[1] == '英馬名':
+        # Horses・Sire・Damシート：英字の馬はA列が空欄でB列（英馬名）に記録しているため、
+        # A列が空欄ならB列の馬名で並べる（どちらも空欄の行は除く）
+        rows = [r for r in data[1:] if display_name_of_row(r)]
+        key = key or (lambda v: v)
+        rows.sort(key=lambda x: key(display_name_of_row(x)))
+        ws.clear()
+        ws.update(range_name='A1', values=[headers] + rows)
+        return
     rows = [r for r in data[1:] if r and len(r) > sort_col_index and r[sort_col_index]]
     
     key = key or (lambda v: v)
@@ -1101,19 +1196,20 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         sire_data = []
         dam_data = []
 
-    sire_dict = {}
-    for r in sire_data:
-        name = str(r.get('馬名', '')).strip()
-        if name not in sire_dict:
-            sire_dict[name] = []
-        sire_dict[name].append(r)
-        
-    dam_dict = {}
-    for r in dam_data:
-        name = str(r.get('馬名', '')).strip()
-        if name not in dam_dict:
-            dam_dict[name] = []
-        dam_dict[name].append(r)
+    # 馬名は和名ならA列（馬名）、英字ならB列（英馬名）から探す
+    def _index_by(records, key):
+        result = {}
+        for r in records:
+            name = str(r.get(key, '') or '').strip()
+            if name:
+                result.setdefault(name, []).append(r)
+        return result
+
+    sire_dict, sire_dict_en = _index_by(sire_data, '馬名'), _index_by(sire_data, '英馬名')
+    dam_dict, dam_dict_en = _index_by(dam_data, '馬名'), _index_by(dam_data, '英馬名')
+    # 候補の表示用に、英字の馬は英馬名を「馬名」として扱う
+    normalize_name_records(sire_data)
+    normalize_name_records(dam_data)
 
     pedigree = {}
 
@@ -1138,7 +1234,10 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             target_dam = match.group(2).strip()
             target_year = int(match.group(3))
 
-        records = sire_dict.get(display_name, []) if is_sire else dam_dict.get(display_name, [])
+        if is_english_name(display_name):
+            records = (sire_dict_en if is_sire else dam_dict_en).get(display_name, [])
+        else:
+            records = (sire_dict if is_sire else dam_dict).get(display_name, [])
         record = None
         is_ambiguous = False
         candidates = []
@@ -1291,15 +1390,15 @@ def index():
     for h in raw_results:
         horse = list(h)
         # 状態が「抹消」の馬は一覧に表示しない
-        if len(horse) > 8 and str(horse[8] or '').strip() == '抹消':
+        if len(horse) > H_STATUS and str(horse[H_STATUS] or '').strip() == '抹消':
             continue
-        if len(horse) > 2:
-            birth = parse_full_date(horse[2])
-            horse[2] = datetime(birth.year, birth.month, birth.day) if birth else datetime.now()
+        if len(horse) > H_BIRTH:
+            birth = parse_full_date(horse[H_BIRTH])
+            horse[H_BIRTH] = datetime(birth.year, birth.month, birth.day) if birth else datetime.now()
         results.append(horse)
 
     if stable_filter:
-        results = [h for h in results if len(h) > 7 and h[7] == stable_filter]
+        results = [h for h in results if len(h) > H_STABLE and h[H_STABLE] == stable_filter]
         
     return render_template('index.html', 
                            results=results, 
@@ -1315,6 +1414,92 @@ def api_fetch_jra_horse():
         return jsonify({"error": "URLを入力してください。"}), 400
     try:
         data = fetch_jra_horse_info(url)
+        if not data:
+            return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
+        return jsonify(data), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"ページの取得に失敗しました: {e}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"解析中にエラーが発生しました: {e}"}), 500
+
+# --- 地方競馬情報サイト（keiba.go.jp）の競走馬情報ページ ---
+NAR_ALLOWED_HOSTS = ("keiba.go.jp",)
+
+def normalize_nar_company_name(text):
+    """馬主名・生産牧場名の表記を揃える：（）→()、株式会社→(株)、有限会社→(有)、
+    ）の後のスペースは除去し、他の全角スペースは半角スペースにする"""
+    text = (text or '').replace('（', '(').replace('）', ')')
+    text = text.replace('株式会社', '(株)').replace('有限会社', '(有)')
+    text = re.sub(r'\)[\s\u3000]+', ')', text)
+    text = text.replace('\u3000', ' ')
+    return re.sub(r' {2,}', ' ', text).strip()
+
+def normalize_nar_owner_name(text):
+    """馬主名：全角スペースが2個以上続くところを半角スペース1個にし、他の全角スペースは除去する
+    （例：「尾　田　　信　夫」→「尾田 信夫」）。そのあと生産牧場と同じ表記の統一を行う"""
+    text = re.sub(r'\u3000{2,}', ' ', (text or '').strip())
+    text = text.replace('\u3000', '')
+    return normalize_nar_company_name(text)
+
+def parse_nar_horse_page(soup):
+    """地方競馬情報サイトの競走馬情報ページから、父・母・生年月日・馬主名・産地・生産牧場を取り出す"""
+    def clean(el):
+        return el.get_text(' ', strip=True).strip() if el else ''
+
+    def raw_text(el):
+        # 馬主名の全角スペースはそのまま残す（前後の空白・改行だけ除く）
+        return el.get_text('', strip=False).strip(' \t\r\n') if el else ''
+
+    def value_after_label(label):
+        for td in soup.find_all('td'):
+            if td.get_text(strip=True) == label:
+                return td.find_next_sibling('td')
+        return None
+
+    result = {}
+    sire_td = soup.find('td', class_='fathername')
+    if clean(sire_td):
+        result['sire'] = clean(sire_td)
+    dam_td = value_after_label('母')
+    if clean(dam_td):
+        result['dam'] = clean(dam_td)
+
+    m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', clean(value_after_label('生年月日')))
+    if m:
+        result['birth_year'], result['birth_month'], result['birth_day'] = (
+            str(int(m.group(1))), str(int(m.group(2))), str(int(m.group(3))))
+
+    owner = normalize_nar_owner_name(raw_text(value_after_label('馬主')))
+    if owner:
+        result['owner'] = owner
+    birthplace = clean(value_after_label('産地')).replace(' ', '')
+    if birthplace:
+        result['birthplace'] = birthplace
+    breeder = normalize_nar_company_name(raw_text(value_after_label('生産牧場')))
+    if breeder:
+        result['breeder'] = breeder
+    return result
+
+def fetch_nar_horse_info(url):
+    from urllib.parse import urlparse
+    parsed = urlparse(url or '')
+    if parsed.scheme not in ("http", "https") or not any(
+            parsed.netloc == h or parsed.netloc.endswith('.' + h) for h in NAR_ALLOWED_HOSTS):
+        raise ValueError("地方競馬情報サイト（keiba.go.jp）のURLを入力してください。")
+    resp = requests.get(url, headers=_JBIS_HEADERS, timeout=25)
+    resp.raise_for_status()
+    return parse_nar_horse_page(BeautifulSoup(resp.content, 'html.parser'))
+
+@app.route('/api/fetch_nar_horse')
+@login_required
+def api_fetch_nar_horse():
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({"error": "URLを入力してください。"}), 400
+    try:
+        data = fetch_nar_horse_info(url)
         if not data:
             return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
         return jsonify(data), 200
@@ -1626,15 +1811,14 @@ def import_horses():
         headers = list(data[0]) if data else []
         rows = [list(r) for r in data[1:]]
 
-        while len(headers) < 15:
+        while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        if _blank(headers[13]):
-            headers[13] = '競走馬登録'
-        if _blank(headers[14]):
-            headers[14] = '登録時状態'
-        ensure_columns(ws, 15)
+        for idx in (H_REGISTRATION, H_REG_STATUS):
+            if _blank(headers[idx]):
+                headers[idx] = HORSE_COLUMNS[idx]
+        ensure_columns(ws, len(HORSE_COLUMNS))
 
-        name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
+        name_to_index = {r[H_NAME]: i for i, r in enumerate(rows) if r and r[H_NAME]}
 
         reg_y, reg_m = '', ''
         if registration_str:
@@ -1653,20 +1837,20 @@ def import_horses():
                 status = resolve_registration_status('', birth_year, reg_y, reg_m)
 
                 new_row = [''] * len(headers)
-                new_row[0] = name
-                new_row[1] = h['gender']
-                new_row[2] = h['birth']
-                new_row[3] = h['sire']
-                new_row[4] = h['dam']
-                new_row[5] = h['owner']
-                new_row[6] = h['area']
-                new_row[7] = h['stable']
-                new_row[8] = status
-                new_row[9] = h['region']
-                new_row[10] = h['detail']
-                new_row[11] = h['breeder']
-                new_row[13] = registration_str
-                new_row[14] = status
+                new_row[H_NAME] = name
+                new_row[H_GENDER] = h['gender']
+                new_row[H_BIRTH] = h['birth']
+                new_row[H_SIRE] = h['sire']
+                new_row[H_DAM] = h['dam']
+                new_row[H_OWNER] = h['owner']
+                new_row[H_AREA] = h['area']
+                new_row[H_STABLE] = h['stable']
+                new_row[H_STATUS] = status
+                new_row[H_REGION] = h['region']
+                new_row[H_DETAIL] = h['detail']
+                new_row[H_BREEDER] = h['breeder']
+                new_row[H_REGISTRATION] = registration_str
+                new_row[H_REG_STATUS] = status
                 rows.append(new_row)
                 name_to_index[name] = len(rows) - 1
                 added += 1
@@ -1677,9 +1861,9 @@ def import_horses():
                     row.append('')
 
                 field_map = {
-                    1: h['gender'], 2: h['birth'], 3: h['sire'], 4: h['dam'],
-                    5: h['owner'], 6: h['area'], 7: h['stable'],
-                    9: h['region'], 10: h['detail'], 11: h['breeder'],
+                    H_GENDER: h['gender'], H_BIRTH: h['birth'], H_SIRE: h['sire'], H_DAM: h['dam'],
+                    H_OWNER: h['owner'], H_AREA: h['area'], H_STABLE: h['stable'],
+                    H_REGION: h['region'], H_DETAIL: h['detail'], H_BREEDER: h['breeder'],
                 }
                 changed = False
                 for col_idx, new_val in field_map.items():
@@ -1688,14 +1872,14 @@ def import_horses():
                         changed = True
 
                 # 競走馬登録日が未入力だった場合のみ設定し、早期登録の時期に該当すれば状態を更新する
-                if _blank(row[13]) and registration_str:
-                    row[13] = registration_str
-                    birth_year = date_year(row[2]) or ''
-                    new_status = resolve_registration_status(row[8], birth_year, reg_y, reg_m)
-                    if new_status != row[8]:
-                        row[8] = new_status
-                    if _blank(row[14]):
-                        row[14] = row[8]
+                if _blank(row[H_REGISTRATION]) and registration_str:
+                    row[H_REGISTRATION] = registration_str
+                    birth_year = date_year(row[H_BIRTH]) or ''
+                    new_status = resolve_registration_status(row[H_STATUS], birth_year, reg_y, reg_m)
+                    if new_status != row[H_STATUS]:
+                        row[H_STATUS] = new_status
+                    if _blank(row[H_REG_STATUS]):
+                        row[H_REG_STATUS] = row[H_STATUS]
                     changed = True
 
                 if changed:
@@ -1703,7 +1887,7 @@ def import_horses():
                 else:
                     skipped += 1
 
-        rows.sort(key=lambda r: r[0] if r and r[0] else '')
+        rows.sort(key=lambda r: display_name_of_row(r))
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
 
@@ -1811,26 +1995,27 @@ def resolve_trainer_page_status(current, horse):
 def jra_info_to_columns(info, all_stables):
     """fetch_jra_horse_info の結果を Horsesシートの列番号 → 値 の辞書に変換する"""
     values = {
-        1: info.get('gender', ''), 3: info.get('sire', ''), 4: info.get('dam', ''),
-        5: info.get('owner', ''), 11: info.get('breeder', ''),
+        H_NAME_EN: info.get('name_en', ''),
+        H_GENDER: info.get('gender', ''), H_SIRE: info.get('sire', ''), H_DAM: info.get('dam', ''),
+        H_OWNER: info.get('owner', ''), H_BREEDER: info.get('breeder', ''),
     }
     if info.get('birth_year'):
-        values[2] = format_date8(info['birth_year'], info['birth_month'], info['birth_day'])
+        values[H_BIRTH] = format_date8(info['birth_year'], info['birth_month'], info['birth_day'])
     if info.get('trainer_raw'):
         t_name, t_area = parse_trainer_field(info['trainer_raw'])
         match = find_stable_match(all_stables, t_area, t_name)
         if match:
-            values[6] = match['area']
-            values[7] = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
+            values[H_AREA] = match['area']
+            values[H_STABLE] = match['display_name'].split('・', 1)[1] if '・' in match['display_name'] else match['display_name']
         else:
-            values[6], values[7] = t_area, t_name
+            values[H_AREA], values[H_STABLE] = t_area, t_name
     if info.get('birthplace'):
         match = find_birthplace_match(info['birthplace'])
         if match:
-            values[9], values[10] = match['region'], match['detail'] or ''
+            values[H_REGION], values[H_DETAIL] = match['region'], match['detail'] or ''
         else:
             # 一致しない場合は産地にそのまま入れておく（地域は空欄）
-            values[9] = info['birthplace']
+            values[H_REGION] = info['birthplace']
     return {k: v for k, v in values.items() if v}
 
 @app.route('/import_trainer_horses', methods=['POST'])
@@ -1863,7 +2048,8 @@ def import_trainer_horses():
         return v is None or str(v).strip() == ''
 
     # 空欄を埋める対象の列（状態・競走馬登録は対象外）
-    fill_cols = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11]
+    fill_cols = [H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE,
+                 H_REGION, H_DETAIL, H_BREEDER]
 
     try:
         sh = gc.open(horse_data)
@@ -1871,15 +2057,15 @@ def import_trainer_horses():
         data = ws.get_all_values()
         headers = list(data[0]) if data else []
         rows = [list(r) for r in data[1:]]
-        while len(headers) < 15:
+        while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        if not headers[14]:
-            headers[14] = '登録時状態'
-        ensure_columns(ws, 15)
+        if not headers[H_REG_STATUS]:
+            headers[H_REG_STATUS] = HORSE_COLUMNS[H_REG_STATUS]
+        ensure_columns(ws, len(HORSE_COLUMNS))
         for r in rows:
             while len(r) < len(headers):
                 r.append('')
-        name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
+        name_to_index = {r[H_NAME]: i for i, r in enumerate(rows) if r and r[H_NAME]}
 
         # 一覧の全馬のリンク先をまとめて並列取得する（新規登録・空欄補完・馬主変更／去勢の判定に使う）
         def _fetch(h):
@@ -1913,17 +2099,17 @@ def import_trainer_horses():
                         failed.append(f"{name}（情報を取得できませんでした）")
                     continue
                 values = jra_info_to_columns(info, all_stables)
-                values.setdefault(1, h['gender'])
+                values.setdefault(H_GENDER, h['gender'])
                 if trainer_match:
-                    values.setdefault(6, trainer_match['area'])
-                    values.setdefault(7, trainer_match['display_name'].split('・', 1)[1])
+                    values.setdefault(H_AREA, trainer_match['area'])
+                    values.setdefault(H_STABLE, trainer_match['display_name'].split('・', 1)[1])
                 new_row = [''] * len(headers)
-                new_row[0] = name
+                new_row[H_NAME] = name
                 for col, val in values.items():
                     new_row[col] = val
-                new_row[8] = resolve_trainer_page_status('', h)
-                new_row[12] = h['url']
-                new_row[14] = new_row[8]
+                new_row[H_STATUS] = resolve_trainer_page_status('', h)
+                new_row[H_JRA_URL] = h['url']
+                new_row[H_REG_STATUS] = new_row[H_STATUS]
                 rows.append(new_row)
                 name_to_index[name] = len(rows) - 1
                 added.append(name)
@@ -1932,7 +2118,7 @@ def import_trainer_horses():
             row = rows[name_to_index[name]]
 
             # 状態（I列）の更新
-            current = row[8].strip()
+            current = row[H_STATUS].strip()
             if current == '抹消':
                 # 管理馬一覧に載っている＝現役なので、抹消は誤り。一覧の内容から状態を決め直す
                 new_status = resolve_trainer_page_status('', h)
@@ -1940,7 +2126,7 @@ def import_trainer_horses():
             else:
                 new_status = resolve_trainer_page_status(current, h)
             if new_status != current:
-                row[8] = new_status
+                row[H_STATUS] = new_status
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
                 pasture_changes.append((name, current, new_status))
 
@@ -1953,30 +2139,30 @@ def import_trainer_horses():
                 match = find_stable_match(all_stables, t_area, t_name)
                 if match:
                     new_stable = (match['area'], match['display_name'].split('・', 1)[1])
-            if new_stable and not _blank(row[7]) and (row[6], row[7]) != new_stable:
-                current_full = f"{row[6]}・{row[7]}" if row[6] else row[7]
+            if new_stable and not _blank(row[H_STABLE]) and (row[H_AREA], row[H_STABLE]) != new_stable:
+                current_full = f"{row[H_AREA]}・{row[H_STABLE]}" if row[H_AREA] else row[H_STABLE]
                 new_full = f"{new_stable[0]}・{new_stable[1]}"
-                row[6], row[7] = new_stable
+                row[H_AREA], row[H_STABLE] = new_stable
                 changes_rows.append([today_str, name, '転厩', current_full, new_full])
                 change_msgs.append(f"{name}：転厩 {current_full}→{new_full}")
 
             # 馬主変更（馬主名が空欄の場合は下の空欄補完で埋める）
             new_owner = info.get('owner') if info else None
-            if new_owner and not _blank(row[5]) and row[5] != new_owner:
-                changes_rows.append([today_str, name, '馬主変更', row[5], new_owner])
-                change_msgs.append(f"{name}：馬主変更 {row[5]}→{new_owner}")
-                row[5] = new_owner
+            if new_owner and not _blank(row[H_OWNER]) and row[H_OWNER] != new_owner:
+                changes_rows.append([today_str, name, '馬主変更', row[H_OWNER], new_owner])
+                change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{new_owner}")
+                row[H_OWNER] = new_owner
 
             # 去勢
-            if info and row[1] == '牡' and info.get('gender') == 'せん':
-                row[1] = 'せん'
+            if info and row[H_GENDER] == '牡' and info.get('gender') == 'せん':
+                row[H_GENDER] = 'せん'
                 changes_rows.append([today_str, name, '去勢', '牡', 'せん'])
                 change_msgs.append(f"{name}：去勢")
 
             # 空欄の項目だけ埋める（URLはリンク先を取得できなくても埋める）
             changed = False
-            if _blank(row[12]):
-                row[12] = h['url']
+            if _blank(row[H_JRA_URL]):
+                row[H_JRA_URL] = h['url']
                 changed = True
             if info:
                 for col, val in jra_info_to_columns(info, all_stables).items():
@@ -1986,7 +2172,7 @@ def import_trainer_horses():
             if changed:
                 filled.append(name)
 
-        rows.sort(key=lambda r: r[0] if r and r[0] else '')
+        rows.sort(key=lambda r: display_name_of_row(r))
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
 
@@ -2097,14 +2283,14 @@ def import_cancel_horses():
         backfill_targets = []
         registered_names = set()
         for i, row in enumerate(data[1:], start=2):
-            if not row or not row[0]:
+            name = display_name_of_row(row)
+            if not name:
                 continue
-            name = row[0]
             registered_names.add(name)
-            current = row[8].strip() if len(row) > 8 else ''
+            current = row[H_STATUS].strip() if len(row) > H_STATUS else ''
             if name not in entries:
                 if current == '抹消' and name not in cancel_sheet_names:
-                    backfill_targets.append((name, row[12].strip() if len(row) > 12 else '', True))
+                    backfill_targets.append((name, row[H_JRA_URL].strip() if len(row) > H_JRA_URL else '', True))
                 continue
             date_str = entries[name]
             if name not in cancel_sheet_names:
@@ -2113,7 +2299,7 @@ def import_cancel_horses():
             if current == '抹消':
                 already.append(name)
                 continue
-            status_updates.append({'range': f'I{i}', 'values': [['抹消']]})
+            status_updates.append({'range': f'{col_letter(H_STATUS)}{i}', 'values': [['抹消']]})
             cancelled.append(name)
 
         # 未登録の馬も抹消シートに記録する（週間レポートの抹消馬に、リンクなしで表示する）
@@ -2125,7 +2311,7 @@ def import_cancel_horses():
                 cancel_rows.append([date_str, name])
                 cancel_sheet_names.add(name)
 
-        # Sire・DamシートでI列にJRAのURLがある馬も対象にする（抹消されていなければ何もしない）
+        # Sire・DamシートでJRAのURL（J列）がある馬も対象にする（抹消されていなければ何もしない）
         target_names = {t[0] for t in backfill_targets} | cancel_sheet_names
         for sheet_name in ("Sire", "Dam"):
             try:
@@ -2133,8 +2319,8 @@ def import_cancel_horses():
             except gspread.WorksheetNotFound:
                 continue
             for r in parent_rows:
-                p_name = r[0].strip() if r and r[0] else ''
-                p_url = r[8].strip() if len(r) > 8 else ''
+                p_name = display_name_of_row(r)
+                p_url = r[P_JRA_URL].strip() if len(r) > P_JRA_URL else ''
                 if p_name and p_name not in target_names and is_jra_url(p_url):
                     backfill_targets.append((p_name, p_url, False))
                     target_names.add(p_name)
@@ -2215,32 +2401,34 @@ def weekly():
 
         horses_data = sh.worksheet("Horses").get_all_values()[1:]
         for r in horses_data:
-            name = cell(r, 0)
+            name = display_name_of_row(r)
             if not name:
                 continue
             horse_info[name] = {
-                'gender': cell(r, 1), 'birth_year': date_year(cell(r, 2)),
-                'stable': f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7),
-                'has_url': bool(cell(r, 12)),
+                'gender': cell(r, H_GENDER), 'birth_year': date_year(cell(r, H_BIRTH)),
+                'stable': f"{cell(r, H_AREA)}・{cell(r, H_STABLE)}" if cell(r, H_AREA) else cell(r, H_STABLE),
+                'has_url': bool(cell(r, H_JRA_URL) or cell(r, H_NAR_URL)),
             }
-            reg_date = parse_full_date(cell(r, 13))
+            reg_date = parse_full_date(cell(r, H_REGISTRATION))
             if in_week(reg_date):
                 # 状態は登録した時の値（O列）で固定する。O列が無い馬は、競走馬登録日と生年から
                 # 登録時の状態（早期／空欄）を求める
-                status = cell(r, 14)
+                status = cell(r, H_REG_STATUS)
                 if not status:
-                    status = resolve_registration_status('', date_year(cell(r, 2)) or '',
+                    status = resolve_registration_status('', date_year(cell(r, H_BIRTH)) or '',
                                                          reg_date.year, reg_date.month)
                 registered.append({'date': reg_date, 'name': name,
-                                   'sire': cell(r, 3), 'dam': cell(r, 4), 'status': status})
+                                   'sire': cell(r, H_SIRE), 'dam': cell(r, H_DAM), 'status': status})
 
         for p_type, gender in (('Sire', '牡'), ('Dam', '牝')):
             try:
                 for r in sh.worksheet(p_type).get_all_values()[1:]:
-                    name = cell(r, 0)
-                    if name and name not in parent_info:
-                        parent_info[name] = {'type': p_type, 'gender': gender,
-                                             'birth_year': date_year(cell(r, 1)), 'has_url': bool(cell(r, 8))}
+                    info = {'type': p_type, 'gender': gender, 'birth_year': date_year(cell(r, P_BIRTH)),
+                            'has_url': bool(cell(r, P_JRA_URL) or cell(r, P_NAR_URL))}
+                    # 和名・英馬名のどちらで記録されていても見つかるようにする
+                    for name in (cell(r, P_NAME), cell(r, P_NAME_EN)):
+                        if name and name not in parent_info:
+                            parent_info[name] = info
             except gspread.WorksheetNotFound:
                 pass
 
@@ -2316,13 +2504,17 @@ def add_horse():
     try:
         sh = gc.open(horse_data)
         ws = sh.worksheet("Horses")
-        name = request.form.get('name')
+        name = (request.form.get('name') or '').strip()
+        name_en = (request.form.get('name_en') or '').strip()
+        # 馬名が英字の場合はB列（英馬名）に記録する
+        if is_english_name(name):
+            name, name_en = '', name
         y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
         birth_date_str = format_date8(y, m, d)
 
-        existing_data = ws.col_values(1)
-        if name in existing_data[1:]:
-            flash(f"エラー：『{name}』は既に登録されています。")
+        lookup_name = name or name_en
+        if any(row_matches_name(r, lookup_name) for r in ws.get_all_values()[1:]):
+            flash(f"エラー：『{lookup_name}』は既に登録されています。")
             return redirect('/add_horse')
             
         # 競走馬登録日（未入力可）。年・月が揃っている場合のみ、状態（早期）の判定に使う
@@ -2332,32 +2524,36 @@ def add_horse():
         registration_str = format_date8(reg_y, reg_m, reg_d) if reg_y and reg_m else ''
         status = resolve_registration_status(request.form.get('status'), y, reg_y, reg_m)
 
-        # 競走馬登録列（N列）・登録時状態列（O列）の見出しが無ければ追加する
+        # 競走馬登録列（P列）・登録時状態列（Q列）の見出しが無ければ追加する
         header = ws.row_values(1)
-        if len(header) < 15:
-            ensure_columns(ws, 15)
-            ws.update(range_name='N1:O1', values=[[header[13] if len(header) > 13 and header[13] else '競走馬登録',
-                                                   '登録時状態']])
+        if len(header) < len(HORSE_COLUMNS):
+            ensure_columns(ws, len(HORSE_COLUMNS))
+            ws.update(range_name=f'{col_letter(H_REGISTRATION)}1:{col_letter(H_REG_STATUS)}1',
+                      values=[[HORSE_COLUMNS[H_REGISTRATION], HORSE_COLUMNS[H_REG_STATUS]]])
 
-        ws.append_row([
-            name,
-            request.form.get('gender'),
-            birth_date_str, request.form.get('sire'),
-            request.form.get('dam'), 
-            request.form.get('owner'),
-            request.form.get('area'),
-            request.form.get('stable_name'),
-            status,
-            request.form.get('birthplace_region'),
-            request.form.get('birthplace_detail'),
-            request.form.get('breeder'),
-            request.form.get('jra_url'),
-            registration_str,
-            status            # O列: 登録時状態（週間レポートの登録馬に表示する）
-        ])
+        jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
+        new_row = [''] * len(HORSE_COLUMNS)
+        new_row[H_NAME] = name
+        new_row[H_NAME_EN] = name_en
+        new_row[H_GENDER] = request.form.get('gender')
+        new_row[H_BIRTH] = birth_date_str
+        new_row[H_SIRE] = request.form.get('sire')
+        new_row[H_DAM] = request.form.get('dam')
+        new_row[H_OWNER] = request.form.get('owner')
+        new_row[H_AREA] = request.form.get('area')
+        new_row[H_STABLE] = request.form.get('stable_name')
+        new_row[H_STATUS] = status
+        new_row[H_REGION] = request.form.get('birthplace_region')
+        new_row[H_DETAIL] = request.form.get('birthplace_detail')
+        new_row[H_BREEDER] = request.form.get('breeder')
+        new_row[H_JRA_URL] = jra_url
+        new_row[H_NAR_URL] = nar_url
+        new_row[H_REGISTRATION] = registration_str
+        new_row[H_REG_STATUS] = status   # 登録時状態（週間レポートの登録馬に表示する）
+        ws.append_row(new_row)
         sort_and_resize_table(ws, sort_col_index=0)
-        record_cancel_date_from_url(sh, name, request.form.get('jra_url'))
-        return redirect(f"/horse/{name}")
+        record_cancel_date_from_url(sh, lookup_name, jra_url)
+        return redirect(f"/horse/{lookup_name}")
     except Exception as e:
         flash(f"エラーが発生しました: {e}")
         return redirect('/add_horse')
@@ -2453,6 +2649,19 @@ def stable_capacity():
 
     return render_template('stable_capacity.html', area=area, stables=stables)
 
+def is_nar_url(url):
+    """地方競馬情報サイト（keiba.go.jp）のURLかどうか"""
+    from urllib.parse import urlparse
+    netloc = urlparse(url or '').netloc
+    return any(netloc == h or netloc.endswith('.' + h) for h in NAR_ALLOWED_HOSTS)
+
+def split_horse_urls(jra_url, nar_url=''):
+    """JRAのURL欄に keiba.go.jp のURLが入力された場合は、NARのURLとして扱う。(JRAのURL, NARのURL) を返す"""
+    jra_url, nar_url = (jra_url or '').strip(), (nar_url or '').strip()
+    if is_nar_url(jra_url):
+        nar_url, jra_url = nar_url or jra_url, ''
+    return jra_url, nar_url
+
 def is_jra_url(url):
     """JRA公式サイトのURLかどうか"""
     from urllib.parse import urlparse
@@ -2521,6 +2730,299 @@ def record_pasture_changes(sh, changes, today_str):
     if append_rows:
         ws_pasture.append_rows(append_rows)
 
+# ==============================================================================
+# 英馬名の列（B列）・NARのURL列の追加と、同一馬のまとめ（移行作業）
+# ==============================================================================
+NAME_SHEETS = ("Horses", "Sire", "Dam")
+_name_columns_ready = False
+
+def name_columns_ready():
+    """Horses・Sire・DamシートのB列が「英馬名」になっている（列の追加が済んでいる）か"""
+    global _name_columns_ready
+    if _name_columns_ready:
+        return True
+    try:
+        sh = gc.open(horse_data)
+        for title in NAME_SHEETS:
+            try:
+                header = sh.worksheet(title).row_values(1)
+            except gspread.WorksheetNotFound:
+                continue
+            if len(header) < 2 or header[1] != '英馬名':
+                return False
+        _name_columns_ready = True
+    except Exception:
+        return True  # シートを確認できない場合は各画面のエラー表示に任せる
+    return _name_columns_ready
+
+@app.before_request
+def require_name_columns():
+    """列の追加が済むまでは、古い列の並びのまま読み書きしないよう移行画面へ案内する"""
+    if request.endpoint in (None, 'static', 'login', 'logout', 'migrate_names', 'migrate_name_columns'):
+        return None
+    if not name_columns_ready():
+        if request.path.startswith('/api/'):
+            return jsonify({"error": "スプレッドシートの列の追加が必要です。「英馬名の移行」画面で実行してください。"}), 409
+        return redirect(url_for('migrate_names'))
+    return None
+
+def convert_row_to_name_columns(row, is_horses):
+    """古い列の並びの1行を、英馬名（B列）・NARのURL列を追加した並びに変換する。
+    英字の馬名はB列に移し、JRAのURL列にある keiba.go.jp のURLはNARのURL列に移す"""
+    row = list(row)
+    url_idx = 12 if is_horses else 8   # 古い並びでのURL列
+    base = row + [''] * max(0, url_idx + 1 - len(row))
+    new_row = [base[0], ''] + base[1:url_idx] + [base[url_idx], ''] + base[url_idx + 1:]
+    name_col, en_col = 0, 1
+    jra_col = H_JRA_URL if is_horses else P_JRA_URL
+    nar_col = H_NAR_URL if is_horses else P_NAR_URL
+    if is_english_name(new_row[name_col]):
+        new_row[en_col], new_row[name_col] = new_row[name_col].strip(), ''
+    if is_nar_url(new_row[jra_col]):
+        new_row[nar_col], new_row[jra_col] = new_row[jra_col], ''
+    return new_row
+
+def migrate_sheet_to_name_columns(sh, title):
+    """1枚のシートの列を追加する。実行前にシートを複製してバックアップを残す。変換した行数を返す"""
+    ws = sh.worksheet(title)
+    data = ws.get_all_values()
+    if data and len(data[0]) > 1 and data[0][1] == '英馬名':
+        return 0
+    is_horses = title == "Horses"
+    columns = HORSE_COLUMNS if is_horses else PARENT_COLUMNS
+    sh.duplicate_sheet(ws.id, new_sheet_name=f"{title}_移行前_{datetime.now().strftime('%Y%m%d%H%M')}")
+
+    old_header = data[0] if data else []
+    header = convert_row_to_name_columns(old_header, is_horses)
+    for i, name in enumerate(columns):
+        while len(header) <= i:
+            header.append('')
+        header[i] = name
+    rows = [convert_row_to_name_columns(r, is_horses) for r in data[1:]]
+    width = max([len(header)] + [len(r) for r in rows])
+    ensure_columns(ws, width)
+    # 列が増えるだけで行数は変わらないため、消さずにそのまま上書きする
+    ws.update(range_name='A1', values=[header] + rows)
+    return len(rows)
+
+@app.route('/migrate_names')
+@login_required
+def migrate_names():
+    """英馬名の移行：①列の追加 ②JRAのURLから英馬名の取得 ③同一馬のまとめ"""
+    ready = name_columns_ready()
+    targets = get_name_fetch_targets() if ready else []
+    groups = find_duplicate_horse_groups() if ready else []
+    return render_template('migrate_names.html', ready=ready, target_count=len(targets),
+                           group_count=len(groups))
+
+@app.route('/migrate_names/columns', methods=['POST'])
+@login_required
+def migrate_name_columns():
+    global _name_columns_ready
+    try:
+        sh = gc.open(horse_data)
+        results = []
+        for title in NAME_SHEETS:
+            try:
+                count = migrate_sheet_to_name_columns(sh, title)
+            except gspread.WorksheetNotFound:
+                continue
+            results.append(f"{title} {count}行")
+        _name_columns_ready = False
+        name_columns_ready()
+        flash("英馬名・NARのURLの列を追加しました（" + "、".join(results) + "）。元のシートは「〇〇_移行前_日時」として残しています。")
+    except Exception as e:
+        flash(f"列の追加に失敗しました: {e}")
+    return redirect(url_for('migrate_names'))
+
+def get_name_fetch_targets():
+    """JRAのURLがあり、英馬名（または和名）が空欄の馬：[(シート名, 行番号, URL), ...]"""
+    targets = []
+    sh = gc.open(horse_data)
+    for title in NAME_SHEETS:
+        try:
+            data = sh.worksheet(title).get_all_values()
+        except gspread.WorksheetNotFound:
+            continue
+        jra_col = H_JRA_URL if title == "Horses" else P_JRA_URL
+        for i, r in enumerate(data[1:], start=2):
+            url = r[jra_col].strip() if len(r) > jra_col else ''
+            name_ja = r[0].strip() if r else ''
+            name_en = r[1].strip() if len(r) > 1 else ''
+            if is_jra_url(url) and (not name_en or not name_ja):
+                targets.append((title, i, url))
+    return targets
+
+def fetch_jra_names(url):
+    """JRAの競走馬情報ページから (馬名, 英馬名) を取得する"""
+    soup = _fetch_jra_soup(url)
+    name = ''
+    opt_span = soup.find('span', class_='opt', string=lambda s: s and '競走馬情報' in s)
+    if opt_span:
+        name = _text_after(opt_span) or ''
+    name_en_span = soup.select_one('span.name_en')
+    name_en_raw = name_en_span.get_text(strip=True) if name_en_span else ''
+    if name_en_raw and name.endswith(name_en_raw):
+        name = name[:-len(name_en_raw)].strip()
+    return name.strip(), _strip_country_suffix(name_en_raw) or ''
+
+@app.route('/api/name_fetch_targets')
+@login_required
+def api_name_fetch_targets():
+    targets = get_name_fetch_targets()
+    return jsonify({"targets": [{"sheet": t, "row": r, "url": u} for t, r, u in targets]})
+
+@app.route('/api/fetch_names', methods=['POST'])
+@login_required
+def api_fetch_names():
+    """指定された馬（最大20頭）のJRAのURLから英馬名を取得し、空欄の馬名・英馬名を埋める"""
+    from concurrent.futures import ThreadPoolExecutor
+    items = (request.get_json(silent=True) or {}).get('targets', [])[:20]
+    sh = gc.open(horse_data)
+    sheets = {}
+    results = []
+
+    def _fetch(item):
+        try:
+            return item, fetch_jra_names(item['url']), None
+        except Exception as e:
+            return item, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        fetched = list(pool.map(_fetch, items))
+
+    updates_by_sheet = {}
+    for item, names, err in fetched:
+        title, row_no = item.get('sheet'), int(item.get('row', 0))
+        if title not in NAME_SHEETS or row_no < 2:
+            continue
+        if err or not names:
+            results.append({"row": row_no, "sheet": title, "error": err or '取得できませんでした'})
+            continue
+        if title not in sheets:
+            sheets[title] = sh.worksheet(title)
+            sheets[title + ':data'] = sheets[title].get_all_values()
+        data = sheets[title + ':data']
+        row = data[row_no - 1] if row_no - 1 < len(data) else []
+        jra_col = H_JRA_URL if title == "Horses" else P_JRA_URL
+        # 行の並びが変わっていないか、URLで確認してから書き込む
+        if len(row) <= jra_col or row[jra_col].strip() != item['url']:
+            results.append({"row": row_no, "sheet": title, "error": '行が移動したため飛ばしました'})
+            continue
+        name_ja, name_en = names
+        new_a = row[0].strip() or (name_ja if name_ja and not is_english_name(name_ja) else '')
+        new_b = (row[1].strip() if len(row) > 1 else '') or name_en
+        updates_by_sheet.setdefault(title, []).append({'range': f'A{row_no}:B{row_no}', 'values': [[new_a, new_b]]})
+        results.append({"row": row_no, "sheet": title, "name": new_a or new_b, "name_en": new_b})
+
+    for title, updates in updates_by_sheet.items():
+        sheets[title].batch_update(updates)
+    return jsonify({"results": results})
+
+def find_duplicate_horse_groups():
+    """母と生年が同じで同一馬と思われる行のまとまりを、Horses・Sire・Damシートごとに探す。
+    [{'sheet', 'key', 'rows': [(行番号, 行)], 'columns': [{'index', 'label', 'values', 'conflict'}]}, ...]"""
+    groups = []
+    sh = gc.open(horse_data)
+    for title in NAME_SHEETS:
+        try:
+            data = sh.worksheet(title).get_all_values()
+        except gspread.WorksheetNotFound:
+            continue
+        if not data:
+            continue
+        header = data[0]
+        is_horses = title == "Horses"
+        dam_col, birth_col = (H_DAM, H_BIRTH) if is_horses else (P_DAM, P_BIRTH)
+        buckets = {}
+        for i, r in enumerate(data[1:], start=2):
+            dam = r[dam_col].strip() if len(r) > dam_col else ''
+            year = date_year(r[birth_col]) if len(r) > birth_col else None
+            if dam and year and display_name_of_row(r):
+                buckets.setdefault((dam, year), []).append((i, r))
+        for (dam, year), rows in buckets.items():
+            if len(rows) < 2:
+                continue
+            width = max(len(header), max(len(r) for _, r in rows))
+            columns = []
+            for c in range(width):
+                values = []
+                for _, r in rows:
+                    v = r[c].strip() if len(r) > c else ''
+                    if v and v not in values:
+                        values.append(v)
+                # 生年月日は「2015」と「20150401」のように詳しさが違うだけなら、詳しい方を使う
+                if c == birth_col and len({date_year(v) for v in values}) == 1:
+                    values = [max(values, key=len)]
+                columns.append({'index': c, 'label': header[c] if c < len(header) and header[c] else col_letter(c),
+                                'values': values, 'conflict': len(values) > 1})
+            groups.append({'sheet': title, 'key': f"{dam}|{year}", 'dam': dam, 'year': year,
+                           'rows': rows, 'columns': columns,
+                           'signature': ','.join(f"{i}:{display_name_of_row(r)}" for i, r in rows)})
+    return groups
+
+@app.route('/merge_horses', methods=['GET', 'POST'])
+@login_required
+def merge_horses():
+    """同一馬と思われる行を1行にまとめる。値が異なる項目は、どちらを優先するか画面で選ぶ"""
+    if request.method == 'GET':
+        try:
+            groups = find_duplicate_horse_groups()
+        except Exception as e:
+            flash(f"データの読み込みに失敗しました: {e}")
+            groups = []
+        return render_template('merge_horses.html', groups=groups)
+
+    try:
+        groups = find_duplicate_horse_groups()
+        sh = gc.open(horse_data)
+        merged_names = []
+        by_sheet = {}
+        for g_idx, g in enumerate(groups):
+            field = f"g{g_idx}"
+            if request.form.get(field + '_merge') != '1':
+                continue
+            # 画面を表示した後にシートが変わっていたら、そのまとまりは飛ばす
+            if request.form.get(field + '_sig') != g['signature']:
+                flash(f"{g['sheet']}：{g['dam']}の{g['year']}年生は、表示後に内容が変わったため飛ばしました。")
+                continue
+            merged = []
+            for col in g['columns']:
+                if col['conflict']:
+                    try:
+                        merged.append(col['values'][int(request.form.get(f"{field}_c{col['index']}", 0))])
+                    except (ValueError, IndexError):
+                        merged.append(col['values'][0])
+                else:
+                    merged.append(col['values'][0] if col['values'] else '')
+            by_sheet.setdefault(g['sheet'], []).append((g, merged))
+            merged_names.append(display_name_of_row(merged))
+
+        for title, items in by_sheet.items():
+            ws = sh.worksheet(title)
+            data = ws.get_all_values()
+            remove_rows, replace = set(), {}
+            for g, merged in items:
+                row_numbers = [i for i, _ in g['rows']]
+                replace[row_numbers[0]] = merged
+                remove_rows.update(row_numbers[1:])
+            new_data = [data[0]]
+            for i, r in enumerate(data[1:], start=2):
+                if i in remove_rows:
+                    continue
+                new_data.append(replace.get(i, r))
+            width = max(len(r) for r in data + new_data)
+            new_data = [list(r) + [''] * (width - len(r)) for r in new_data]
+            ws.update(range_name='A1', values=new_data)
+            if len(data) > len(new_data):
+                ws.batch_clear([f"A{len(new_data) + 1}:{col_letter(width - 1)}{len(data)}"])
+            sort_and_resize_table(ws, sort_col_index=0)
+
+        flash(f"{len(merged_names)}頭をまとめました" + ("：" + "、".join(merged_names) if merged_names else "。"))
+    except Exception as e:
+        flash(f"まとめる処理に失敗しました: {e}")
+    return redirect(url_for('merge_horses'))
+
 @app.route('/api/get_target_horses', methods=['GET'])
 @login_required
 def get_target_horses():
@@ -2532,8 +3034,8 @@ def get_target_horses():
 
         target_row_indexes = []
         for i, row in enumerate(horses_data[1:], start=2):  # 1行目はヘッダーなので2行目から
-            status = row[8] if len(row) > 8 else ""
-            url = row[12] if len(row) > 12 else ""
+            status = row[H_STATUS] if len(row) > H_STATUS else ""
+            url = row[H_JRA_URL] if len(row) > H_JRA_URL else ""
             if status == "抹消" or not url:
                 continue
             target_row_indexes.append(i)  # 行番号をIDとして保持
@@ -2557,17 +3059,17 @@ def update_single_horse(row_index):
         
         # 対象行のデータを取得
         row = ws_horses.row_values(row_index)
-        status = row[8] if len(row) > 8 else ""
-        url = row[12] if len(row) > 12 else ""
+        status = row[H_STATUS] if len(row) > H_STATUS else ""
+        url = row[H_JRA_URL] if len(row) > H_JRA_URL else ""
 
         if status == "抹消" or not url:
             return jsonify({"status": "skipped", "message": "対象外の馬です"})
 
-        horse_name = row[0] if len(row) > 0 else ""
-        current_gender = row[1] if len(row) > 1 else ""
-        current_owner = row[5] if len(row) > 5 else ""
-        current_area = row[6] if len(row) > 6 else ""
-        current_stable = row[7] if len(row) > 7 else ""
+        horse_name = display_name_of_row(row)
+        current_gender = row[H_GENDER] if len(row) > H_GENDER else ""
+        current_owner = row[H_OWNER] if len(row) > H_OWNER else ""
+        current_area = row[H_AREA] if len(row) > H_AREA else ""
+        current_stable = row[H_STABLE] if len(row) > H_STABLE else ""
 
         # JRA公式サイトから最新情報を取得
         info = fetch_jra_horse_status(url)
@@ -2578,7 +3080,7 @@ def update_single_horse(row_index):
 
         # ① 抹消判定
         if info.get('status') == '抹消':
-            ws_horses.update(f'I{row_index}', [['抹消']])
+            ws_horses.update(f'{col_letter(H_STATUS)}{row_index}', [['抹消']])
             ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
             ws_cancel.append_row([info.get('cancel_date', ''), horse_name])
             return jsonify({"status": "success", "result": "抹消", "horse_name": horse_name})
@@ -2589,19 +3091,19 @@ def update_single_horse(row_index):
         if status == '早期' and new_status == '放牧':
             new_status = status
         if new_status != status:
-            ws_horses.update(f'I{row_index}', [[new_status]])
+            ws_horses.update(f'{col_letter(H_STATUS)}{row_index}', [[new_status]])
 
             record_pasture_change(sh, horse_name, status, new_status, today_str)
 
         # ③ 去勢判定
         if current_gender == '牡' and info.get('gender') == 'せん':
-            ws_horses.update(f'B{row_index}', [['せん']])
+            ws_horses.update(f'{col_letter(H_GENDER)}{row_index}', [['せん']])
             ws_changes.append_row([today_str, horse_name, '去勢'])
 
         # ④-1 馬主名変更
         new_owner = info.get('owner')
         if new_owner and new_owner != current_owner:
-            ws_horses.update(f'F{row_index}', [[new_owner]])
+            ws_horses.update(f'{col_letter(H_OWNER)}{row_index}', [[new_owner]])
             ws_changes.append_row([today_str, horse_name, '馬主変更', current_owner, new_owner])
 
         # ④-2 調教師名（厩舎）変更
@@ -2615,7 +3117,8 @@ def update_single_horse(row_index):
                 if new_stable != current_stable or new_area != current_area:
                     current_full = f"{current_area}・{current_stable}" if current_area else current_stable
                     new_full = f"{new_area}・{new_stable}" if new_area else new_stable
-                    ws_horses.update(f'G{row_index}:H{row_index}', [[new_area, new_stable]])
+                    ws_horses.update(f'{col_letter(H_AREA)}{row_index}:{col_letter(H_STABLE)}{row_index}',
+                                     [[new_area, new_stable]])
                     ws_changes.append_row([today_str, horse_name, '転厩', current_full, new_full])
 
         return jsonify({"status": "success", "horse_name": horse_name})
@@ -2644,47 +3147,58 @@ def add_parent():
             try:
                 ws = sh.worksheet(p_type)
             except gspread.WorksheetNotFound:
-                ws = sh.add_worksheet(title=p_type, rows=100, cols=10)
-                # 列構造の変更
-                ws.append_row(["馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "URL"])
+                ws = sh.add_worksheet(title=p_type, rows=100, cols=len(PARENT_COLUMNS))
+                ws.append_row(PARENT_COLUMNS)
 
             y, m, d = request.form.get('year'), request.form.get('month'), request.form.get('day')
             birth_date_str = format_date8(y, m, d) if y and m and d else (str(y) if y else "")
+
+            # 馬名は和名ならA列、英字ならB列（英馬名）。画面で入力したもう一方の表記も記録する
+            p_name = (p_name or '').strip()
+            if is_english_name(p_name):
+                name_ja, name_en = (request.form.get('name_ja') or '').strip(), p_name
+            else:
+                name_ja, name_en = p_name, (request.form.get('name_en') or '').strip()
+            jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
 
             # 「同名の馬を登録する」がチェックされている場合は、既存の同名データを
             # 上書きせず、常に新規レコードとして追加する
             force_new = request.form.get('force_new') == '1'
 
             data = ws.get_all_values()
-            found_idx = None if force_new else next((i + 1 for i, row in enumerate(data) if len(row) > 0 and row[0] == p_name), None)
-            
+            found_idx = None
+            if not force_new:
+                for target in (p_name, name_ja, name_en):
+                    found_idx = next((i + 1 for i, row in enumerate(data) if i > 0 and row_matches_name(row, target)), None)
+                    if found_idx:
+                        break
+
+            new_row = [''] * len(PARENT_COLUMNS)
             if found_idx:
-                ws.update(
-                    f'B{found_idx}:I{found_idx}', 
-                    [[birth_date_str, 
-                    request.form.get('sire'), 
-                    request.form.get('dam'),
-                    request.form.get('owner'),
-                    request.form.get('birthplace_region'),
-                    request.form.get('birthplace_detail'),
-                    request.form.get('breeder'),
-                    request.form.get('jra_url')
-                    ]]
-                )
+                old = list(data[found_idx - 1]) + [''] * len(PARENT_COLUMNS)
+                # 名前は入力が空欄なら既存の値を残す
+                name_ja = name_ja or old[P_NAME].strip()
+                name_en = name_en or old[P_NAME_EN].strip()
+                nar_url = nar_url or old[P_NAR_URL].strip()
+            new_row[P_NAME] = name_ja
+            new_row[P_NAME_EN] = name_en
+            new_row[P_BIRTH] = birth_date_str
+            new_row[P_SIRE] = request.form.get('sire')
+            new_row[P_DAM] = request.form.get('dam')
+            new_row[P_OWNER] = request.form.get('owner')
+            new_row[P_REGION] = request.form.get('birthplace_region')
+            new_row[P_DETAIL] = request.form.get('birthplace_detail')
+            new_row[P_BREEDER] = request.form.get('breeder')
+            new_row[P_JRA_URL] = jra_url
+            new_row[P_NAR_URL] = nar_url
+
+            ensure_columns(ws, len(PARENT_COLUMNS))
+            if found_idx:
+                ws.update(range_name=f'A{found_idx}:{col_letter(len(PARENT_COLUMNS) - 1)}{found_idx}', values=[new_row])
             else:
-                ws.append_row([
-                    p_name, 
-                    birth_date_str, 
-                    request.form.get('sire'), 
-                    request.form.get('dam'), 
-                    request.form.get('owner'), 
-                    request.form.get('birthplace_region'), 
-                    request.form.get('birthplace_detail'), 
-                    request.form.get('breeder'),
-                    request.form.get('jra_url')
-                ])
+                ws.append_row(new_row)
             sort_and_resize_table(ws, sort_col_index=0)
-            record_cancel_date_from_url(sh, p_name, request.form.get('jra_url'))
+            record_cancel_date_from_url(sh, p_name, jra_url)
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
         return redirect(f"/horse/{origin}") if origin else redirect('/')
@@ -2693,31 +3207,37 @@ def add_parent():
     p_type, p_name = request.args.get('p_type', 'Sire'), request.args.get('p_name', '')
     existing_data = {
         "year": "", "month": "", "day": "", "sire": "", "dam": "", 
-        "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": "", "URL": ""
+        "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": "", "URL": "",
+        "nar_url": "", "name_ja": "", "name_en": ""
     }
     try:
         sh = gc.open(horse_data)
         ws = sh.worksheet(p_type)
-        row = next((r for r in ws.get_all_values() if len(r)>0 and r[0] == p_name), None)
+        row = next((r for r in ws.get_all_values()[1:] if row_matches_name(r, p_name)), None)
         if row:
-            parts = split_date(row[1]) if len(row) > 1 else None
+            row = list(row) + [''] * len(PARENT_COLUMNS)
+            parts = split_date(row[P_BIRTH])
             if parts:
                 existing_data["year"] = str(parts[0])
                 if parts[1]: existing_data["month"] = str(parts[1])
                 if parts[2]: existing_data["day"] = str(parts[2])
-                    
-            if len(row) > 2: existing_data["sire"] = row[2]
-            if len(row) > 3: existing_data["dam"] = row[3]
-            if len(row) > 4: existing_data["owner"] = row[4]
-            if len(row) > 5: existing_data["birthplace_region"] = row[5]
-            if len(row) > 6: existing_data["birthplace_detail"] = row[6]
-            if len(row) > 7: existing_data["breeder"] = row[7]
-            if len(row) > 8: existing_data["URL"] = row[8]
+
+            existing_data["name_ja"] = row[P_NAME]
+            existing_data["name_en"] = row[P_NAME_EN]
+            existing_data["sire"] = row[P_SIRE]
+            existing_data["dam"] = row[P_DAM]
+            existing_data["owner"] = row[P_OWNER]
+            existing_data["birthplace_region"] = row[P_REGION]
+            existing_data["birthplace_detail"] = row[P_DETAIL]
+            existing_data["breeder"] = row[P_BREEDER]
+            existing_data["URL"] = row[P_JRA_URL]
+            existing_data["nar_url"] = row[P_NAR_URL]
     except: pass
     return render_template(
         'add_parent.html', 
         p_type=p_type, 
         p_name=p_name, 
+        p_name_is_english=is_english_name(p_name),
         origin=request.args.get('origin', ''),
         data=existing_data,
         initial_tab=decide_parent_url_tab(p_name, p_type, request.args.get('child', ''))
@@ -2733,7 +3253,8 @@ def decide_parent_url_tab(p_name, p_type, child_name=''):
     try:
         sh = gc.open(horse_data)
         # (シート名, 生年月日の列, 父の列, 母の列, 産地の列)
-        layouts = [("Horses", 2, 3, 4, 9), ("Sire", 1, 2, 3, 5), ("Dam", 1, 2, 3, 5)]
+        layouts = [("Horses", H_BIRTH, H_SIRE, H_DAM, H_REGION),
+                   ("Sire", P_BIRTH, P_SIRE, P_DAM, P_REGION), ("Dam", P_BIRTH, P_SIRE, P_DAM, P_REGION)]
         child = None
         for title, birth_col, sire_col, dam_col, region_col in layouts:
             try:
@@ -2742,9 +3263,9 @@ def decide_parent_url_tab(p_name, p_type, child_name=''):
                 continue
             parent_col = sire_col if p_type == 'Sire' else dam_col
             for r in rows:
-                if (child_name and cell(r, 0) == child_name) or (
+                if (child_name and row_matches_name(r, child_name)) or (
                         not child_name and p_name and cell(r, parent_col) == p_name):
-                    child = (cell(r, 0), date_year(cell(r, birth_col)), cell(r, region_col))
+                    child = (display_name_of_row(r), date_year(cell(r, birth_col)), cell(r, region_col))
                     break
             if child:
                 break
@@ -2786,40 +3307,49 @@ def update_horse():
         reg_d = (request.form.get('reg_day') or '').strip()
         registration_str = format_date8(reg_y, reg_m, reg_d) if reg_y and reg_m else ''
 
+        old_name = request.form.get('old_name')
+        new_name_en = (request.form.get('name_en') or '').strip()
+        # 馬名が英字の場合はB列（英馬名）に記録する（A列は空欄）
+        name_ja = '' if is_english_name(new_name) else (new_name or '').strip()
+        if not name_ja:
+            new_name_en = (new_name or '').strip() or new_name_en
+        jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
+
         for i, row in enumerate(data):
-            if len(row) > 0 and row[0] == request.form.get('old_name'):
+            if i > 0 and row_matches_name(row, old_name):
                 status = request.form.get('status')
-                old_status = row[8] if len(row) > 8 else ''
+                old_status = row[H_STATUS] if len(row) > H_STATUS else ''
                 # 状態が「早期」の馬は、edit_horseでの手動編集でも「放牧」には変更できないようにする
                 # （「入厩」への変更は許可する）
                 if old_status == '早期' and status == '放牧':
                     status = '早期'
-                old_registration = row[13] if len(row) > 13 else ''
+                old_registration = row[H_REGISTRATION] if len(row) > H_REGISTRATION else ''
                 # 競走馬登録日が新たに入力・変更された場合は、早期登録の状態判定を適用する
                 if has_reg_fields and registration_str and registration_str != old_registration:
                     status = resolve_registration_status(status, y, reg_y, reg_m)
                 update_values = [[
-                    new_name, request.form.get('gender'), birth_date_str,
+                    name_ja, new_name_en, request.form.get('gender'), birth_date_str,
                     request.form.get('sire'), request.form.get('dam'),
                     request.form.get('owner'), request.form.get('location'),
                     request.form.get('stable_name'), status,
                     request.form.get('birthplace_region'), request.form.get('birthplace_detail'),
                     request.form.get('breeder'),
-                    request.form.get('jra_url')
+                    jra_url, nar_url
                 ]]
-                # 13列分（A〜M）更新
-                ws.update(f'A{i+1}:M{i+1}', update_values)
+                # 馬名〜NARのURL（A〜O列）を更新する
+                ws.update(f'A{i+1}:{col_letter(H_NAR_URL)}{i+1}', update_values)
                 # 馬名を変更した場合はChangesシートに記録する
-                old_name = request.form.get('old_name')
                 if old_name and new_name and new_name != old_name:
                     sh.worksheet("Changes").append_row([today8(), new_name, '馬名変更', old_name, new_name])
-                # 競走馬登録（N列）：入力欄がある場合のみ更新（無い場合は既存の値を保持）
+                # 競走馬登録（P列）：入力欄がある場合のみ更新（無い場合は既存の値を保持）
                 if has_reg_fields:
-                    if len(data[0]) < 14:
-                        ws.update_acell('N1', '競走馬登録')
+                    reg_col = col_letter(H_REGISTRATION)
+                    if len(data[0]) <= H_REGISTRATION:
+                        ensure_columns(ws, len(HORSE_COLUMNS))
+                        ws.update(range_name=f'{reg_col}1', values=[[HORSE_COLUMNS[H_REGISTRATION]]])
                     # update_acell は数値として解釈されるため、他の日付と同じく文字列のまま書き込む
-                    ws.update(f'N{i+1}', [[registration_str]])
-                record_cancel_date_from_url(sh, new_name, request.form.get('jra_url'))
+                    ws.update(f'{reg_col}{i+1}', [[registration_str]])
+                record_cancel_date_from_url(sh, new_name, jra_url)
                 break
         return redirect(f"/horse/{new_name}")
     except Exception as e:
@@ -2860,16 +3390,17 @@ def save_change():
         ws_horses = sh.worksheet("Horses")
         horses_data = ws_horses.get_all_values()
         
-        target_idx = next((i + 1 for i, row in enumerate(horses_data) if len(row) > 0 and row[0] == horse_name), -1)
+        target_idx = next((i + 1 for i, row in enumerate(horses_data) if i > 0 and row_matches_name(row, horse_name)), -1)
                 
         if target_idx != -1:
             if change_type == "転厩":
                 parts = new_val.split('・')
                 new_area = parts[0] if len(parts) > 1 else ""
                 new_stable = parts[1] if len(parts) > 1 else new_val
-                ws_horses.update(f'G{target_idx}:H{target_idx}', [[new_area, new_stable]])
+                ws_horses.update(f'{col_letter(H_AREA)}{target_idx}:{col_letter(H_STABLE)}{target_idx}',
+                                 [[new_area, new_stable]])
             elif change_type == "馬主変更":
-                ws_horses.update(f'F{target_idx}', [[new_val]])
+                ws_horses.update(f'{col_letter(H_OWNER)}{target_idx}', [[new_val]])
             
             ws_changes = sh.worksheet("Changes")
             ws_changes.append_row([date_str, horse_name, change_type, old_val, new_val])
@@ -2928,7 +3459,7 @@ def update_specific_parent():
             headers = ws.row_values(1)
             
             for i, r in enumerate(records):
-                if str(r.get('馬名', '')).strip() == child_name:
+                if record_matches_name(r, child_name):
                     if parent_col in headers:
                         col_idx = headers.index(parent_col) + 1
                         row_idx = i + 2 
@@ -2973,15 +3504,15 @@ def transfer_stable(name):
         
         # 該当馬を検索し、行番号と旧厩舎情報を取得
         for i, row in enumerate(horses_data):
-            if len(row) > 0 and row[0] == horse_name:
+            if i > 0 and row_matches_name(row, horse_name):
                 target_idx = i + 1
-                old_area = row[5] if len(row) > 5 else ""
-                old_stable = row[6] if len(row) > 6 else ""
+                old_area = row[H_AREA] if len(row) > H_AREA else ""
+                old_stable = row[H_STABLE] if len(row) > H_STABLE else ""
                 break
                 
         if target_idx != -1:
-            # Horsesシートの更新 (F列=拠点, G列=厩舎)
-            ws_horses.update(f'F{target_idx}:G{target_idx}', [[new_area, new_stable_name]])
+            # Horsesシートの更新 (H列=拠点, I列=厩舎)
+            ws_horses.update(f'{col_letter(H_AREA)}{target_idx}:{col_letter(H_STABLE)}{target_idx}', [[new_area, new_stable_name]])
             
             # Changesシートに記録
             ws_changes = sh.worksheet("Changes")
@@ -3007,7 +3538,7 @@ def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
     all_horses = get_all_horses()
-    horse = next((h for h in all_horses if len(h)>0 and h[0].strip() == name.strip()), None)
+    horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
 
     if horse is None:
         # セッションから現在のリトライ回数を取得（なければ0）
@@ -3127,37 +3658,37 @@ def horse_detail(name, active_tab):
     sire_info, dam_info = {"line1": "不明", "line2": "不明"}, {"line3": "不明", "line4": "不明"}
     try:
         sh = gc.open(horse_data)
-        if horse and len(horse) > 3 and horse[3]:
+        if horse and len(horse) > H_SIRE and horse[H_SIRE]:
             try:
-                s_data = sh.worksheet("Sire").get_all_values()
-                s_row = next((r for r in s_data if len(r)>0 and r[0] == horse[3]), None)
-                if s_row: sire_info.update({"line1": s_row[2] if len(s_row)>2 else "不明", 
-                                            "line2": s_row[3] if len(s_row)>3 else "不明"})
+                s_data = sh.worksheet("Sire").get_all_values()[1:]
+                s_row = next((r for r in s_data if row_matches_name(r, horse[H_SIRE])), None)
+                if s_row: sire_info.update({"line1": s_row[P_SIRE] if len(s_row)>P_SIRE else "不明", 
+                                            "line2": s_row[P_DAM] if len(s_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
-        if horse and len(horse) > 4 and horse[4]:
+        if horse and len(horse) > H_DAM and horse[H_DAM]:
             try:
-                d_data = sh.worksheet("Dam").get_all_values()
-                d_row = next((r for r in d_data if len(r)>0 and r[0] == horse[4]), None)
-                if d_row: dam_info.update({"line3": d_row[2] if len(d_row)>2 else "不明", 
-                                           "line4": d_row[3] if len(d_row)>3 else "不明"})
+                d_data = sh.worksheet("Dam").get_all_values()[1:]
+                d_row = next((r for r in d_data if row_matches_name(r, horse[H_DAM])), None)
+                if d_row: dam_info.update({"line3": d_row[P_SIRE] if len(d_row)>P_SIRE else "不明", 
+                                           "line4": d_row[P_DAM] if len(d_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
     except: pass
 
-    if horse and len(horse) > 2 and isinstance(horse[2], str):
+    if horse and len(horse) > H_BIRTH and isinstance(horse[H_BIRTH], str):
         horse = list(horse)
-        birth = parse_full_date(horse[2])
+        birth = parse_full_date(horse[H_BIRTH])
         if birth:
-            horse[2] = datetime(birth.year, birth.month, birth.day)
+            horse[H_BIRTH] = datetime(birth.year, birth.month, birth.day)
     
     base_birth_year = None
-    if isinstance(horse[2], datetime):
-        base_birth_year = horse[2].year
-    elif isinstance(horse[2], str):
-        base_birth_year = extract_year(horse[2])
-    elif isinstance(horse[2], dict) and 'year' in horse[2]:
-        base_birth_year = int(horse[2]['year'])
+    if isinstance(horse[H_BIRTH], datetime):
+        base_birth_year = horse[H_BIRTH].year
+    elif isinstance(horse[H_BIRTH], str):
+        base_birth_year = extract_year(horse[H_BIRTH])
+    elif isinstance(horse[H_BIRTH], dict) and 'year' in horse[H_BIRTH]:
+        base_birth_year = int(horse[H_BIRTH]['year'])
     
-    pedigree_data = get_5gen_pedigree(horse[3], horse[4], base_birth_year, gc)
+    pedigree_data = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], base_birth_year, gc)
 
     # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
     # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
@@ -3168,14 +3699,14 @@ def horse_detail(name, active_tab):
     def _horse_blank(idx):
         return len(horse) > idx and (horse[idx] is None or str(horse[idx]).strip() == '')
 
-    horse_status = horse[8].strip() if len(horse) > 8 and horse[8] else ''
-    horse_has_url = len(horse) > 12 and horse[12] and str(horse[12]).strip() != ''
-    horse_has_alert = _horse_blank(5) or _horse_blank(9) or _horse_blank(11)
+    horse_status = horse[H_STATUS].strip() if len(horse) > H_STATUS and horse[H_STATUS] else ''
+    horse_has_url = any(len(horse) > c and str(horse[c] or '').strip() for c in (H_JRA_URL, H_NAR_URL))
+    horse_has_alert = _horse_blank(H_OWNER) or _horse_blank(H_REGION) or _horse_blank(H_BREEDER)
 
     family_table1, family_table2 = [], []
     if dam_node and dam_node.get('full_db_name'):
         family_table1, family_table2 = compute_family_tables(
-            horse[0], horse[1], base_birth_year or 0, horse[3],
+            horse[H_NAME], horse[H_GENDER], base_birth_year or 0, horse[H_SIRE],
             horse_status, horse_has_url, horse_has_alert,
             dam_node.get('name', ''),
             dam_node.get('full_db_name', ''),
@@ -3205,7 +3736,7 @@ def horse_detail(name, active_tab):
 @app.route('/edit_horse/<name>')
 @login_required
 def edit_horse(name):
-    horse = next((h for h in get_all_horses() if len(h)>0 and h[0] == name), None)
+    horse = next((h for h in get_all_horses() if len(h)>0 and (h[H_NAME] == name or row_matches_name(h, name))), None)
     return render_template('edit_horse.html', horse=horse, stables=get_stables_list(), current_year=datetime.now().year) if horse else ("Horse not found", 404)
 
 @app.route('/races')
@@ -3354,8 +3885,8 @@ def race_detail():
         race_req_class = judge_required_class(target_race_data['condition'])
         
         for h in get_all_horses():
-            if len(h) < 7: continue
-            horse_birthday_str = h[2]
+            if len(h) <= H_STABLE: continue
+            horse_birthday_str = h[H_BIRTH]
 
             try:
                 b_year = date_year(horse_birthday_str)
@@ -3363,21 +3894,21 @@ def race_detail():
             except:
                 calculated_age = "不明"
 
-            current_class = get_class_from_results(h[0], date, all_results_dict, horse_birthday_str)
+            current_class = get_class_from_results(h[H_NAME], date, all_results_dict, horse_birthday_str)
 
             if race_req_class == "新馬":
                 if current_class == "新馬":
                     available_horses_with_class.append({
-                        'name': h[0], 'gender': h[1], 'age': calculated_age, 'class': current_class, 'stable': f"{h[5]}・{h[6]}"
+                        'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
                     })
             elif race_req_class == "未勝利":
                 if current_class in ["新馬", "未勝利"]:
                     available_horses_with_class.append({
-                        'name': h[0], 'gender': h[1], 'age': calculated_age, 'class': current_class, 'stable': f"{h[5]}・{h[6]}"
+                        'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
                     })
             elif race_req_class == "オープン" or current_class == race_req_class:
                 available_horses_with_class.append({
-                    'name': h[0], 'gender': h[1], 'age': calculated_age, 'class': current_class, 'stable': f"{h[5]}・{h[6]}"
+                    'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
                 })
                 
     entered_horses = []
@@ -3480,27 +4011,28 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     # 甥・姪／いとこ判定用：ある馬名から「その馬自身の母欄の値」の候補群を引けるようにしておく
     name_candidates = {}
     for h in all_horses:
-        if len(h) > 4 and h[0]:
-            name_candidates.setdefault(h[0], []).append({'母': h[4], '生年月日': h[2] if len(h) > 2 else ''})
+        if len(h) > H_DAM and h[H_NAME]:
+            name_candidates.setdefault(h[H_NAME], []).append({'母': h[H_DAM], '生年月日': h[H_BIRTH]})
 
     sire_records, dam_records = [], []
     try:
         sh = gc.open(horse_data)
         try:
-            dam_records = sh.worksheet('Dam').get_all_records()
+            dam_records = normalize_name_records(sh.worksheet('Dam').get_all_records())
         except Exception:
             dam_records = []
         try:
-            sire_records = sh.worksheet('Sire').get_all_records()
+            sire_records = normalize_name_records(sh.worksheet('Sire').get_all_records())
         except Exception:
             sire_records = []
     except Exception:
         pass
 
     for r in dam_records:
-        n = str(r.get('馬名', '')).strip()
-        if n:
-            name_candidates.setdefault(n, []).append(r)
+        # 和名・英馬名のどちらの表記でも引けるようにする
+        for n in {str(r.get('馬名', '')).strip(), str(r.get('英馬名', '')).strip()}:
+            if n:
+                name_candidates.setdefault(n, []).append(r)
 
     def resolve_granddam_of(dam_field_value, child_birth_year):
         disp_name, embedded_mother, _embedded_year = split_dam_annotation(dam_field_value)
@@ -3532,9 +4064,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     candidates = []
 
     for h in all_horses:
-        if len(h) < 5 or not h[0]:
+        if len(h) <= H_DAM or not h[H_NAME]:
             continue
-        nm = h[0].strip()
+        nm = h[H_NAME].strip()
         if not nm or nm == horse_name:
             continue
         existing_names.add(nm)
@@ -3544,13 +4076,13 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
         candidates.append({
             'name': nm,
-            'gender': h[1] if len(h) > 1 else '',
-            'birth_str': h[2] if len(h) > 2 else '',
-            'sire_disp': h[3] if len(h) > 3 else '',
-            'dam_field': h[4].strip() if len(h) > 4 and h[4] else '',
-            'status': h[8].strip() if len(h) > 8 and h[8] else '',
-            'has_url': len(h) > 12 and h[12] and str(h[12]).strip() != '',
-            'has_alert': _blank(5) or _blank(9) or _blank(11),
+            'gender': h[H_GENDER],
+            'birth_str': h[H_BIRTH],
+            'sire_disp': h[H_SIRE],
+            'dam_field': h[H_DAM].strip() if h[H_DAM] else '',
+            'status': h[H_STATUS].strip() if len(h) > H_STATUS and h[H_STATUS] else '',
+            'has_url': len(h) > H_JRA_URL and h[H_JRA_URL] and str(h[H_JRA_URL]).strip() != '',
+            'has_alert': _blank(H_OWNER) or _blank(H_REGION) or _blank(H_BREEDER),
             'linkable': True,
         })
 
@@ -3883,14 +4415,15 @@ def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, gra
     # （Horsesシート＝実際に登録されている競走馬、Damシート＝血統表専用の繁殖牝馬データ）
     name_candidates = {}
     for h in all_horses:
-        if len(h) > 4 and h[0]:
-            name_candidates.setdefault(h[0], []).append({'母': h[4], '生年月日': h[2] if len(h) > 2 else ''})
+        if len(h) > H_DAM and h[H_NAME]:
+            name_candidates.setdefault(h[H_NAME], []).append({'母': h[H_DAM], '生年月日': h[H_BIRTH]})
     try:
         sh = gc.open(horse_data)
-        for r in sh.worksheet('Dam').get_all_records():
-            n = str(r.get('馬名', '')).strip()
-            if n:
-                name_candidates.setdefault(n, []).append(r)
+        for r in normalize_name_records(sh.worksheet('Dam').get_all_records()):
+            # 和名・英馬名のどちらの表記でも引けるようにする
+            for n in {str(r.get('馬名', '')).strip(), str(r.get('英馬名', '')).strip()}:
+                if n:
+                    name_candidates.setdefault(n, []).append(r)
     except Exception:
         pass
 
@@ -3928,17 +4461,17 @@ def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, gra
     relatives = []
 
     for h in all_horses:
-        if len(h) < 5:
+        if len(h) <= H_DAM:
             continue
 
-        target_name = h[0].strip() if h[0] else ''
+        target_name = h[H_NAME].strip() if h[H_NAME] else ''
         if not target_name or target_name == horse_name:
             continue
 
-        target_gender = h[1]
-        target_birth_str = h[2]
-        target_sire = h[3]
-        target_dam = h[4].strip()
+        target_gender = h[H_GENDER]
+        target_birth_str = h[H_BIRTH]
+        target_sire = h[H_SIRE]
+        target_dam = h[H_DAM].strip()
 
         if not target_dam:
             continue
@@ -3980,8 +4513,8 @@ def compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, gra
             def _blank(idx):
                 return len(h) > idx and (h[idx] is None or str(h[idx]).strip() == '')
             has_alert = _blank(5) or _blank(9) or _blank(11)
-            target_status = h[8].strip() if len(h) > 8 and h[8] else ''
-            has_url = len(h) > 12 and h[12] and str(h[12]).strip() != ''
+            target_status = h[H_STATUS].strip() if len(h) > H_STATUS and h[H_STATUS] else ''
+            has_url = len(h) > H_JRA_URL and h[H_JRA_URL] and str(h[H_JRA_URL]).strip() != ''
 
             relatives.append({
                 "relation": relation,
@@ -4028,7 +4561,7 @@ def api_available_races():
     if not horse:
         return {"error": "馬が見つかりませんでした。"}, 404
         
-    horse_birthday_str = horse[2]
+    horse_birthday_str = horse[H_BIRTH]
     all_results_dict = load_all_horse_results()
     
     # 対象日時点での馬のクラスを取得

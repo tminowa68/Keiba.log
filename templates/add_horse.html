@@ -27,6 +27,11 @@
         </div>
 
         <div style="margin-bottom:15px;">
+            <label>英馬名：</label>
+            <textarea name="name_en" placeholder="英馬名" rows="1" class="auto-grow-textarea" style="width: 30ch; margin-top:5px;"></textarea>
+        </div>
+
+        <div style="margin-bottom:15px;">
             <label>血統：</label><br>
             <textarea name="sire" placeholder="父" rows="1" class="auto-grow-textarea auto-grow-textarea-inline" style="width: 20ch;"></textarea>
             ×
@@ -410,6 +415,8 @@ async function fetchFromJra() {
         const stableSelect = document.getElementById('reg_stable_select');
 
         if (data.name && nameInput) { nameInput.value = data.name; autoResizeTextarea(nameInput); }
+        const nameEnInput = document.querySelector('[name="name_en"]');
+        if (data.name_en && nameEnInput) { nameEnInput.value = data.name_en; autoResizeTextarea(nameEnInput); }
         if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
         if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
         if (data.owner && ownerInput) { ownerInput.value = data.owner; autoResizeTextarea(ownerInput); }
