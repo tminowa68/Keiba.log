@@ -424,6 +424,7 @@ _JBIS_HEADERS = {
     "Referer": "https://www.jbis.or.jp/",
 }
 _ALPHABET_NAME_RE = re.compile(r'^[A-Za-z0-9 .\'\-]+$')
+_KATAKANA_NAME_RE = re.compile(r'^[\u30A0-\u30FF\s　]+$')
 _COUNTRY_SUFFIX_RE = re.compile(r'[（(][^（）()]*[）)]\s*$')
 
 class JbisMultipleMatchError(Exception):
@@ -489,6 +490,20 @@ def search_jbis_horse_url(horse_name, p_type):
     if not link or not link.get('href'):
         return None
     return requests.compat.urljoin(JBIS_BASE, link.get('href'))
+
+def _resolve_jbis_sub_name(name, url):
+    """リンク先ページの<span class="hdg1-search__sub">の馬名（国名の括弧書きは除去）を返す。
+    取得できなければ name をそのまま返す"""
+    if not url:
+        return name
+    try:
+        sub_span = _fetch_jbis_soup(url).select_one('span.hdg1-search__sub')
+        sub_name = _strip_country_suffix(sub_span.get_text(strip=True)) if sub_span else ''
+        if sub_name:
+            return sub_name
+    except Exception:
+        pass
+    return name
 
 def _resolve_jbis_display_name(name, url):
     """
@@ -671,15 +686,23 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None):
     detail_soup = _fetch_jbis_soup(horse_url)
     result = {"jbis_url": horse_url}
 
+    # 登録する馬の名前が英字で、父・母がカタカナ表記の場合は、父・母のページの
+    # <span class="hdg1-search__sub">（例：Swan River(IRE)）から英字の馬名を取得する
+    english_horse = bool(p_name and _ALPHABET_NAME_RE.match(p_name.strip()))
+
+    def _parent_name(name, url):
+        if english_horse:
+            # 英字の馬の父・母は英字で揃える（英字表記の父・母はそのまま使う）
+            return _resolve_jbis_sub_name(name, url) if _KATAKANA_NAME_RE.match(name or '') else name
+        return _resolve_jbis_display_name(name, url)
+
     sire_info = _extract_jbis_parent(detail_soup, 'data-3__male', ['父', 'Sire'])
     if sire_info:
-        name, url = sire_info
-        result['sire'] = _resolve_jbis_display_name(name, url)
+        result['sire'] = _parent_name(*sire_info)
 
     dam_info = _extract_jbis_parent(detail_soup, 'data-3__female', ['母', 'Dam'])
     if dam_info:
-        name, url = dam_info
-        result['dam'] = _resolve_jbis_display_name(name, url)
+        result['dam'] = _parent_name(*dam_info)
 
     return result
 
@@ -2696,8 +2719,53 @@ def add_parent():
         p_type=p_type, 
         p_name=p_name, 
         origin=request.args.get('origin', ''),
-        data=existing_data
+        data=existing_data,
+        initial_tab=decide_parent_url_tab(p_name, p_type, request.args.get('child', ''))
         )
+
+def decide_parent_url_tab(p_name, p_type, child_name=''):
+    """親馬の登録画面で最初に表示するタブを決める。
+    仔の産地が海外以外で、仔の抹消日または生年が1986年以降なら「jra」、それ以外は「other」。
+    仔は child_name（無ければ父・母がこの馬になっている馬）をHorses・Sire・Damシートから探す"""
+    def cell(r, i):
+        return r[i].strip() if len(r) > i and r[i] else ''
+
+    try:
+        sh = gc.open(horse_data)
+        # (シート名, 生年月日の列, 父の列, 母の列, 産地の列)
+        layouts = [("Horses", 2, 3, 4, 9), ("Sire", 1, 2, 3, 5), ("Dam", 1, 2, 3, 5)]
+        child = None
+        for title, birth_col, sire_col, dam_col, region_col in layouts:
+            try:
+                rows = sh.worksheet(title).get_all_values()[1:]
+            except gspread.WorksheetNotFound:
+                continue
+            parent_col = sire_col if p_type == 'Sire' else dam_col
+            for r in rows:
+                if (child_name and cell(r, 0) == child_name) or (
+                        not child_name and p_name and cell(r, parent_col) == p_name):
+                    child = (cell(r, 0), date_year(cell(r, birth_col)), cell(r, region_col))
+                    break
+            if child:
+                break
+        if not child:
+            return 'other'
+
+        name, birth_year, region = child
+        cancel_year = None
+        try:
+            for r in sh.worksheet("抹消").get_all_values()[1:]:
+                if cell(r, 1) == name:
+                    cancel_year = date_year(cell(r, 0))
+                    break
+        except gspread.WorksheetNotFound:
+            pass
+
+        if region != '海外' and any(y and y >= 1986 for y in (cancel_year, birth_year)):
+            return 'jra'
+    except Exception:
+        pass
+    return 'other'
 
 @app.route('/update_horse', methods=['POST'])
 @login_required
