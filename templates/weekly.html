@@ -55,20 +55,29 @@
     </p>
 </section>
 
+{% macro horse_cells(h) %}
+            <td>{{ h.date_label }}</td>
+            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td class="col-gender {{ 'female-text' if h.gender == '牝' }}">{{ h.gender }}</td>
+            <td class="col-age">{{ h.age }}</td>
+{%- endmacro %}
+
+{% macro stable_cell(h) %}
+            <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+{%- endmacro %}
+
 <section>
     <h3 class="m-0">登録馬（{{ registered|length }}頭）</h3>
     {% if registered %}
     <table>
-        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th></tr></thead>
+        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>年齢</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th></tr></thead>
         <tbody>
         {% for h in registered %}
         <tr>
-            <td>{{ h.date_label }}</td>
-            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-            <td>{{ h.gender }}</td>
-            <td>{{ h.sire }}</td>
-            <td>{{ h.dam }}</td>
-            <td>{% if not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+{{ horse_cells(h) }}
+            <td class="col-parent"><span class="text-10ch" title="{{ h.sire }}">{{ h.sire }}</span></td>
+            <td class="col-parent"><span class="text-10ch" title="{{ h.dam }}">{{ h.dam }}</span></td>
+{{ stable_cell(h) }}
             <td>{{ h.status }}</td>
         </tr>
         {% endfor %}
@@ -83,13 +92,12 @@
     <h3 class="m-0">抹消馬（{{ cancelled|length }}頭）</h3>
     {% if cancelled %}
     <table>
-        <thead><tr><th>抹消日</th><th>馬名</th><th>厩舎</th></tr></thead>
+        <thead><tr><th>抹消日</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th></tr></thead>
         <tbody>
         {% for h in cancelled %}
         <tr>
-            <td>{{ h.date_label }}</td>
-            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-            <td>{% if not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+{{ horse_cells(h) }}
+{{ stable_cell(h) }}
         </tr>
         {% endfor %}
         </tbody>
@@ -103,13 +111,12 @@
     <h3 class="m-0">放牧入厩（{{ pasture|length }}件）</h3>
     {% if pasture %}
     <table>
-        <thead><tr><th>年月日</th><th>馬名</th><th>厩舎</th><th>区分</th></tr></thead>
+        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th><th>区分</th></tr></thead>
         <tbody>
         {% for h in pasture %}
         <tr>
-            <td>{{ h.date_label }}</td>
-            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-            <td>{% if not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+{{ horse_cells(h) }}
+{{ stable_cell(h) }}
             <td>{{ h.type }}</td>
         </tr>
         {% endfor %}
@@ -124,13 +131,12 @@
     <h3 class="m-0">変更（{{ changes|length }}件）</h3>
     {% if changes %}
     <table>
-        <thead><tr><th>年月日</th><th>馬名</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th></tr></thead>
+        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th></tr></thead>
         <tbody>
         {% for h in changes %}
         <tr>
-            <td>{{ h.date_label }}</td>
-            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-            <td>{% if not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+{{ horse_cells(h) }}
+{{ stable_cell(h) }}
             <td>{{ h.type }}</td>
             <td>{{ h.old }}</td>
             <td>{{ h.new }}</td>
@@ -265,5 +271,11 @@ function resetFilter() {
 window.onload = function() {
     updateStableDropdown('', null);
 };
+
+// URLのボタンがあれば、ページを開いた時に最初のボタンにフォーカスする（Enterでそのまま開ける）
+window.addEventListener('DOMContentLoaded', () => {
+    const firstUrlButton = document.querySelector('.btn-url');
+    if (firstUrlButton) firstUrlButton.focus();
+});
 </script>
 {% endblock %}

@@ -425,10 +425,25 @@ form .select-stables {
 .col-status, .col-gender, .col-age {
     width: 2em;
     text-align: center;
+    white-space: nowrap;
 }
-.col-sire {
-    min-width: 9em; /* 最低9文字幅 */
-    width: auto;
+.col-sire, .col-parent {
+    width: 10em;
+}
+/* 父・母の馬名：カタカナ10文字の幅で固定し、それより長い馬名は最後を「…」にする */
+.text-10ch {
+    display: block;
+    width: 10em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 週間レポート：Sire・Damシートの馬（種馬は青字、繁殖は赤字） */
+.parent-sire {
+    color: blue;
+}
+.parent-dam {
+    color: red;
 }
 
 .btn-reset {
@@ -459,6 +474,10 @@ form .select-stables {
 }
 .btn-url:hover {
     background: #e68900;
+}
+.btn-url:focus {
+    outline: 3px solid #1e88e5;
+    outline-offset: 2px;
 }
 
 /* add_parentのスタイル */
@@ -1839,13 +1858,6 @@ form .select-stables {
     }
     #tables_area .col-name {
         width: 6em;
-    }
-    #tables_area .col-sire {
-        min-width: 6em;
-        max-width: 8em;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
     }
 }
 
