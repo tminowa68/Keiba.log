@@ -1603,10 +1603,13 @@ def import_horses():
         headers = list(data[0]) if data else []
         rows = [list(r) for r in data[1:]]
 
-        while len(headers) < 14:
+        while len(headers) < 15:
             headers.append('')
         if _blank(headers[13]):
             headers[13] = '競走馬登録'
+        if _blank(headers[14]):
+            headers[14] = '登録時状態'
+        ensure_columns(ws, 15)
 
         name_to_index = {r[0]: i for i, r in enumerate(rows) if r and r[0]}
 
@@ -1640,6 +1643,7 @@ def import_horses():
                 new_row[10] = h['detail']
                 new_row[11] = h['breeder']
                 new_row[13] = registration_str
+                new_row[14] = status
                 rows.append(new_row)
                 name_to_index[name] = len(rows) - 1
                 added += 1
@@ -1667,6 +1671,8 @@ def import_horses():
                     new_status = resolve_registration_status(row[8], birth_year, reg_y, reg_m)
                     if new_status != row[8]:
                         row[8] = new_status
+                    if _blank(row[14]):
+                        row[14] = row[8]
                     changed = True
 
                 if changed:
@@ -1842,8 +1848,11 @@ def import_trainer_horses():
         data = ws.get_all_values()
         headers = list(data[0]) if data else []
         rows = [list(r) for r in data[1:]]
-        while len(headers) < 14:
+        while len(headers) < 15:
             headers.append('')
+        if not headers[14]:
+            headers[14] = '登録時状態'
+        ensure_columns(ws, 15)
         for r in rows:
             while len(r) < len(headers):
                 r.append('')
@@ -1891,6 +1900,7 @@ def import_trainer_horses():
                     new_row[col] = val
                 new_row[8] = resolve_trainer_page_status('', h)
                 new_row[12] = h['url']
+                new_row[14] = new_row[8]
                 rows.append(new_row)
                 name_to_index[name] = len(rows) - 1
                 added.append(name)
@@ -2175,23 +2185,41 @@ def weekly():
         return row[i].strip() if len(row) > i and row[i] else ''
 
     registered, cancelled, pasture, changes = [], [], [], []
+    horse_info = {}   # Horsesシートの馬：馬名 → 性別・生年・厩舎・URLの有無
+    parent_info = {}  # Sire・Damシートの馬（Horsesシートに無い馬の性別・URLボタンの判定に使う）
     try:
         sh = gc.open(horse_data)
 
         horses_data = sh.worksheet("Horses").get_all_values()[1:]
-        stable_of = {}
-        has_url_names = set()  # Horsesシートで URL（M列）が入力されている馬
         for r in horses_data:
             name = cell(r, 0)
             if not name:
                 continue
-            stable_of[name] = f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7)
-            if cell(r, 12):
-                has_url_names.add(name)
+            horse_info[name] = {
+                'gender': cell(r, 1), 'birth_year': date_year(cell(r, 2)),
+                'stable': f"{cell(r, 6)}・{cell(r, 7)}" if cell(r, 6) else cell(r, 7),
+                'has_url': bool(cell(r, 12)),
+            }
             reg_date = parse_full_date(cell(r, 13))
             if in_week(reg_date):
-                registered.append({'date': reg_date, 'name': name, 'gender': cell(r, 1),
-                                   'sire': cell(r, 3), 'dam': cell(r, 4), 'status': cell(r, 8)})
+                # 状態は登録した時の値（O列）で固定する。O列が無い馬は、競走馬登録日と生年から
+                # 登録時の状態（早期／空欄）を求める
+                status = cell(r, 14)
+                if not status:
+                    status = resolve_registration_status('', date_year(cell(r, 2)) or '',
+                                                         reg_date.year, reg_date.month)
+                registered.append({'date': reg_date, 'name': name,
+                                   'sire': cell(r, 3), 'dam': cell(r, 4), 'status': status})
+
+        for p_type, gender in (('Sire', '牡'), ('Dam', '牝')):
+            try:
+                for r in sh.worksheet(p_type).get_all_values()[1:]:
+                    name = cell(r, 0)
+                    if name and name not in parent_info:
+                        parent_info[name] = {'type': p_type, 'gender': gender,
+                                             'birth_year': date_year(cell(r, 1)), 'has_url': bool(cell(r, 8))}
+            except gspread.WorksheetNotFound:
+                pass
 
         # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
         for r in sh.worksheet("Changes").get_all_values()[1:]:
@@ -2215,21 +2243,31 @@ def weekly():
                 if in_week(out_date):
                     pasture.append({'date': out_date, 'name': cell(r, 1), 'type': '放牧'})
                 if in_week(in_date):
-                    pasture.append({'date': in_date, 'name': cell(r, 1), 'type': '入厩'})
+                    # 入厩は元の状態も表示する（D列が無い記録は、放牧日がある行なら放牧から）
+                    before = cell(r, 3) or ('放牧' if out_date else '')
+                    label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
+                    pasture.append({'date': in_date, 'name': cell(r, 1), 'type': label})
         except gspread.WorksheetNotFound:
             pass
     except Exception as e:
         flash(f"データの読み込みに失敗しました: {e}")
-        stable_of, has_url_names = {}, set()
 
     for items in (registered, cancelled, pasture, changes):
         for item in items:
             # Horsesシートに登録されている馬だけ詳細ページへのリンクを付ける。厩舎の列には、
-            # 未登録の馬は競走馬の登録、登録済みでURLが無い馬は編集画面へ進む「URL」ボタンを表示する
-            item['linkable'] = item['name'] in stable_of
-            item['has_url'] = item['name'] in has_url_names
-            item['stable'] = stable_of.get(item['name'], '')
-            item['date_label'] = format_date_jp(item['date'], weekday=True)
+            # 未登録の馬は競走馬の登録、URLが無い馬は編集画面へ進む「URL」ボタンを表示する
+            # （Sire・Damシートにある馬は親馬の登録画面へ進む）
+            info = horse_info.get(item['name'])
+            parent = None if info else parent_info.get(item['name'])
+            item['linkable'] = info is not None
+            item['parent_type'] = parent['type'] if parent else ''
+            item['has_url'] = (info or parent or {}).get('has_url', False)
+            item['stable'] = info['stable'] if info else ''
+            item['gender'] = (info or parent or {}).get('gender', '')
+            birth_year = (info or parent or {}).get('birth_year')
+            item['age'] = f"{item['date'].year - birth_year}歳" if birth_year else ''
+            # 年は見出しの週でわかるため、日付は月日と曜日だけ表示する
+            item['date_label'] = f"{item['date'].month}月{item['date'].day}日({JP_WEEKDAYS[item['date'].weekday()]})"
         items.sort(key=lambda x: (x['date'], x['name']))
 
     if stable_filter:
@@ -2271,9 +2309,12 @@ def add_horse():
         registration_str = format_date8(reg_y, reg_m, reg_d) if reg_y and reg_m else ''
         status = resolve_registration_status(request.form.get('status'), y, reg_y, reg_m)
 
-        # 競走馬登録列（N列）の見出しが無ければ追加する
-        if len(ws.row_values(1)) < 14:
-            ws.update_acell('N1', '競走馬登録')
+        # 競走馬登録列（N列）・登録時状態列（O列）の見出しが無ければ追加する
+        header = ws.row_values(1)
+        if len(header) < 15:
+            ensure_columns(ws, 15)
+            ws.update(range_name='N1:O1', values=[[header[13] if len(header) > 13 and header[13] else '競走馬登録',
+                                                   '登録時状態']])
 
         ws.append_row([
             name,
@@ -2288,7 +2329,8 @@ def add_horse():
             request.form.get('birthplace_detail'),
             request.form.get('breeder'),
             request.form.get('jra_url'),
-            registration_str
+            registration_str,
+            status            # O列: 登録時状態（週間レポートの登録馬に表示する）
         ])
         sort_and_resize_table(ws, sort_col_index=0)
         record_cancel_date_from_url(sh, name, request.form.get('jra_url'))
@@ -2423,11 +2465,16 @@ def record_pasture_changes(sh, changes, today_str):
                if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
     if not changes:
         return
-    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日"])
+    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日", "入厩前の状態"])
     pasture_data = ws_pasture.get_all_values()
+    # D列：入厩した時の元の状態（早期→入厩・放牧→入厩を週間レポートに表示するため）
+    ensure_columns(ws_pasture, 4)
+    header = pasture_data[0] if pasture_data else []
+    if len(header) < 4 or not header[3]:
+        ws_pasture.update(range_name='D1', values=[['入厩前の状態']])
 
     append_rows, cell_updates = [], []
-    for horse_name, _, new_status in changes:
+    for horse_name, old_status, new_status in changes:
         if new_status == '放牧':
             append_rows.append([today_str, horse_name, ''])
             continue
@@ -2441,9 +2488,10 @@ def record_pasture_changes(sh, changes, today_str):
                 open_row_idx = idx
                 break
         if open_row_idx is not None:
-            cell_updates.append({'range': f'C{open_row_idx + 1}', 'values': [[today_str]]})
+            cell_updates.append({'range': f'C{open_row_idx + 1}:D{open_row_idx + 1}',
+                                 'values': [[today_str, old_status]]})
         else:
-            append_rows.append(['', horse_name, today_str])
+            append_rows.append(['', horse_name, today_str, old_status])
 
     if cell_updates:
         ws_pasture.batch_update(cell_updates)
@@ -2708,6 +2756,14 @@ def update_horse():
         return redirect(f"/horse/{new_name}")
     except Exception as e:
         return f"エラーが発生しました: {e}", 400
+
+def ensure_columns(ws, count):
+    """シートの列数が count 未満なら列を追加する（列数を超える範囲への書き込みはエラーになるため）"""
+    try:
+        if ws.col_count < count:
+            ws.add_cols(count - ws.col_count)
+    except Exception:
+        pass
 
 def get_or_create_worksheet(sh, title, headers):
     try:

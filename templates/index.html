@@ -93,7 +93,7 @@
                             {{ current_year - horse[2].year }}歳
                         {% else %}-{% endif %}
                     </td>
-                    <td class="col-sire">{{ horse[3] }}</td>
+                    <td class="col-sire"><span class="text-10ch" title="{{ horse[3] }}">{{ horse[3] }}</span></td>
                     <td>{{ horse[6] }}・{{ horse[7] }}</td>
                 </tr>
                 {% endfor %}
@@ -508,7 +508,7 @@ function renderAgeTables() {
                             </td>
                             <td class="col-gender ${genderClass}">${h.gender}</td>
                             <td class="col-age">${h.age || '-'}歳</td>
-                            <td class="col-sire">${h.sire}</td>
+                            <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
                             <td>${h.stable}</td>
                         </tr>
                         `;
@@ -563,7 +563,7 @@ function renderAgeTables() {
                                 </td>
                                 <td class="col-gender ${genderClass}">${h.gender}</td>
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
-                                <td class="col-sire">${h.sire}</td>
+                                <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
                             </tr>
                             `;
                         }).join('')}
