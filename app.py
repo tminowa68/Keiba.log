@@ -571,6 +571,111 @@ def _extract_jbis_parent(soup, class_name, label_texts):
 
     return None
 
+# --- equibase（アメリカ等の海外産馬）の競走馬ページからの取得 ---
+EQUIBASE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
+}
+_ENGLISH_MONTHS = {m: i for i, m in enumerate(
+    ['january', 'february', 'march', 'april', 'may', 'june', 'july',
+     'august', 'september', 'october', 'november', 'december'], start=1)}
+# 馬主・生産者が分からないときの表記（空欄として扱う）
+_EQUIBASE_EMPTY_VALUES = {'', 'n/a', 'na', 'unknown', 'none', '-'}
+
+# 地域変換表シートの初期値（equibaseの馬名の後ろの「(KY)」などの略称 → 産地（海外）の地域名）
+REGION_CONVERSION_DEFAULTS = (
+    [('USA', 'アメリカ')]
+    + [(code, 'アメリカ') for code in (
+        'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH '
+        'NJ NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY').split()]
+    + [('CAN', 'カナダ')]
+    + [(code, 'カナダ') for code in 'AB BC MB NB NL NS ON PE QC SK'.split()]
+    + [('MEX', 'メキシコ'), ('GB', 'イギリス'), ('IRE', 'アイルランド'), ('FR', 'フランス'), ('GER', 'ドイツ'),
+       ('ITY', 'イタリア'), ('DEN', 'デンマーク'), ('SWE', 'スウェーデン'), ('AUS', 'オーストラリア'),
+       ('NZ', 'ニュージーランド'), ('ARG', 'アルゼンチン'), ('CHI', 'チリ'), ('BRZ', 'ブラジル'),
+       ('URU', 'ウルグアイ'), ('PER', 'ペルー'), ('UAE', 'アラブ首長国連邦'), ('SAU', 'サウジアラビア'),
+       ('SAF', '南アフリカ')]
+)
+
+def get_region_conversion_map():
+    """スプレッドシートの「地域変換表」シート（A列：略称、B列：地域名）を読み込む。
+    シートが無ければ初期値で作成する。"""
+    sh = gc.open(horse_data)
+    try:
+        rows = sh.worksheet("地域変換表").get_all_values()[1:]
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title="地域変換表", rows=len(REGION_CONVERSION_DEFAULTS) + 20, cols=2)
+        ws.update(range_name='A1', values=[["略称", "地域"]] + [list(r) for r in REGION_CONVERSION_DEFAULTS])
+        rows = [list(r) for r in REGION_CONVERSION_DEFAULTS]
+    return {r[0].strip().upper(): r[1].strip() for r in rows if len(r) > 1 and r[0].strip() and r[1].strip()}
+
+def is_equibase_url(url):
+    from urllib.parse import urlparse
+    parsed = urlparse(url or '')
+    return parsed.scheme in ("http", "https") and parsed.netloc.endswith("equibase.com")
+
+def _equibase_labeled_value(soup, label):
+    """「Owner: 〇〇」「Breeder: 〇〇」の値を取り出す（値がリンクの場合・文字だけの場合の両方に対応）。
+    N/A・Unknown・空欄の場合は空文字を返す。"""
+    label_re = re.compile(rf'\b{label}\s*:', re.I)
+    node = soup.find(string=label_re)
+    if node is None:
+        return ''
+    value = label_re.split(str(node), maxsplit=1)[1]
+    # 同じ文字列の中に続けて別の項目（Trainer: など）があれば、そこで区切る
+    value = re.split(r'\b[A-Z][A-Za-z ]{1,20}:', value, maxsplit=1)[0]
+    if not value.strip():
+        # 値がリンク（<a>）などの別要素になっている場合：ラベルの後ろの要素から探す
+        for siblings in (node.next_siblings, node.parent.next_siblings if node.parent else []):
+            for sib in siblings:
+                text = sib.get_text(' ', strip=True) if hasattr(sib, 'get_text') else str(sib).strip()
+                if text:
+                    value = re.split(r'\b[A-Z][A-Za-z ]{1,20}:', text, maxsplit=1)[0]
+                    break
+            if value.strip():
+                break
+    value = re.sub(r'\s+', ' ', value).strip()
+    return '' if value.lower() in _EQUIBASE_EMPTY_VALUES else value
+
+def fetch_equibase_horse_info(url):
+    """equibaseの競走馬ページから、生年月日・産地（海外）・地域・馬主名・生産牧場を取得する"""
+    resp = requests.get(url, headers=EQUIBASE_HEADERS, timeout=25)
+    resp.raise_for_status()
+    resp.encoding = resp.apparent_encoding or 'utf-8'
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    # equibaseの馬は海外産なので、産地は「海外」にする
+    result = {'equibase_url': url, 'birthplace_region': '海外'}
+
+    # 馬名の後ろの「(MD)」などの略称から地域を求める（地域変換表シートで変換）
+    header = soup.select_one('h2.horse-name-header')
+    if header:
+        m = re.search(r'\(([A-Za-z]{2,4})\)\s*$', header.get_text(' ', strip=True))
+        if m:
+            code = m.group(1).upper()
+            result['origin_code'] = code
+            detail = get_region_conversion_map().get(code)
+            if detail:
+                result['birthplace_detail'] = detail
+
+    # 1つ目の「TB, B, M, foaled March 26, 1998」から生年月日
+    for h5 in soup.select('h5.horse-profile-top-bar-headings'):
+        m = re.search(r'foaled\s+([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})', h5.get_text(' ', strip=True), re.I)
+        if m and m.group(1).lower() in _ENGLISH_MONTHS:
+            result['birth_year'] = m.group(3)
+            result['birth_month'] = str(_ENGLISH_MONTHS[m.group(1).lower()])
+            result['birth_day'] = str(int(m.group(2)))
+            break
+
+    owner = _equibase_labeled_value(soup, 'Owner')
+    if owner:
+        result['owner'] = owner
+    breeder = _equibase_labeled_value(soup, 'Breeder')
+    if breeder:
+        result['breeder'] = breeder
+    return result
+
 def fetch_other_horse_info(p_name, p_type, direct_url=None):
     """
     直接URLが指定されていればそのページから、指定がなければJBISサーチで馬名から特定した
@@ -578,6 +683,8 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None):
     父・母の名前がアルファベット表記の場合は、それぞれの詳細ページから
     <span class="hdg1-search__sub"> の値（国名の括弧書きを除いたもの）を採用する。
     """
+    if direct_url and is_equibase_url(direct_url):
+        return fetch_equibase_horse_info(direct_url)
     if direct_url:
         horse_url = direct_url
     else:
@@ -1229,7 +1336,8 @@ def api_fetch_other_horse():
         return jsonify({"error": "馬名またはURLが取得できませんでした。"}), 400
     try:
         data = fetch_other_horse_info(p_name, p_type, direct_url=direct_url)
-        if not data.get('sire') and not data.get('dam'):
+        if not any(data.get(k) for k in ('sire', 'dam', 'birth_year', 'owner', 'breeder', 'birthplace_detail', 'origin_code')):
+            # （equibaseの産地「海外」は常に入るため、判定には使わない）
             return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
         return jsonify(data), 200
     except JbisMultipleMatchError as e:
