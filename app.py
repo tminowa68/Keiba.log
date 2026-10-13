@@ -5,7 +5,7 @@ import requests
 import email
 from bs4 import BeautifulSoup
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 
@@ -119,6 +119,52 @@ def normalize_name_records(records):
         if not str(r.get('馬名', '') or '').strip() and str(r.get('英馬名', '') or '').strip():
             r['馬名'] = str(r.get('英馬名')).strip()
     return records
+
+# ==============================================================================
+# スプレッドシートの読み込み待ち
+# ==============================================================================
+class SheetNotReady(Exception):
+    """スプレッドシートを読み込めなかった（通信エラー・読み込み制限・データが0件など）"""
+    pass
+
+# 読み込み待ちの画面を何回まで自動で再読み込みするか（それを超えたら再読み込み／ホームを選ぶ画面）
+SHEET_RETRY_LIMIT = 5
+
+def sheet_strict():
+    """競走馬一覧・詳細などの画面では、読み込みに失敗したら空のまま表示せず読み込み待ちにする"""
+    try:
+        return bool(getattr(g, 'strict_sheets', False))
+    except RuntimeError:
+        return False
+
+def sheet_not_ready(message):
+    """読み込み待ちの画面の対象なら SheetNotReady を送出する"""
+    if sheet_strict():
+        raise SheetNotReady(message)
+
+def wait_for_sheets(view):
+    """スプレッドシートの読み込みが完了するまで、1秒ごとに再読み込みする画面にする"""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        g.strict_sheets = True
+        try:
+            return view(*args, **kwargs)
+        except SheetNotReady as e:
+            print(f"スプレッドシートの読み込み待ち（{request.path}）: {e}")
+            try:
+                retry = int(request.args.get('_retry', '0'))
+            except ValueError:
+                retry = 0
+            params = request.args.to_dict()
+            params['_retry'] = str(retry + 1)
+            retry_url = request.path + '?' + '&'.join(
+                f"{k}={requests.utils.quote(v, safe='')}" for k, v in params.items())
+            params['_retry'] = '0'
+            reload_url = request.path + '?' + '&'.join(
+                f"{k}={requests.utils.quote(v, safe='')}" for k, v in params.items())
+            return render_template('loading.html', retry=retry, retry_limit=SHEET_RETRY_LIMIT,
+                                   retry_url=retry_url, reload_url=reload_url), 503
+    return wrapper
 
 # ==============================================================================
 # 初期設定 (スプレッドシート)
@@ -874,8 +920,13 @@ def get_all_horses():
             if r and not str(r[0]).strip() and len(r) > 1 and str(r[1]).strip():
                 r[0] = r[1]
             rows.append(r)
+        if not rows:
+            sheet_not_ready("Horsesシートのデータが0件です")
         return rows
-    except Exception:
+    except SheetNotReady:
+        raise
+    except Exception as e:
+        sheet_not_ready(f"Horsesシートを読み込めませんでした: {e}")
         return []
 
 def get_stables_list():
@@ -942,8 +993,13 @@ def get_stables_list():
                         })
             except gspread.WorksheetNotFound:
                 continue
+        if not all_stables:
+            sheet_not_ready("美浦・栗東シートのデータが0件です")
         return all_stables
-    except Exception:
+    except SheetNotReady:
+        raise
+    except Exception as e:
+        sheet_not_ready(f"美浦・栗東シートを読み込めませんでした: {e}")
         return []
 
 # --- 賞金・クラス判定 ---
@@ -1248,8 +1304,12 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         dam_data = wb.worksheet('Dam').get_all_records()
     except Exception as e:
         print(f"Spreadsheet fetch error: {e}")
+        sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
         sire_data = []
         dam_data = []
+    if not sire_data or not dam_data:
+        # Sire・Damシートの登録が0件＝読み込みに失敗している（親馬が見つからないのとは区別する）
+        sheet_not_ready("Sire・Damシートのデータが0件です")
 
     # 馬名は和名ならA列（馬名）、英字ならB列（英馬名）から探す
     def _index_by(records, key):
@@ -1437,6 +1497,7 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/')
+@wait_for_sheets
 def index():
     stable_filter = request.args.get('stable', '')
     raw_results = get_all_horses()
@@ -1606,6 +1667,7 @@ def api_parse_equibase_text():
 
 @app.route('/add_horse')
 @login_required
+@wait_for_sheets
 def add_horse_page():
     return render_template('add_horse.html', 
                            stables=get_stables_list(), 
@@ -2444,6 +2506,7 @@ def import_cancel_horses():
 
 
 @app.route('/weekly')
+@wait_for_sheets
 def weekly():
     """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
     base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
@@ -2464,6 +2527,8 @@ def weekly():
         sh = gc.open(horse_data)
 
         horses_data = sh.worksheet("Horses").get_all_values()[1:]
+        if not horses_data:
+            sheet_not_ready("Horsesシートのデータが0件です")
         for r in horses_data:
             name = display_name_of_row(r)
             if not name:
@@ -2524,7 +2589,10 @@ def weekly():
                     pasture.append({'date': in_date, 'name': cell(r, 1), 'type': label})
         except gspread.WorksheetNotFound:
             pass
+    except SheetNotReady:
+        raise
     except Exception as e:
+        sheet_not_ready(f"週間レポートのデータを読み込めませんでした: {e}")
         flash(f"データの読み込みに失敗しました: {e}")
 
     for items in (registered, cancelled, pasture, changes):
@@ -3599,6 +3667,7 @@ def horse_detail_redirect(name):
     return redirect(url_for('horse_detail', name=name, active_tab='profile'))
 
 @app.route('/horse/<name>/<active_tab>')
+@wait_for_sheets
 def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
@@ -3606,24 +3675,10 @@ def horse_detail(name, active_tab):
     horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
 
     if horse is None:
-        # セッションから現在のリトライ回数を取得（なければ0）
-        retry_count = session.get('horse_retry_count', 0)
+        # 読み込み待ちの画面で1秒ごとに読み込み直し、5回で見つからなければ
+        # 再読み込みするかホームに戻るかを選ぶ画面にする
+        raise SheetNotReady(f"Horsesシートに『{name}』が見つかりません")
 
-        # 5回未満の場合はカウントアップして同じページへリダイレクト
-        if retry_count < 5:
-            session['horse_retry_count'] = retry_count + 1
-            return redirect(
-                url_for('horse_detail', name=name, active_tab=active_tab)
-            )
-
-        # 5回リトライしてもダメだった場合はセッションをクリアしてエラー遷移
-        session.pop('horse_retry_count', None)
-        flash('対象の馬が見つかりませんでした。')
-        return redirect(url_for('index'))
-
-    # 成功した場合は、次回のためにリトライカウントをリセットしておく
-    session.pop('horse_retry_count', None)
-    
     horse_races = []
     
     schedule_cache = {}
@@ -3800,8 +3855,11 @@ def horse_detail(name, active_tab):
 
 @app.route('/edit_horse/<name>')
 @login_required
+@wait_for_sheets
 def edit_horse(name):
     horse = next((h for h in get_all_horses() if len(h)>0 and (h[H_NAME] == name or row_matches_name(h, name))), None)
+    if horse is None:
+        raise SheetNotReady(f"Horsesシートに『{name}』が見つかりません")
     return render_template('edit_horse.html', horse=horse, stables=get_stables_list(), current_year=datetime.now().year) if horse else ("Horse not found", 404)
 
 @app.route('/races')
@@ -4082,16 +4140,12 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     sire_records, dam_records = [], []
     try:
         sh = gc.open(horse_data)
-        try:
-            dam_records = normalize_name_records(sh.worksheet('Dam').get_all_records())
-        except Exception:
-            dam_records = []
-        try:
-            sire_records = normalize_name_records(sh.worksheet('Sire').get_all_records())
-        except Exception:
-            sire_records = []
-    except Exception:
-        pass
+        dam_records = normalize_name_records(sh.worksheet('Dam').get_all_records())
+        sire_records = normalize_name_records(sh.worksheet('Sire').get_all_records())
+    except Exception as e:
+        sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
+    if not dam_records or not sire_records:
+        sheet_not_ready("Sire・Damシートのデータが0件です")
 
     # --- 和名と英馬名の対応：同じ馬の和名・英馬名を同じ馬として照合できるようにする ---
     # （母欄が和名の馬と英馬名の馬のどちらも、その母の仔として見つかるようにする）

@@ -206,5 +206,46 @@ function finishHorseUpdate(data) {
     }, 1500);
 }
 </script>
+
+{# 競走馬一覧・詳細・登録・編集・週間レポートを開く間は「データベースと接続中...」のグレー画面を表示する #}
+<div class="db-loading-overlay" id="db_loading_overlay">
+    <div class="db-loading-box">
+        <div class="db-loading-spinner"></div>
+        <p>データベースと接続中...</p>
+    </div>
+</div>
+<script>
+(function () {
+    const overlay = document.getElementById('db_loading_overlay');
+    const TARGET = /^\/(horse\/.+|add_horse|edit_horse\/.+|weekly)?$/;
+    function isTarget(url) {
+        try {
+            const u = new URL(url, location.href);
+            return u.origin === location.origin && TARGET.test(decodeURIComponent(u.pathname));
+        } catch (e) { return false; }
+    }
+    document.addEventListener('click', function (e) {
+        const a = e.target.closest('a[href]');
+        if (!a || e.defaultPrevented || a.target === '_blank' || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const href = a.getAttribute('href');
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+        if (isTarget(a.href)) overlay.classList.add('is-visible');
+    });
+    document.addEventListener('submit', function (e) {
+        const form = e.target;
+        if (!e.defaultPrevented && (form.method || 'get').toLowerCase() === 'get' && isTarget(form.action)) {
+            overlay.classList.add('is-visible');
+        }
+    });
+    // 読み込み直しの回数（_retry）はアドレスバーから消しておく
+    const url = new URL(location.href);
+    if (url.searchParams.has('_retry')) {
+        url.searchParams.delete('_retry');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+    // 戻るボタンで戻ってきた時はグレー画面を消す
+    window.addEventListener('pageshow', function () { overlay.classList.remove('is-visible'); });
+})();
+</script>
 </body>
 </html>
