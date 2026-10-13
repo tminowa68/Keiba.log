@@ -6,7 +6,7 @@ JRAの調教師「管理馬一覧」ページを全厩舎分MHTMLで保存し、
   2. 「プロフィール」（trainer.html）を開く
   3. 「あ行」〜「わ行」を順番に開き、各行の調教師のページを順番に開く
   4. 調教師のページから「管理馬一覧」を開き、MHTML形式で保存する
-       保存先：<保存フォルダ>\\YYYYMM\\YYYYMMDD\\ア〜ワ\\美浦_相沢 郁.mhtml（フォルダが無ければ作成）
+       保存先：<保存フォルダ>\\YYYYMM\\YYYYMMDD\\ア〜ワ\\アイザワ イクオ.mhtml（フォルダが無ければ作成）
   5. 保存したファイルを keiba.log の /import_trainer_horses に順番にアップロードする
 
 準備（最初の1回だけ。コマンドプロンプトで実行）
@@ -87,6 +87,15 @@ def link_onclick(page, text):
     return None
 
 
+def trainer_kana(page):
+    """<span class="txt"><span class="opt">調教師情報</span>相沢 郁<span class="kana">（アイザワ イクオ）</span></span>
+    からカタカナの読み（アイザワ イクオ）を取り出す"""
+    el = page.locator("span.txt span.kana").first
+    if not el.count():
+        return ""
+    return re.sub(r"^[（(]\s*|\s*[）)]$", "", el.inner_text().strip()).strip()
+
+
 def save_mhtml(page, path):
     """表示中のページをMHTML形式で保存する（Chromeの「ウェブページ、1ファイルのみ」と同じ形式）"""
     session = page.context.new_cdp_session(page)
@@ -148,7 +157,11 @@ def save_all_trainer_pages(base_dir, row_folders, show=False):
                         log(f"  {label}：管理馬一覧のリンクが無いため飛ばします")
                         continue
                     do_action(page, horses_onclick)
-                    path = out_dir / folder / f"{safe_filename(area + '_' + name if area else name)}.mhtml"
+                    # ファイル名は調教師名のカタカナ（<span class="kana">（アイザワ イクオ）</span>）
+                    kana = trainer_kana(page) or (f"{area}_{name}" if area else name)
+                    path = out_dir / folder / f"{safe_filename(kana)}.mhtml"
+                    if path in saved:
+                        path = out_dir / folder / f"{safe_filename(kana + '_' + area)}.mhtml"
                     save_mhtml(page, path)
                     saved.append(path)
                     log(f"  {label}：保存しました")
