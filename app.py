@@ -827,9 +827,39 @@ def parse_equibase_text(text):
             if not value.strip() and i + 1 < len(lines) and not re.match(r'[A-Za-z][A-Za-z ]{0,20}:', lines[i + 1]):
                 value = lines[i + 1]
             break
+        # ページをコピーした時に一緒に入るリンクの文字（Owner Link など）は取り除く
+        value = re.sub(rf'\b{label}\s+Link\b', ' ', value, flags=re.I)
         value = re.sub(r'\s+', ' ', value).strip()
         if value and value.lower() not in _EQUIBASE_EMPTY_VALUES:
             result[key] = value
+    return result
+
+def parse_jbis_profile(soup):
+    """JBISの競走馬ページの基本情報（見出しの次の欄）から、生年月日・馬主名・産地・生産牧場を取り出す"""
+    def value_of(*labels):
+        for el in soup.find_all(['th', 'dt', 'td']):
+            if el.get_text(strip=True) in labels:
+                nxt = el.find_next_sibling(['td', 'dd'])
+                if nxt:
+                    return re.sub(r'\s+', ' ', nxt.get_text(' ', strip=True)).strip()
+        return ''
+
+    result = {}
+    m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', value_of('生年月日'))
+    if m:
+        result['birth_year'] = m.group(1)
+        result['birth_month'] = str(int(m.group(2)))
+        result['birth_day'] = str(int(m.group(3)))
+    owner = normalize_nar_company_name(value_of('馬主', '馬主名'))
+    if owner:
+        result['owner'] = owner
+    breeder = normalize_nar_company_name(value_of('生産者', '生産牧場'))
+    if breeder:
+        result['breeder'] = breeder
+    # 産地は「北海道浦河郡浦河町」「浦河町（日高）」など。括弧書きは除き、画面側で末尾の市町村から選ぶ
+    birthplace = re.sub(r'[（(][^（）()]*[）)]', '', value_of('産地')).replace(' ', '').strip()
+    if birthplace:
+        result['birthplace'] = birthplace
     return result
 
 def fetch_other_horse_info(p_name, p_type, direct_url=None, overseas=False):
@@ -865,6 +895,10 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None, overseas=False):
         for value in (h1_name, sub_name):
             if value:
                 result.setdefault('name_en' if is_english_name(value) else 'name', value)
+
+    # 日本産（馬名の後ろが(JPN)）の馬は、生年月日・馬主名・産地・生産牧場も取得する
+    if not overseas:
+        result.update(parse_jbis_profile(detail_soup))
 
     # 登録する馬の名前が英字、または産地が海外で、父・母がカタカナ表記の場合は、父・母のページの
     # <span class="hdg1-search__sub">（例：Danehill(USA)）から英字の馬名を取得する
@@ -3385,6 +3419,11 @@ def decide_parent_url_tab(p_name, p_type, child_name=''):
     仔は child_name（無ければ父・母がこの馬になっている馬）をHorses・Sire・Damシートから探す"""
     def cell(r, i):
         return r[i].strip() if len(r) > i and r[i] else ''
+
+    # 馬名がカタカナで10文字以上の馬は外国の馬（JRAの馬名は9文字まで）なので「その他」にする
+    katakana = re.sub(r'[\s　]', '', p_name or '')
+    if _KATAKANA_NAME_RE.match(p_name or '') and len(katakana) >= 10:
+        return 'other'
 
     try:
         sh = gc.open(horse_data)

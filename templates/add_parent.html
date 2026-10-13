@@ -422,16 +422,17 @@ async function fetchFromOther() {
             return;
         }
 
-        const sireInput = document.querySelector('[name="sire"]');
-        const damInput = document.querySelector('[name="dam"]');
-
-        if (data.sire && sireInput) { sireInput.value = data.sire; autoResizeTextarea(sireInput); }
-        if (data.dam && damInput) { damInput.value = data.dam; autoResizeTextarea(damInput); }
+        // 父・母・英馬名（日本産の馬は生年月日・馬主名・産地・生産牧場も）を入力する
+        applyFetchedHorseData(data);
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
-        applyOtherName(data);
 
-        statusEl.textContent = '情報を取得しました。内容を確認してください。';
-        statusEl.style.color = 'green';
+        if (data.birthplace && !findBirthplaceMatch(data.birthplace)) {
+            statusEl.textContent = `情報を取得しました。産地「${data.birthplace}」は手で選んでください。`;
+            statusEl.style.color = '#e65100';
+        } else {
+            statusEl.textContent = '情報を取得しました。内容を確認してください。';
+            statusEl.style.color = 'green';
+        }
     } catch (e) {
         statusEl.textContent = '通信エラーが発生しました。';
         statusEl.style.color = 'red';
