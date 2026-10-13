@@ -845,11 +845,17 @@ def parse_jbis_profile(soup):
         return ''
 
     result = {}
-    m = re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', value_of('生年月日'))
+    # 生年月日は「2015年4月1日」のほか、古い馬は「1960年」「1960年4月」のように年（・月）だけのこともある
+    birth_text = value_of('生年月日')
+    m = (re.search(r'(\d{4})\D+(\d{1,2})\D+(\d{1,2})', birth_text)
+         or re.search(r'(\d{4})\D+(\d{1,2})(?:\D*$)', birth_text)
+         or re.search(r'(\d{4})', birth_text))
     if m:
         result['birth_year'] = m.group(1)
-        result['birth_month'] = str(int(m.group(2)))
-        result['birth_day'] = str(int(m.group(3)))
+        if m.lastindex >= 2:
+            result['birth_month'] = str(int(m.group(2)))
+        if m.lastindex >= 3:
+            result['birth_day'] = str(int(m.group(3)))
     owner = normalize_nar_company_name(value_of('馬主', '馬主名'))
     if owner:
         result['owner'] = owner
