@@ -3343,11 +3343,13 @@ def add_parent():
         "owner": "", "birthplace_region": "", "birthplace_detail": "", "breeder": "", "URL": "",
         "nar_url": "", "name_ja": "", "name_en": ""
     }
+    existing_found = False  # 同名の馬が既に登録されていて、そのデータを読み込んだか
     try:
         sh = gc.open(horse_data)
         ws = sh.worksheet(p_type)
         row = next((r for r in ws.get_all_values()[1:] if row_matches_name(r, p_name)), None)
         if row:
+            existing_found = True
             row = list(row) + [''] * len(PARENT_COLUMNS)
             parts = split_date(row[P_BIRTH])
             if parts:
@@ -3371,6 +3373,7 @@ def add_parent():
         p_type=p_type, 
         p_name=p_name, 
         p_name_is_english=is_english_name(p_name),
+        existing_found=existing_found,
         origin=request.args.get('origin', ''),
         data=existing_data,
         initial_tab=decide_parent_url_tab(p_name, p_type, request.args.get('child', ''))
