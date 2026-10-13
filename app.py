@@ -1337,7 +1337,7 @@ def split_dam_annotation(raw):
         return m.group(1).strip(), m.group(2).strip(), int(m.group(3))
     return raw, None, None
 
-def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
+def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc, base_is_english=False):
     # スプレッドシートから全データを取得
     try:
         wb = gc.open('Horse_Data')
@@ -1369,7 +1369,7 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
 
     pedigree = {}
 
-    def traverse(node_index, h_name, child_birth_year, is_sire):
+    def traverse(node_index, h_name, child_birth_year, is_sire, child_is_english=False):
         if node_index >= 64:
             return
         
@@ -1477,6 +1477,12 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
         if b_year is not None and child_birth_year is not None:
             age_when_born = child_birth_year - b_year
 
+        # 仔が英字の馬名で表示されている場合は、親も英馬名（登録されていれば）で表示する
+        if child_is_english and record and not is_english_name(display_name):
+            name_en = str(record.get('英馬名', '') or '').strip()
+            if name_en:
+                display_name = name_en
+
         pedigree[node_index] = {
             'name': display_name,
             'full_db_name': h_name,
@@ -1489,11 +1495,12 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc):
             'candidates': candidates
         }
 
-        traverse(node_index * 2, sire_of_h, b_year, True)
-        traverse(node_index * 2 + 1, dam_of_h, b_year, False)
+        node_is_english = is_english_name(display_name)
+        traverse(node_index * 2, sire_of_h, b_year, True, node_is_english)
+        traverse(node_index * 2 + 1, dam_of_h, b_year, False, node_is_english)
 
-    traverse(2, sire_name, base_birth_year, True)
-    traverse(3, dam_name, base_birth_year, False)
+    traverse(2, sire_name, base_birth_year, True, base_is_english)
+    traverse(3, dam_name, base_birth_year, False, base_is_english)
 
     return pedigree
 
@@ -3857,7 +3864,8 @@ def horse_detail(name, active_tab):
     elif isinstance(horse[H_BIRTH], dict) and 'year' in horse[H_BIRTH]:
         base_birth_year = int(horse[H_BIRTH]['year'])
     
-    pedigree_data = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], base_birth_year, gc)
+    pedigree_data = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], base_birth_year, gc,
+                                      base_is_english=is_english_name(horse[H_NAME]))
 
     # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
     # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
