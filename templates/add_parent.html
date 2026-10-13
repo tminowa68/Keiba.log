@@ -11,6 +11,22 @@
         {% endif %}
     {% endwith %}
 
+    {# 同名の馬が既に登録されていて、そのデータを読み込んだ時のお知らせ（OKで閉じる） #}
+    {% if existing_found %}
+    <div class="db-loading-overlay is-visible" id="same_name_notice" role="dialog" aria-modal="true">
+        <div class="db-loading-box">
+            <p>既に同名の馬が登録されています。<br>違う馬を新規で追加する際は「同名の馬を登録する」にチェックを入れてください。</p>
+            <div class="db-loading-actions">
+                <button type="button" id="same_name_notice_ok" class="db-loading-btn db-loading-btn-primary"
+                        onclick="document.getElementById('same_name_notice').classList.remove('is-visible')">OK</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => setTimeout(() => document.getElementById('same_name_notice_ok').focus(), 0));
+    </script>
+    {% endif %}
+
     <form action="/add_parent" method="POST" autocomplete="off">
     <input type="hidden" name="p_name" value="{{ p_name }}">
     <input type="hidden" name="origin" value="{{ origin }}">
