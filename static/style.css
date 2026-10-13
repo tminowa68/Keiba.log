@@ -2053,3 +2053,12 @@ form .select-stables {
     background: #4CAF50;
     color: #fff !important;
 }
+
+/* 血統の登録：「地方」「その他」タブの取得結果のメッセージ */
+.fetch-status-line {
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+.fetch-status-line:empty {
+    display: none;
+}
