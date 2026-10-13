@@ -53,6 +53,10 @@
     <p style="margin: 0; color: #555;">
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
+    <details class="import-status-details" open>
+        <summary>JRAのページの更新状況</summary>
+        {% include "_import_status.html" %}
+    </details>
 </section>
 
 {% macro horse_cells(h) %}

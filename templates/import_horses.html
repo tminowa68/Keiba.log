@@ -11,6 +11,10 @@
         {% endif %}
     {% endwith %}
 
+    <h2>更新状況</h2>
+    {% include "_import_status.html" %}
+    <p style="font-size:0.9em; line-height:1.6;">取り込む順番は、<strong>競走馬登録 → 管理馬一覧 → 抹消一覧</strong> がおすすめです。</p>
+
     <h2>競走馬登録 一括インポート</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         JRAの「競走馬登録」ページを保存したファイル（.mhtml／.html）をアップロードすると、

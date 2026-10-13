@@ -1,0 +1,10 @@
+{# JRAのページ（競走馬登録・管理馬一覧・抹消一覧）の通常の公開日と最終更新日 #}
+<table class="import-status-table">
+    <thead><tr><th>ページ</th><th>通常の公開日</th><th>最終更新日</th></tr></thead>
+    <tbody>
+    {% for st in import_status %}
+    <tr><td>{{ st.label }}</td><td>{{ st.schedule }}</td><td>{{ st.last }}</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+<p class="import-status-note">※{{ schedule_note }}最終更新日は、取り込んだページの日付（管理馬一覧は「〇月〇日現在」、競走馬登録は登録日、抹消一覧は抹消日）です。</p>

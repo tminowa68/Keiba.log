@@ -271,6 +271,56 @@ def set_last_updated(dt_str):
     except Exception as e:
         print(f"最終更新日時の保存に失敗しました: {e}")
 
+# --- JRAのページ（管理馬一覧・競走馬登録・抹消一覧）の取り込み状況 ---
+# Metaシートに、取り込んだページの日付（YYYYMMDD）を種類ごとに記録する
+IMPORT_KINDS = [
+    # (Metaシートの項目名, 表示名, 通常の公開日)
+    ('import_registration', '競走馬登録', '毎週月曜日（前週木曜日の登録分）'),
+    ('import_trainer', '管理馬一覧', '毎週月曜日・木曜日'),
+    ('import_cancel', '抹消一覧', '毎週月曜日・木曜日'),
+]
+IMPORT_SCHEDULE_NOTE = '月曜日まで競馬の開催がある週は、火曜日にずれることがあります。'
+
+def get_meta_values():
+    """Metaシートの「項目 → 値」をまとめて取得する"""
+    try:
+        return {r[0]: (r[1] if len(r) > 1 else '') for r in _get_meta_sheet().get_all_values()[1:] if r and r[0]}
+    except Exception:
+        return {}
+
+def record_import_date(key, date8):
+    """取り込んだページの日付を記録する（記録済みの日付より新しい場合だけ更新する）"""
+    if not date8:
+        return
+    try:
+        ws_meta = _get_meta_sheet()
+        for i, row in enumerate(ws_meta.get_all_values()[1:], start=2):
+            if row and row[0] == key:
+                if not (len(row) > 1 and row[1] and row[1] >= date8):
+                    ws_meta.update(range_name=f'B{i}', values=[[date8]])
+                return
+        ws_meta.append_row([key, date8])
+    except Exception as e:
+        print(f"取り込み日の記録に失敗しました（{key}）: {e}")
+
+def get_import_status():
+    """各ページの通常の公開日と最終更新日（取り込んだページの日付）の一覧"""
+    meta = get_meta_values()
+    return [{'label': label, 'schedule': schedule,
+             'last': format_date_jp(meta.get(key, ''), weekday=True) if meta.get(key) else '未取り込み',
+             'date8': meta.get(key, '')}
+            for key, label, schedule in IMPORT_KINDS]
+
+def get_latest_update_label(import_status=None):
+    """競走馬一覧の「最終更新」：データ更新と各ページの取り込みのうち、最も新しい日付（時間は表示しない）"""
+    dates = [d['date8'] for d in (import_status or get_import_status()) if d['date8']]
+    last_updated = get_last_updated()
+    if last_updated:
+        parts = split_date(last_updated.split(' ')[0])
+        if parts and parts[1] and parts[2]:
+            dates.append(f"{parts[0]:04d}{parts[1]:02d}{parts[2]:02d}")
+    return format_date_jp(max(dates), weekday=True) if dates else None
+
 def format_last_updated(dt_str):
     """Meta保存形式（YYYYMMDD HH:MM。旧形式 YYYY/MM/DD HH:MM も可）を「年月日(曜日)」の表示形式に変換する"""
     if not dt_str:
@@ -1409,7 +1459,7 @@ def index():
                            results=results, 
                            stables=get_stables_list(), 
                            current_year=datetime.now().year,
-                           last_updated=format_last_updated(get_last_updated()))
+                           last_updated=get_latest_update_label())
 
 @app.route('/api/fetch_jra_horse')
 @login_required
@@ -1787,7 +1837,8 @@ def parse_jra_registration_page(html_text):
 def import_horses():
     """JRAの「競走馬登録」ページ（HTML／MHTML保存）をアップロードして一括登録する"""
     if request.method == 'GET':
-        return render_template('import_horses.html')
+        return render_template('import_horses.html', import_status=get_import_status(),
+                               schedule_note=IMPORT_SCHEDULE_NOTE)
 
     file = request.files.get('mhtml_file')
     if not file or not file.filename:
@@ -1898,6 +1949,7 @@ def import_horses():
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
 
+        record_import_date('import_registration', registration_str)
         msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
         if registration_str:
             msg += f"（登録日：{format_date_jp(registration_str)}）"
@@ -2198,6 +2250,7 @@ def import_trainer_horses():
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
 
+        record_import_date('import_trainer', as_of_date)
         flash(f"管理馬一覧の取り込み完了（{trainer_name}・{format_date_jp(today_str)}現在・{len(parsed_horses)}頭）："
               f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
@@ -2253,6 +2306,7 @@ def import_cancel_horses():
     # 複数のファイル（日ごとの抹消一覧）をまとめて取り込む。抹消一覧ではないファイルは飛ばす
     entries = {}        # 馬名 → 抹消日
     file_summaries = []
+    cancel_page_dates = []  # 見出しから読み取れた抹消日（最終更新日の記録に使う）
     for file in files:
         try:
             html_text = _extract_html_from_upload(file.read())
@@ -2265,6 +2319,8 @@ def import_cancel_horses():
             flash(f'{file.filename}：ファイルの解析に失敗しました: {e}')
             continue
         date_str = cancel_date_str or today8()
+        if cancel_date_str:
+            cancel_page_dates.append(cancel_date_str)
         for name in names:
             entries.setdefault(name, date_str)
         file_summaries.append(f"{format_date_jp(date_str)}抹消分 {len(names)}頭")
@@ -2365,6 +2421,7 @@ def import_cancel_horses():
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
+        record_import_date('import_cancel', max(cancel_page_dates) if cancel_page_dates else '')
         msg = f"抹消一覧の取り込み完了（{'、'.join(file_summaries)}）：抹消 {len(cancelled)}件"
         if already:
             msg += f"／抹消済み {len(already)}件"
@@ -2502,7 +2559,8 @@ def weekly():
                            stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
                            prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
-                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
+                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'),
+                           import_status=get_import_status(), schedule_note=IMPORT_SCHEDULE_NOTE)
 
 
 @app.route('/add_horse', methods=['POST'])
@@ -4035,11 +4093,34 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     except Exception:
         pass
 
+    # --- 和名と英馬名の対応：同じ馬の和名・英馬名を同じ馬として照合できるようにする ---
+    # （母欄が和名の馬と英馬名の馬のどちらも、その母の仔として見つかるようにする）
+    alias_of = {}
+    def _add_alias(name_ja, name_en):
+        name_ja, name_en = str(name_ja or '').strip(), str(name_en or '').strip()
+        key = name_ja or name_en
+        for n in (name_ja, name_en):
+            if n and n not in alias_of:
+                alias_of[n] = key
+
+    for h in all_horses:
+        _add_alias(h[H_NAME] if not is_english_name(h[H_NAME]) else '', h[H_NAME_EN] if len(h) > H_NAME_EN else '')
+    for r in sire_records + dam_records:
+        _add_alias(r.get('馬名', '') if not is_english_name(r.get('馬名', '')) else '', r.get('英馬名', ''))
+
+    def canon(name):
+        """和名・英馬名のどちらで書かれていても同じ馬なら同じ値を返す（照合用）"""
+        name = str(name or '').strip()
+        return alias_of.get(name, name)
+
+    def canon_field(value):
+        """母欄の値（「馬名 (母馬 - 生年)」の注記付きを含む）を照合用にそろえる"""
+        disp, mother, year = split_dam_annotation(value)
+        return f"{canon(disp)} ({canon(mother)} - {year})" if mother else canon(disp)
+
+    name_candidates = {canon(k): v for k, v in name_candidates.items()}
     for r in dam_records:
-        # 和名・英馬名のどちらの表記でも引けるようにする
-        for n in {str(r.get('馬名', '')).strip(), str(r.get('英馬名', '')).strip()}:
-            if n:
-                name_candidates.setdefault(n, []).append(r)
+        name_candidates.setdefault(canon(r.get('馬名', '')), []).append(r)
 
     def resolve_granddam_of(dam_field_value, child_birth_year):
         disp_name, embedded_mother, _embedded_year = split_dam_annotation(dam_field_value)
@@ -4047,7 +4128,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
             return embedded_mother
         if not disp_name:
             return None
-        candidates = name_candidates.get(disp_name, [])
+        candidates = name_candidates.get(canon(disp_name), [])
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -4074,9 +4155,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         if len(h) <= H_DAM or not h[H_NAME]:
             continue
         nm = h[H_NAME].strip()
-        if not nm or nm == horse_name:
+        if not nm or canon(nm) == canon(horse_name):
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
 
         def _blank(idx, row=h):
             return len(row) > idx and (row[idx] is None or str(row[idx]).strip() == '')
@@ -4095,9 +4176,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in sire_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or nm == horse_name or nm in existing_names:
+        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
         candidates.append({
             'name': nm,
             'gender': '牡',
@@ -4112,9 +4193,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in dam_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or nm == horse_name or nm in existing_names:
+        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
         candidates.append({
             'name': nm,
             'gender': '牝',
@@ -4129,11 +4210,11 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     by_name = {}
     for c in candidates:
-        by_name.setdefault(c['name'], []).append(c)
+        by_name.setdefault(canon(c['name']), []).append(c)
 
     def _find_own(name, birth_year):
         """母・祖母自身の表示用データ（性別・父・状態など）を候補リストから探す"""
-        opts = by_name.get(name, [])
+        opts = by_name.get(canon(name), [])
         if not opts:
             return None
         if birth_year:
@@ -4163,16 +4244,20 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     siblings, nephews, uncles, cousins = [], [], [], []
     great_uncles, itoko_oji = [], []
+    dam_full_key, granddam_full_key, ggranddam_full_key = (
+        canon_field(dam_full_name), canon_field(granddam_full_name), canon_field(ggranddam_full_name))
+    dam_key, granddam_key, ggranddam_key = canon(dam_name), canon(granddam_name), canon(ggranddam_name)
 
     for c in candidates:
         target_dam = c['dam_field']
         if not target_dam:
             continue
+        target_dam_key = canon_field(target_dam)
         target_birth_year = extract_year(c['birth_str']) or 0
         gender = c['gender']
 
         # 1. 兄弟馬の判定（母が完全一致するか）
-        if target_dam == dam_full_name:
+        if target_dam_key == dam_full_key:
             if not horse_birth_year or not target_birth_year:
                 relation = "兄弟" if gender in ['牡', 'せん'] else "姉妹"
             elif target_birth_year < horse_birth_year:
@@ -4187,8 +4272,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 2. 伯父叔父・伯母叔母の判定（対象馬の母＝本馬の祖母、が一致するか）
         # ※ 本馬の実母自身もここに該当してしまう（祖母の子であるため）ので、実母は除外する
         # ※ 実母より年上なら伯父・伯母、年下なら叔父・叔母と表記を分ける
-        elif granddam_full_name and target_dam == granddam_full_name:
-            if c['name'] == dam_name:
+        elif granddam_full_name and target_dam_key == granddam_full_key:
+            if canon(c['name']) == dam_key:
                 continue
             if dam_birth_year and target_birth_year and target_birth_year < dam_birth_year:
                 relation = "伯父" if gender in ['牡', 'せん'] else "伯母"
@@ -4200,8 +4285,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 2b. 大伯父・大叔母の判定（対象馬の母＝本馬の曾祖母、が一致するか）
         # ※ 祖母自身もここに該当してしまうので除外する
         # ※ 祖母より年上なら大伯父・大伯母、年下なら大叔父・大叔母と表記を分ける
-        elif ggranddam_full_name and target_dam == ggranddam_full_name:
-            if c['name'] == granddam_name:
+        elif ggranddam_full_name and target_dam_key == ggranddam_full_key:
+            if canon(c['name']) == granddam_key:
                 continue
             if granddam_birth_year and target_birth_year and target_birth_year < granddam_birth_year:
                 relation = "大伯父" if gender in ['牡', 'せん'] else "大伯母"
@@ -4213,20 +4298,20 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 3. 甥・姪／いとこ／伯従父・叔従母の判定
         elif dam_name or granddam_name or ggranddam_name:
             parent_disp_name, _, _ = split_dam_annotation(target_dam)
-            target_granddam = resolve_granddam_of(target_dam, target_birth_year)
-            if target_granddam and dam_name and target_granddam == dam_name:
+            target_granddam = canon(resolve_granddam_of(target_dam, target_birth_year))
+            if target_granddam and dam_name and target_granddam == dam_key:
                 relation = "甥" if gender in ['牡', 'せん'] else "姪"
                 nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                           c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                           parent_name=parent_disp_name, depth=1))
-            elif target_granddam and granddam_name and target_granddam == granddam_name:
+            elif target_granddam and granddam_name and target_granddam == granddam_key:
                 cousins.append(_make_row("いとこ", c['name'], gender, target_birth_year, c['sire_disp'],
                                           c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                           parent_name=parent_disp_name, depth=1))
             # ※ 祖母自身の子（伯父叔父・母）は、その祖母経由でも曾祖母に行き着いてしまうため、
             #   直接の親が祖母自身のものはここでは除外する（伯父叔父・母は既にテーブル2で表示済み）
-            elif (target_granddam and ggranddam_name and target_granddam == ggranddam_name
-                  and parent_disp_name != granddam_name):
+            elif (target_granddam and ggranddam_name and target_granddam == ggranddam_key
+                  and canon(parent_disp_name) != granddam_key):
                 if dam_birth_year and target_birth_year and target_birth_year < dam_birth_year:
                     relation = "伯従父" if gender in ['牡', 'せん'] else "伯従母"
                 else:
@@ -4266,9 +4351,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     # 4. 又甥・又姪（甥姪の仔）／いとこ甥・いとこ姪（いとこの仔）／はとこ（伯従父叔従母の仔）の判定
     #    ※ 甥姪・いとこ・伯従父叔従母の一覧が確定した後、それぞれを親として持つ馬を探す
-    nephew_names = {n['name'] for n in nephews}
-    cousin_names = {c['name'] for c in cousins}
-    itoko_oji_names = {o['name'] for o in itoko_oji}
+    nephew_names = {canon(n['name']) for n in nephews}
+    cousin_names = {canon(c['name']) for c in cousins}
+    itoko_oji_names = {canon(o['name']) for o in itoko_oji}
     grand_nephews, cousin_nephews, hatoko = [], [], []
 
     for c in candidates:
@@ -4281,17 +4366,18 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         gender = c['gender']
         target_birth_year = extract_year(c['birth_str']) or 0
 
-        if parent_disp_name in nephew_names:
+        parent_key = canon(parent_disp_name)
+        if parent_key in nephew_names:
             relation = "又甥" if gender in ['牡', 'せん'] else "又姪"
             grand_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                             c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                             parent_name=parent_disp_name, depth=2))
-        elif parent_disp_name in cousin_names:
+        elif parent_key in cousin_names:
             relation = "いとこ甥" if gender in ['牡', 'せん'] else "いとこ姪"
             cousin_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                              c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                              parent_name=parent_disp_name, depth=2))
-        elif parent_disp_name in itoko_oji_names:
+        elif parent_key in itoko_oji_names:
             hatoko.append(_make_row("はとこ", c['name'], gender, target_birth_year, c['sire_disp'],
                                      c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                      parent_name=parent_disp_name, depth=2))
@@ -4318,7 +4404,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         result = []
         for row in base_rows:
             row = dict(row)
-            row['children'] = child_rows_by_parent.get(row['name'], [])
+            row['children'] = child_rows_by_parent.get(canon(row['name']), [])
             result.append(row)
         return result
 
@@ -4326,7 +4412,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         """親名ごとにグループ化し、各グループ内は生年順に並べる"""
         grouped = {}
         for r in rows:
-            grouped.setdefault(r['parent_name'], []).append(r)
+            grouped.setdefault(canon(r['parent_name']), []).append(r)
         for lst in grouped.values():
             lst.sort(key=_sort_key)
         return grouped
@@ -4340,8 +4426,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         expanded = {}
         for parent_name, children in children_by_parent.items():
             scoped_grandchildren = {
-                child['name']: grandchildren_by_parent[child['name']]
-                for child in children if child['name'] in grandchildren_by_parent
+                canon(child['name']): grandchildren_by_parent[canon(child['name'])]
+                for child in children if canon(child['name']) in grandchildren_by_parent
             }
             expanded[parent_name] = _insert_with_children(children, scoped_grandchildren)
         return expanded
@@ -4376,7 +4462,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
         # 母自身の子（＝本馬の兄弟）はテーブル1で既に表示済みのため、いとことしては差し込まない
         cousins_by_parent = _group_by_parent(cousins)
-        cousins_by_parent.pop(dam_name, None)
+        cousins_by_parent.pop(dam_key, None)
         cousins_by_uncle = _nest_two_generations(cousins_by_parent, _group_by_parent(cousin_nephews))
 
         table2.append(_table('祖母', granddam_name, granddam_birth_year,
@@ -4400,7 +4486,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
             # 祖母自身の子（＝伯父叔父・母）はテーブル2で既に表示済みのため、伯従父叔従母としては差し込まない
             itoko_oji_by_parent = _group_by_parent(itoko_oji)
-            itoko_oji_by_parent.pop(granddam_name, None)
+            itoko_oji_by_parent.pop(granddam_key, None)
             itoko_oji_by_great_uncle = _nest_two_generations(itoko_oji_by_parent, _group_by_parent(hatoko))
 
             table2.append(_table('曾祖母', ggranddam_name, ggranddam_birth_year,
