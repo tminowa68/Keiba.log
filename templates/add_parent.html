@@ -57,26 +57,30 @@
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>②地方競馬情報サイトのURL：</label><br>
             <textarea id="nar_url_input" name="nar_url" placeholder="https://www.keiba.go.jp/KeibaWeb/DataRoom/RaceHorseInfo?..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.nar_url if data and data.nar_url else '' }}</textarea>
-            <button type="button" onclick="fetchFromNar()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
-            <span id="nar_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
+        <div class="fetch-button-slot"></div>
     </div>
     <div class="parent-url-panel" id="parent_url_panel_other"{{ ' hidden' if initial_tab == 'jra' }}>
         <div class="jbis-url-slot">
         <div id="jbis_url_block" style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
             <label>①JBISのURL：</label><br>
             <textarea id="other_url_input" name="other_url" placeholder="https://www.jbis.or.jp/horse/..." rows="1" class="auto-grow-textarea" style="width: 100%; margin-top:5px;">{{ data.other_url if data and data.other_url else '' }}</textarea>
-            <button type="button" onclick="fetchFromOther()" style="padding:8px 14px; margin-left:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
-            <span id="other_fetch_status" style="margin-left:10px; font-size:0.9em;"></span>
         </div>
         </div>
 
         <div style="margin-bottom:15px; background:#f7f7f7; padding:12px; border-radius:6px;">
-            <label>②equibaseの文章：</label><br>
+            <label>②equibaseのデータ：</label><br>
             <textarea id="equibase_text_input" rows="9" style="width: 100%; margin-top:5px; box-sizing:border-box; resize:none; overflow-y:hidden;"
-                placeholder="equibaseの競走馬ページの文章をコピーして貼り付けてください&#10;&#10;馬名 (産地)&#10;から&#10;Breeder:&#10;の部分まで"></textarea>
-            <button type="button" onclick="applyEquibaseText()" style="padding:8px 14px; margin-top:5px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">反映</button>
-            <span id="equibase_status" style="margin-left:10px; font-size:0.9em;"></span>
+                placeholder="equibaseの競走馬ページのデータをコピーして貼り付けてください&#10;&#10;馬名 (産地)&#10;から&#10;Breeder:&#10;の部分まで"></textarea>
+        </div>
+        <div class="fetch-button-slot">
+        {# 「地方」「その他」で共通の取得ボタン（①JBISのURLと②の欄をまとめて取得する）。表示中のタブへ移動する #}
+        <div id="combined_fetch_block" style="margin:-5px 0 15px;">
+            <button type="button" onclick="fetchCombined()" style="padding:8px 14px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">取得</button>
+            <div id="other_fetch_status" class="fetch-status-line"></div>
+            <div id="nar_fetch_status" class="fetch-status-line"></div>
+            <div id="equibase_status" class="fetch-status-line"></div>
+        </div>
         </div>
     </div>
 
@@ -159,13 +163,17 @@
 <script>
 // 「JRA」「地方」「その他」のタブを切り替え、表示したタブの最初の入力欄にフォーカスする
 // （①JBISのURLの入力欄は「地方」「その他」で共通のため、表示するタブへ移動する）
+let currentParentTab = '';
 function showParentUrlTab(tab) {
     document.querySelectorAll('.parent-url-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     ['jra', 'nar', 'other'].forEach(t => {
         document.getElementById('parent_url_panel_' + t).hidden = t !== tab;
     });
+    currentParentTab = tab;
     const slot = document.querySelector('#parent_url_panel_' + tab + ' .jbis-url-slot');
     if (slot) slot.appendChild(document.getElementById('jbis_url_block'));
+    const buttonSlot = document.querySelector('#parent_url_panel_' + tab + ' .fetch-button-slot');
+    if (buttonSlot) buttonSlot.appendChild(document.getElementById('combined_fetch_block'));
     // 非表示の間は高さを計算できないため、表示した後に入力欄の高さを合わせ直す
     document.querySelectorAll('#parent_url_panel_' + tab + ' textarea').forEach(autoResizeTextarea);
     const first = document.querySelector('#parent_url_panel_' + tab + ' textarea');
@@ -173,8 +181,15 @@ function showParentUrlTab(tab) {
 }
 document.addEventListener('DOMContentLoaded', () => {
     showParentUrlTab({{ (initial_tab or 'other') | tojson }});
-    // equibaseの文章の入力欄は9行の高さから、はみ出した分だけ広げる（縦スクロールにしない）
+    // equibaseのデータの入力欄は9行の高さから、はみ出した分だけ広げる（縦スクロールにしない）
     const equibaseInput = document.getElementById('equibase_text_input');
+    // Enterでは改行せず取得ボタンと同じ処理をする（Shift+Enterは改行）
+    equibaseInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            fetchCombined();
+        }
+    });
     equibaseInput.addEventListener('input', () => {
         autoResizeTextarea(equibaseInput);
         // 枠線の分も足して、入力した文章が全部見えるようにする
@@ -210,9 +225,17 @@ const OVERSEAS_ABBREVIATION_MAP = {
     '亜': 'アルゼンチン'
 };
 
-function findBirthplaceMatch(raw) {
+function findBirthplaceMatch(raw, birthPeriod) {
     if (!raw) return null;
-    const text = raw.trim();
+    // JBISの「三石産」「青森産」のような表記は「産」を取り除く
+    const text = raw.trim().replace(/産$/, '');
+    const allDetails = (region) => {
+        const regionData = locationData[region];
+        return Array.isArray(regionData) ? regionData
+            : (regionData && typeof regionData === 'object') ? Object.values(regionData).flat() : [];
+    };
+    // 生年月日の時点で存在していた市町村か（生年月日が分からない場合は判定しない）
+    const available = (name) => !birthPeriod || isMunicipalityAvailable(name, birthPeriod);
 
     // 1. 産地（詳細：市区町村・国名など）に一致するか探す
     for (const region in locationData) {
@@ -240,16 +263,23 @@ function findBirthplaceMatch(raw) {
         return { region: '海外', detail: OVERSEAS_ABBREVIATION_MAP[text] };
     }
 
+    // 3b. 「三石」のように市町村の「町」「村」「市」が無い表記は、補って探す
+    //     （生年月日の時点で存在していた市町村を選ぶ。どれも存在していなければ選ばない）
+    for (const suffix of ['町', '村', '市']) {
+        for (const region in locationData) {
+            if (region === '海外') continue;
+            const name = text + suffix;
+            if (allDetails(region).includes(name) && available(name)) return { region, detail: name };
+        }
+    }
+
     // 4. 地方競馬情報サイトの「北海道沙流郡平取町」のような表記は、末尾が一致する産地（詳細）を探す
-    //    （産地（第1階層）で始まるものを優先し、同じ条件なら長い名前を採用する）
+    //    （産地（第1階層）で始まるもの・生年月日の時点で存在していたものを優先し、同じ条件なら長い名前を採用する）
     let best = null;
     for (const region in locationData) {
-        const regionData = locationData[region];
-        const details = Array.isArray(regionData) ? regionData
-            : (regionData && typeof regionData === 'object') ? Object.values(regionData).flat() : [];
-        details.forEach(detail => {
+        allDetails(region).forEach(detail => {
             if (!detail || !text.endsWith(detail)) return;
-            const score = (text.startsWith(region) ? 1000 : 0) + detail.length;
+            const score = (available(detail) ? 10000 : 0) + (text.startsWith(region) ? 1000 : 0) + detail.length;
             if (!best || score > best.score) best = { region, detail, score };
         });
     }
@@ -260,7 +290,23 @@ function findBirthplaceMatch(raw) {
         if (text.startsWith(region)) return { region, detail: null };
     }
 
+    // 6. 「青森」のように「県」などが無い表記は、産地（第1階層）の先頭と一致すれば選ぶ（市町村の選択肢が無い地域）
+    if (text.length >= 2) {
+        for (const region in locationData) {
+            if (region !== '海外' && region.startsWith(text)) return { region, detail: null };
+        }
+    }
+
     return null;
+}
+
+// 取得したデータ（無ければ入力欄）の生年月日から、産地の存続期間の判定に使う期間を求める
+function fetchedBirthPeriod(data) {
+    const form = document.querySelector('form[action="/add_parent"]');
+    const val = (n) => ((form.querySelector('[name="' + n + '"]') || {}).value || '');
+    return _computeBirthPeriod(data.birth_year || val('year'),
+                               data.birth_year ? (data.birth_month || '') : val('month'),
+                               data.birth_year ? (data.birth_day || '') : val('day'));
 }
 
 // 取得した馬名のうち、登録する馬名と別の表記（和名の馬なら英馬名、英字の馬なら和名）を入力する
@@ -298,7 +344,7 @@ function applyFetchedHorseData(data) {
     if (data.birthplace) {
         const regionSelect = document.getElementById('region_select');
         const detailSelect = document.getElementById('detail_select');
-        const bp = findBirthplaceMatch(data.birthplace);
+        const bp = findBirthplaceMatch(data.birthplace, fetchedBirthPeriod(data));
         if (bp && regionSelect && detailSelect) {
             setSelectValueRobust(regionSelect, bp.region);
             // 選択した産地（第1階層）に応じて、産地（詳細）の選択肢を再構築させる
@@ -356,6 +402,26 @@ async function fetchFromJra() {
     }
 }
 
+// 【「地方」「その他」タブの取得ボタン】①JBISのURLと、②地方競馬情報サイトのURL／equibaseのデータをまとめて取得する。
+// ①が空欄で②も空欄なら、これまでどおり馬名でJBISサーチを検索する。②の内容は①の後に入力する
+async function fetchCombined() {
+    ['other_fetch_status', 'nar_fetch_status', 'equibase_status'].forEach(id => {
+        document.getElementById(id).textContent = '';
+    });
+    const jbisUrl = document.getElementById('other_url_input').value.trim();
+    const narUrl = document.getElementById('nar_url_input').value.trim();
+    const equibaseText = document.getElementById('equibase_text_input').value.trim();
+    const second = currentParentTab === 'nar' ? narUrl : (currentParentTab === 'other' ? equibaseText : '');
+    if (jbisUrl || !second) await fetchFromOther();
+    if (currentParentTab === 'nar' && narUrl) await fetchFromNar();
+    if (currentParentTab === 'other' && equibaseText) await applyEquibaseText();
+    // どこから取得した結果か分かるように、メッセージの先頭に取得元を付ける
+    [['other_fetch_status', 'JBIS'], ['nar_fetch_status', '地方競馬情報サイト']].forEach(([id, label]) => {
+        const el = document.getElementById(id);
+        if (el.textContent && !el.textContent.startsWith(label)) el.textContent = label + '：' + el.textContent;
+    });
+}
+
 // 【地方競馬情報サイトのページ取得】入力されたURLから父・母・生年月日・馬主名・産地・生産牧場を取得して入力する
 async function fetchFromNar() {
     const url = document.getElementById('nar_url_input').value.trim();
@@ -376,7 +442,7 @@ async function fetchFromNar() {
             return;
         }
         applyFetchedHorseData(data);
-        if (data.birthplace && !findBirthplaceMatch(data.birthplace)) {
+        if (data.birthplace && !findBirthplaceMatch(data.birthplace, fetchedBirthPeriod(data))) {
             statusEl.textContent = `情報を取得しました。産地「${data.birthplace}」は手で選んでください。`;
             statusEl.style.color = '#e65100';
         } else {
@@ -426,7 +492,7 @@ async function fetchFromOther() {
         applyFetchedHorseData(data);
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
 
-        if (data.birthplace && !findBirthplaceMatch(data.birthplace)) {
+        if (data.birthplace && !findBirthplaceMatch(data.birthplace, fetchedBirthPeriod(data))) {
             statusEl.textContent = `情報を取得しました。産地「${data.birthplace}」は手で選んでください。`;
             statusEl.style.color = '#e65100';
         } else {
@@ -439,7 +505,7 @@ async function fetchFromOther() {
     }
 }
 
-// 【equibaseの文章の反映】貼り付けた文章から、地域・生年月日・馬主名・生産牧場を読み取って入力する
+// 【equibaseのデータの反映】貼り付けたデータから、地域・生年月日・馬主名・生産牧場を読み取って入力する
 // （略称→地域名の変換にスプレッドシートの「地域変換表」シートを使うため、読み取りはサーバー側で行う）
 async function applyEquibaseText() {
     const text = document.getElementById('equibase_text_input').value;
@@ -496,12 +562,12 @@ async function applyEquibaseText() {
         if (!data.birthplace_detail) {
             // 「(KY)」などの略称が無い、または地域変換表シートに無い場合
             statusEl.textContent = data.origin_code
-                ? `反映しました。略称「${data.origin_code}」が地域変換表シートに無いため、地域は手で選んでください。`
-                : '反映しました。馬名の後ろに産地の略称が無いため、地域は手で選んでください。';
+                ? `equibaseのデータを反映しました。略称「${data.origin_code}」が地域変換表シートに無いため、地域は手で選んでください。`
+                : 'equibaseのデータを反映しました。馬名の後ろに産地の略称が無いため、地域は手で選んでください。';
             statusEl.style.color = '#e65100';
             return;
         }
-        statusEl.textContent = '反映しました。内容を確認してください。';
+        statusEl.textContent = 'equibaseのデータを反映しました。内容を確認してください。';
         statusEl.style.color = 'green';
     } catch (e) {
         statusEl.textContent = '通信エラーが発生しました。';
@@ -883,12 +949,9 @@ function initAutoGrowTextareas() {
                     fetchFromJra();
                 }
                 // JBISのURL欄でEnterが押された場合も同様に「取得」と同じ処理を実行する
-                if (el.id === 'other_url_input' && typeof fetchFromOther === 'function') {
-                    fetchFromOther();
-                }
-                // 地方競馬情報サイトのURL欄も同様
-                if (el.id === 'nar_url_input' && typeof fetchFromNar === 'function') {
-                    fetchFromNar();
+                // 地方競馬情報サイトのURL欄も同様（「地方」「その他」タブは共通の取得ボタンと同じ処理）
+                if ((el.id === 'other_url_input' || el.id === 'nar_url_input') && typeof fetchCombined === 'function') {
+                    fetchCombined();
                 }
             }
         });

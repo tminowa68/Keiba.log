@@ -1690,13 +1690,13 @@ def api_parse_equibase_text():
     """add_parent：equibaseのページからコピーした文章を読み取って、入力欄に反映する値を返す"""
     text = (request.get_json(silent=True) or {}).get('text', '')
     if not text.strip():
-        return jsonify({"error": "equibaseのページの文章を貼り付けてください。"}), 400
+        return jsonify({"error": "equibaseのページのデータを貼り付けてください。"}), 400
     try:
         data = parse_equibase_text(text)
     except Exception as e:
         return jsonify({"error": f"読み取り中にエラーが発生しました: {e}"}), 500
     if not any(data.get(k) for k in ('origin_code', 'birth_year', 'owner', 'breeder')):
-        return jsonify({"error": "文章から情報を読み取れませんでした。"}), 404
+        return jsonify({"error": "データから情報を読み取れませんでした。"}), 404
     return jsonify(data), 200
 
 @app.route('/add_horse')
