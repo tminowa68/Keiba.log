@@ -4093,11 +4093,34 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     except Exception:
         pass
 
+    # --- 和名と英馬名の対応：同じ馬の和名・英馬名を同じ馬として照合できるようにする ---
+    # （母欄が和名の馬と英馬名の馬のどちらも、その母の仔として見つかるようにする）
+    alias_of = {}
+    def _add_alias(name_ja, name_en):
+        name_ja, name_en = str(name_ja or '').strip(), str(name_en or '').strip()
+        key = name_ja or name_en
+        for n in (name_ja, name_en):
+            if n and n not in alias_of:
+                alias_of[n] = key
+
+    for h in all_horses:
+        _add_alias(h[H_NAME] if not is_english_name(h[H_NAME]) else '', h[H_NAME_EN] if len(h) > H_NAME_EN else '')
+    for r in sire_records + dam_records:
+        _add_alias(r.get('馬名', '') if not is_english_name(r.get('馬名', '')) else '', r.get('英馬名', ''))
+
+    def canon(name):
+        """和名・英馬名のどちらで書かれていても同じ馬なら同じ値を返す（照合用）"""
+        name = str(name or '').strip()
+        return alias_of.get(name, name)
+
+    def canon_field(value):
+        """母欄の値（「馬名 (母馬 - 生年)」の注記付きを含む）を照合用にそろえる"""
+        disp, mother, year = split_dam_annotation(value)
+        return f"{canon(disp)} ({canon(mother)} - {year})" if mother else canon(disp)
+
+    name_candidates = {canon(k): v for k, v in name_candidates.items()}
     for r in dam_records:
-        # 和名・英馬名のどちらの表記でも引けるようにする
-        for n in {str(r.get('馬名', '')).strip(), str(r.get('英馬名', '')).strip()}:
-            if n:
-                name_candidates.setdefault(n, []).append(r)
+        name_candidates.setdefault(canon(r.get('馬名', '')), []).append(r)
 
     def resolve_granddam_of(dam_field_value, child_birth_year):
         disp_name, embedded_mother, _embedded_year = split_dam_annotation(dam_field_value)
@@ -4105,7 +4128,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
             return embedded_mother
         if not disp_name:
             return None
-        candidates = name_candidates.get(disp_name, [])
+        candidates = name_candidates.get(canon(disp_name), [])
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -4132,9 +4155,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         if len(h) <= H_DAM or not h[H_NAME]:
             continue
         nm = h[H_NAME].strip()
-        if not nm or nm == horse_name:
+        if not nm or canon(nm) == canon(horse_name):
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
 
         def _blank(idx, row=h):
             return len(row) > idx and (row[idx] is None or str(row[idx]).strip() == '')
@@ -4153,9 +4176,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in sire_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or nm == horse_name or nm in existing_names:
+        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
         candidates.append({
             'name': nm,
             'gender': '牡',
@@ -4170,9 +4193,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in dam_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or nm == horse_name or nm in existing_names:
+        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
             continue
-        existing_names.add(nm)
+        existing_names.add(canon(nm))
         candidates.append({
             'name': nm,
             'gender': '牝',
@@ -4187,11 +4210,11 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     by_name = {}
     for c in candidates:
-        by_name.setdefault(c['name'], []).append(c)
+        by_name.setdefault(canon(c['name']), []).append(c)
 
     def _find_own(name, birth_year):
         """母・祖母自身の表示用データ（性別・父・状態など）を候補リストから探す"""
-        opts = by_name.get(name, [])
+        opts = by_name.get(canon(name), [])
         if not opts:
             return None
         if birth_year:
@@ -4221,16 +4244,20 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     siblings, nephews, uncles, cousins = [], [], [], []
     great_uncles, itoko_oji = [], []
+    dam_full_key, granddam_full_key, ggranddam_full_key = (
+        canon_field(dam_full_name), canon_field(granddam_full_name), canon_field(ggranddam_full_name))
+    dam_key, granddam_key, ggranddam_key = canon(dam_name), canon(granddam_name), canon(ggranddam_name)
 
     for c in candidates:
         target_dam = c['dam_field']
         if not target_dam:
             continue
+        target_dam_key = canon_field(target_dam)
         target_birth_year = extract_year(c['birth_str']) or 0
         gender = c['gender']
 
         # 1. 兄弟馬の判定（母が完全一致するか）
-        if target_dam == dam_full_name:
+        if target_dam_key == dam_full_key:
             if not horse_birth_year or not target_birth_year:
                 relation = "兄弟" if gender in ['牡', 'せん'] else "姉妹"
             elif target_birth_year < horse_birth_year:
@@ -4245,8 +4272,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 2. 伯父叔父・伯母叔母の判定（対象馬の母＝本馬の祖母、が一致するか）
         # ※ 本馬の実母自身もここに該当してしまう（祖母の子であるため）ので、実母は除外する
         # ※ 実母より年上なら伯父・伯母、年下なら叔父・叔母と表記を分ける
-        elif granddam_full_name and target_dam == granddam_full_name:
-            if c['name'] == dam_name:
+        elif granddam_full_name and target_dam_key == granddam_full_key:
+            if canon(c['name']) == dam_key:
                 continue
             if dam_birth_year and target_birth_year and target_birth_year < dam_birth_year:
                 relation = "伯父" if gender in ['牡', 'せん'] else "伯母"
@@ -4258,8 +4285,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 2b. 大伯父・大叔母の判定（対象馬の母＝本馬の曾祖母、が一致するか）
         # ※ 祖母自身もここに該当してしまうので除外する
         # ※ 祖母より年上なら大伯父・大伯母、年下なら大叔父・大叔母と表記を分ける
-        elif ggranddam_full_name and target_dam == ggranddam_full_name:
-            if c['name'] == granddam_name:
+        elif ggranddam_full_name and target_dam_key == ggranddam_full_key:
+            if canon(c['name']) == granddam_key:
                 continue
             if granddam_birth_year and target_birth_year and target_birth_year < granddam_birth_year:
                 relation = "大伯父" if gender in ['牡', 'せん'] else "大伯母"
@@ -4271,20 +4298,20 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         # 3. 甥・姪／いとこ／伯従父・叔従母の判定
         elif dam_name or granddam_name or ggranddam_name:
             parent_disp_name, _, _ = split_dam_annotation(target_dam)
-            target_granddam = resolve_granddam_of(target_dam, target_birth_year)
-            if target_granddam and dam_name and target_granddam == dam_name:
+            target_granddam = canon(resolve_granddam_of(target_dam, target_birth_year))
+            if target_granddam and dam_name and target_granddam == dam_key:
                 relation = "甥" if gender in ['牡', 'せん'] else "姪"
                 nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                           c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                           parent_name=parent_disp_name, depth=1))
-            elif target_granddam and granddam_name and target_granddam == granddam_name:
+            elif target_granddam and granddam_name and target_granddam == granddam_key:
                 cousins.append(_make_row("いとこ", c['name'], gender, target_birth_year, c['sire_disp'],
                                           c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                           parent_name=parent_disp_name, depth=1))
             # ※ 祖母自身の子（伯父叔父・母）は、その祖母経由でも曾祖母に行き着いてしまうため、
             #   直接の親が祖母自身のものはここでは除外する（伯父叔父・母は既にテーブル2で表示済み）
-            elif (target_granddam and ggranddam_name and target_granddam == ggranddam_name
-                  and parent_disp_name != granddam_name):
+            elif (target_granddam and ggranddam_name and target_granddam == ggranddam_key
+                  and canon(parent_disp_name) != granddam_key):
                 if dam_birth_year and target_birth_year and target_birth_year < dam_birth_year:
                     relation = "伯従父" if gender in ['牡', 'せん'] else "伯従母"
                 else:
@@ -4324,9 +4351,9 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     # 4. 又甥・又姪（甥姪の仔）／いとこ甥・いとこ姪（いとこの仔）／はとこ（伯従父叔従母の仔）の判定
     #    ※ 甥姪・いとこ・伯従父叔従母の一覧が確定した後、それぞれを親として持つ馬を探す
-    nephew_names = {n['name'] for n in nephews}
-    cousin_names = {c['name'] for c in cousins}
-    itoko_oji_names = {o['name'] for o in itoko_oji}
+    nephew_names = {canon(n['name']) for n in nephews}
+    cousin_names = {canon(c['name']) for c in cousins}
+    itoko_oji_names = {canon(o['name']) for o in itoko_oji}
     grand_nephews, cousin_nephews, hatoko = [], [], []
 
     for c in candidates:
@@ -4339,17 +4366,18 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         gender = c['gender']
         target_birth_year = extract_year(c['birth_str']) or 0
 
-        if parent_disp_name in nephew_names:
+        parent_key = canon(parent_disp_name)
+        if parent_key in nephew_names:
             relation = "又甥" if gender in ['牡', 'せん'] else "又姪"
             grand_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                             c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                             parent_name=parent_disp_name, depth=2))
-        elif parent_disp_name in cousin_names:
+        elif parent_key in cousin_names:
             relation = "いとこ甥" if gender in ['牡', 'せん'] else "いとこ姪"
             cousin_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
                                              c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                              parent_name=parent_disp_name, depth=2))
-        elif parent_disp_name in itoko_oji_names:
+        elif parent_key in itoko_oji_names:
             hatoko.append(_make_row("はとこ", c['name'], gender, target_birth_year, c['sire_disp'],
                                      c['status'], c['has_url'], c['has_alert'], c['linkable'],
                                      parent_name=parent_disp_name, depth=2))
@@ -4376,7 +4404,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         result = []
         for row in base_rows:
             row = dict(row)
-            row['children'] = child_rows_by_parent.get(row['name'], [])
+            row['children'] = child_rows_by_parent.get(canon(row['name']), [])
             result.append(row)
         return result
 
@@ -4384,7 +4412,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         """親名ごとにグループ化し、各グループ内は生年順に並べる"""
         grouped = {}
         for r in rows:
-            grouped.setdefault(r['parent_name'], []).append(r)
+            grouped.setdefault(canon(r['parent_name']), []).append(r)
         for lst in grouped.values():
             lst.sort(key=_sort_key)
         return grouped
@@ -4398,8 +4426,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         expanded = {}
         for parent_name, children in children_by_parent.items():
             scoped_grandchildren = {
-                child['name']: grandchildren_by_parent[child['name']]
-                for child in children if child['name'] in grandchildren_by_parent
+                canon(child['name']): grandchildren_by_parent[canon(child['name'])]
+                for child in children if canon(child['name']) in grandchildren_by_parent
             }
             expanded[parent_name] = _insert_with_children(children, scoped_grandchildren)
         return expanded
@@ -4434,7 +4462,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
         # 母自身の子（＝本馬の兄弟）はテーブル1で既に表示済みのため、いとことしては差し込まない
         cousins_by_parent = _group_by_parent(cousins)
-        cousins_by_parent.pop(dam_name, None)
+        cousins_by_parent.pop(dam_key, None)
         cousins_by_uncle = _nest_two_generations(cousins_by_parent, _group_by_parent(cousin_nephews))
 
         table2.append(_table('祖母', granddam_name, granddam_birth_year,
@@ -4458,7 +4486,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
             # 祖母自身の子（＝伯父叔父・母）はテーブル2で既に表示済みのため、伯従父叔従母としては差し込まない
             itoko_oji_by_parent = _group_by_parent(itoko_oji)
-            itoko_oji_by_parent.pop(granddam_name, None)
+            itoko_oji_by_parent.pop(granddam_key, None)
             itoko_oji_by_great_uncle = _nest_two_generations(itoko_oji_by_parent, _group_by_parent(hatoko))
 
             table2.append(_table('曾祖母', ggranddam_name, ggranddam_birth_year,
