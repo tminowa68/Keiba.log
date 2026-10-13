@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>データベースと接続中... - keiba.log</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="db-loading-body">
+<div class="db-loading-overlay is-visible" id="db_loading">
+    {% if retry < retry_limit %}
+    <div class="db-loading-box">
+        <div class="db-loading-spinner"></div>
+        <p>データベースと接続中...</p>
+        <p class="db-loading-sub">スプレッドシートの読み込みが完了するまで、自動で読み込み直します（{{ retry + 1 }}回目）</p>
+    </div>
+    <script>
+        // 1秒待ってから読み込み直す
+        setTimeout(function () { location.replace({{ retry_url | tojson }}); }, 1000);
+    </script>
+    {% else %}
+    <div class="db-loading-box">
+        <p>データベースからデータを読み込めませんでした。</p>
+        <p class="db-loading-sub">{{ retry_limit }}回読み込み直しても表示できませんでした。</p>
+        <div class="db-loading-actions">
+            <a href="{{ reload_url }}" class="db-loading-btn db-loading-btn-primary">再度読み込み直す</a>
+            <a href="/" class="db-loading-btn">ホームに戻る</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+</body>
+</html>
