@@ -275,8 +275,10 @@ function findBirthplaceMatch(raw, birthPeriod) {
     }
 
     // 3. 海外の略称（米国・加国など）を正式名称に変換して「海外」から選ぶ
-    if (OVERSEAS_ABBREVIATION_MAP[text]) {
-        return { region: '海外', detail: OVERSEAS_ABBREVIATION_MAP[text] };
+    //    （JBISの「米国産」「愛国産」のような表記は「国」を除いて略称として探す）
+    const abbr = OVERSEAS_ABBREVIATION_MAP[text] ? text : text.replace(/[国州]$/, '');
+    if (OVERSEAS_ABBREVIATION_MAP[abbr]) {
+        return { region: '海外', detail: OVERSEAS_ABBREVIATION_MAP[abbr] };
     }
 
     // 3b. 「三石」のように市町村の「町」「村」「市」が無い表記は、補って探す

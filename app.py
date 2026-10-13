@@ -896,9 +896,9 @@ def fetch_other_horse_info(p_name, p_type, direct_url=None, overseas=False):
             if value:
                 result.setdefault('name_en' if is_english_name(value) else 'name', value)
 
-    # 日本産（馬名の後ろが(JPN)）の馬は、生年月日・馬主名・産地・生産牧場も取得する
-    if not overseas:
-        result.update(parse_jbis_profile(detail_soup))
+    # 生年月日・馬主名・産地・生産牧場も取得する（海外産馬でequibaseのページが無い場合もあるため、
+    # 海外産馬も取得する。equibaseのデータが入力されていれば、画面側でその内容に上書きする）
+    result.update(parse_jbis_profile(detail_soup))
 
     # 登録する馬の名前が英字、または産地が海外で、父・母がカタカナ表記の場合は、父・母のページの
     # <span class="hdg1-search__sub">（例：Danehill(USA)）から英字の馬名を取得する
