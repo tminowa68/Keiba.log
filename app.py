@@ -271,6 +271,56 @@ def set_last_updated(dt_str):
     except Exception as e:
         print(f"最終更新日時の保存に失敗しました: {e}")
 
+# --- JRAのページ（管理馬一覧・競走馬登録・抹消一覧）の取り込み状況 ---
+# Metaシートに、取り込んだページの日付（YYYYMMDD）を種類ごとに記録する
+IMPORT_KINDS = [
+    # (Metaシートの項目名, 表示名, 通常の公開日)
+    ('import_registration', '競走馬登録', '毎週月曜日（前週木曜日の登録分）'),
+    ('import_trainer', '管理馬一覧', '毎週月曜日・木曜日'),
+    ('import_cancel', '抹消一覧', '毎週月曜日・木曜日'),
+]
+IMPORT_SCHEDULE_NOTE = '月曜日まで競馬の開催がある週は、火曜日にずれることがあります。'
+
+def get_meta_values():
+    """Metaシートの「項目 → 値」をまとめて取得する"""
+    try:
+        return {r[0]: (r[1] if len(r) > 1 else '') for r in _get_meta_sheet().get_all_values()[1:] if r and r[0]}
+    except Exception:
+        return {}
+
+def record_import_date(key, date8):
+    """取り込んだページの日付を記録する（記録済みの日付より新しい場合だけ更新する）"""
+    if not date8:
+        return
+    try:
+        ws_meta = _get_meta_sheet()
+        for i, row in enumerate(ws_meta.get_all_values()[1:], start=2):
+            if row and row[0] == key:
+                if not (len(row) > 1 and row[1] and row[1] >= date8):
+                    ws_meta.update(range_name=f'B{i}', values=[[date8]])
+                return
+        ws_meta.append_row([key, date8])
+    except Exception as e:
+        print(f"取り込み日の記録に失敗しました（{key}）: {e}")
+
+def get_import_status():
+    """各ページの通常の公開日と最終更新日（取り込んだページの日付）の一覧"""
+    meta = get_meta_values()
+    return [{'label': label, 'schedule': schedule,
+             'last': format_date_jp(meta.get(key, ''), weekday=True) if meta.get(key) else '未取り込み',
+             'date8': meta.get(key, '')}
+            for key, label, schedule in IMPORT_KINDS]
+
+def get_latest_update_label(import_status=None):
+    """競走馬一覧の「最終更新」：データ更新と各ページの取り込みのうち、最も新しい日付（時間は表示しない）"""
+    dates = [d['date8'] for d in (import_status or get_import_status()) if d['date8']]
+    last_updated = get_last_updated()
+    if last_updated:
+        parts = split_date(last_updated.split(' ')[0])
+        if parts and parts[1] and parts[2]:
+            dates.append(f"{parts[0]:04d}{parts[1]:02d}{parts[2]:02d}")
+    return format_date_jp(max(dates), weekday=True) if dates else None
+
 def format_last_updated(dt_str):
     """Meta保存形式（YYYYMMDD HH:MM。旧形式 YYYY/MM/DD HH:MM も可）を「年月日(曜日)」の表示形式に変換する"""
     if not dt_str:
@@ -1409,7 +1459,7 @@ def index():
                            results=results, 
                            stables=get_stables_list(), 
                            current_year=datetime.now().year,
-                           last_updated=format_last_updated(get_last_updated()))
+                           last_updated=get_latest_update_label())
 
 @app.route('/api/fetch_jra_horse')
 @login_required
@@ -1787,7 +1837,8 @@ def parse_jra_registration_page(html_text):
 def import_horses():
     """JRAの「競走馬登録」ページ（HTML／MHTML保存）をアップロードして一括登録する"""
     if request.method == 'GET':
-        return render_template('import_horses.html')
+        return render_template('import_horses.html', import_status=get_import_status(),
+                               schedule_note=IMPORT_SCHEDULE_NOTE)
 
     file = request.files.get('mhtml_file')
     if not file or not file.filename:
@@ -1898,6 +1949,7 @@ def import_horses():
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
 
+        record_import_date('import_registration', registration_str)
         msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
         if registration_str:
             msg += f"（登録日：{format_date_jp(registration_str)}）"
@@ -2198,6 +2250,7 @@ def import_trainer_horses():
         if changes_rows:
             sh.worksheet("Changes").append_rows(changes_rows)
 
+        record_import_date('import_trainer', as_of_date)
         flash(f"管理馬一覧の取り込み完了（{trainer_name}・{format_date_jp(today_str)}現在・{len(parsed_horses)}頭）："
               f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
@@ -2253,6 +2306,7 @@ def import_cancel_horses():
     # 複数のファイル（日ごとの抹消一覧）をまとめて取り込む。抹消一覧ではないファイルは飛ばす
     entries = {}        # 馬名 → 抹消日
     file_summaries = []
+    cancel_page_dates = []  # 見出しから読み取れた抹消日（最終更新日の記録に使う）
     for file in files:
         try:
             html_text = _extract_html_from_upload(file.read())
@@ -2265,6 +2319,8 @@ def import_cancel_horses():
             flash(f'{file.filename}：ファイルの解析に失敗しました: {e}')
             continue
         date_str = cancel_date_str or today8()
+        if cancel_date_str:
+            cancel_page_dates.append(cancel_date_str)
         for name in names:
             entries.setdefault(name, date_str)
         file_summaries.append(f"{format_date_jp(date_str)}抹消分 {len(names)}頭")
@@ -2365,6 +2421,7 @@ def import_cancel_horses():
         if cancel_rows:
             ws_cancel.append_rows(cancel_rows)
 
+        record_import_date('import_cancel', max(cancel_page_dates) if cancel_page_dates else '')
         msg = f"抹消一覧の取り込み完了（{'、'.join(file_summaries)}）：抹消 {len(cancelled)}件"
         if already:
             msg += f"／抹消済み {len(already)}件"
@@ -2502,7 +2559,8 @@ def weekly():
                            stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
                            prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
-                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
+                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'),
+                           import_status=get_import_status(), schedule_note=IMPORT_SCHEDULE_NOTE)
 
 
 @app.route('/add_horse', methods=['POST'])

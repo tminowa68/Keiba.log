@@ -1958,3 +1958,28 @@ form .select-stables {
 .merge-table .merge-conflict th {
     background: #fff3e0;
 }
+
+/* --- JRAのページの通常の公開日・最終更新日 --- */
+.import-status-table {
+    width: auto;
+    font-size: 0.9em;
+    margin: 8px 0 4px;
+}
+.import-status-table th,
+.import-status-table td {
+    padding: 4px 10px;
+    white-space: nowrap;
+}
+.import-status-note {
+    font-size: 0.8em;
+    color: #666;
+    margin: 0 0 10px;
+}
+.import-status-details {
+    margin-top: 10px;
+    font-size: 0.95em;
+}
+.import-status-details summary {
+    cursor: pointer;
+    color: #1565c0;
+}
