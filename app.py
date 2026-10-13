@@ -1464,7 +1464,9 @@ def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc, base_is_english=
             b_reg = str(record.get('産地', '')).strip()
             b_det = str(record.get('地域', '')).strip()
             
-            if dob and s and d and b_reg:
+            # 英馬名が未登録の馬も、編集リンクを表示して登録できるようにする
+            name_en = str(record.get('英馬名', '') or '').strip()
+            if dob and s and d and b_reg and name_en:
                 needs_update = False
 
             b_year = extract_year(dob)
