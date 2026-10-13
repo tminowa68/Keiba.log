@@ -68,6 +68,17 @@ def do_action(page, onclick):
     time.sleep(WAIT_SECONDS)
 
 
+def open_href(page, href):
+    """<a href="..."> のリンク先を開く。同じリンクが開いていないメニューの中（非表示）にもあるため、
+    クリックではなくリンク先のアドレスを直接開く"""
+    link = page.locator(f"a[href='{href}']").first
+    target = link.evaluate("a => a.href") if link.count() else None
+    if not target:
+        raise RuntimeError(f"リンク（{href}）が見つかりませんでした。")
+    page.goto(target, wait_until="load")
+    time.sleep(WAIT_SECONDS)
+
+
 def link_onclick(page, text):
     """表示文字が text のリンクの onclick を返す（無ければ None）"""
     for a in page.locator("a[onclick*='doAction']").all():
@@ -99,12 +110,8 @@ def save_all_trainer_pages(base_dir, row_folders, show=False):
         # ① 競馬メニュー →「騎手・調教師データ」 ② →「プロフィール」（調教師）
         log("JRAの競馬メニューを開いています...")
         page.goto(JRA_MENU_URL, wait_until="load")
-        with page.expect_navigation(wait_until="load"):
-            page.locator("a[href='/datafile/meikan/']").first.click()
-        time.sleep(WAIT_SECONDS)
-        with page.expect_navigation(wait_until="load"):
-            page.locator("a[href='trainer.html']").first.click()
-        time.sleep(WAIT_SECONDS)
+        open_href(page, "/datafile/meikan/")
+        open_href(page, "trainer.html")
         trainer_index_url = page.url
 
         for row_label, folder in ROWS:
