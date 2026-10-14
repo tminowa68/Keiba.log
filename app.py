@@ -72,12 +72,14 @@ def login_required(f):
 # シートの列構成
 # ==============================================================================
 # Horsesシートの列（0始まりの番号）。馬名は和名ならA列、英字ならB列（英馬名）に記録する
-# クラス・最新レースは取り込んだレース結果から計算して書き込む列（毎回レース結果を読み込まなくて済むように）
+# クラス・最新レース・収得賞金は取り込んだレース結果から計算して書き込む列（毎回レース結果を読み込まなくて済むように）。
+# 収得賞金は最新レースが平地なら平地の、障害なら障害の収得賞金（3歳の6月にクラスが変わる馬を、計算し直さずに判定するため）
 HORSE_COLUMNS = ["馬名", "英馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態",
-                 "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態", "クラス", "最新レース"]
+                 "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態",
+                 "クラス", "最新レース", "収得賞金"]
 (H_NAME, H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE, H_STATUS,
  H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS,
- H_CLASS, H_LAST_RACE) = range(len(HORSE_COLUMNS))
+ H_CLASS, H_LAST_RACE, H_SHUTOKU) = range(len(HORSE_COLUMNS))
 # Sire・Damシートの列
 PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL"]
 (P_NAME, P_NAME_EN, P_BIRTH, P_SIRE, P_DAM, P_OWNER, P_REGION, P_DETAIL, P_BREEDER,
@@ -1310,6 +1312,8 @@ def index():
         # 状態が「抹消」の馬は一覧に表示しない
         if len(horse) > H_STATUS and str(horse[H_STATUS] or '').strip() == '抹消':
             continue
+        if len(horse) > H_CLASS:
+            horse[H_CLASS] = current_horse_class(horse)
         if len(horse) > H_BIRTH:
             birth = parse_full_date(horse[H_BIRTH])
             horse[H_BIRTH] = datetime(birth.year, birth.month, birth.day) if birth else datetime.now()
@@ -1713,12 +1717,20 @@ def get_horse_race_results(horse_name, horse_id='', birth_year=None):
     summary = RR.summarize_results(results, birth_year=birth_year)
     return results, summary
 
-def class_label(summary):
-    """Horsesシートに記録するクラス（障害に出走した馬は「・障害オープン」のように障害のクラスも付ける）"""
-    text = summary['flat']['class']
-    if summary['jump']['starts']:
-        text += '・' + summary['jump']['class']
-    return text
+def class_and_shutoku(summary, results):
+    """Horsesシートに記録するクラスと収得賞金：最新レースが平地なら平地の、障害なら障害のもの"""
+    kind = 'jump' if results and results[0]['jump'] else 'flat'
+    return summary[kind]['class'], summary[kind]['shutoku']
+
+def current_horse_class(row, today=None):
+    """Horsesシートの行から現在のクラスを返す。記録したクラスが平地の条件クラス・オープンなら、
+    記録した収得賞金から計算し直す（2歳・3歳の5月までは1勝クラスの次がオープンのため、6月になると変わる）"""
+    cls = str(row[H_CLASS]).strip() if len(row) > H_CLASS and row[H_CLASS] else ''
+    amount = str(row[H_SHUTOKU]).strip().replace(',', '') if len(row) > H_SHUTOKU and row[H_SHUTOKU] else ''
+    if cls in ('1勝クラス', '2勝クラス', '3勝クラス', 'オープン') and amount.isdigit():
+        birth_year = date_year(row[H_BIRTH]) if len(row) > H_BIRTH else None
+        return RR.class_from_shutoku(int(amount), True, False, birth_year, today)
+    return cls
 
 def last_race_label(results):
     """Horsesシートに記録する最新レース（例：2026/10/4 東京5R メイクデビュー東京 1着）"""
@@ -1758,21 +1770,23 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
         res = results.get(h['key'], [])
         r = rows[h['key']]
         if res:
-            new_class = class_label(RR.summarize_results(res, birth_year=h['birth_year']))
+            new_class, shutoku = class_and_shutoku(RR.summarize_results(res, birth_year=h['birth_year']), res)
+            shutoku = str(shutoku)
         else:
             new_class = '新馬' if h['birth_year'] and datetime.now().year - h['birth_year'] <= 3 else ''
-        new_values = [new_class, last_race_label(res)]
-        old_values = [r[H_CLASS] if len(r) > H_CLASS else '', r[H_LAST_RACE] if len(r) > H_LAST_RACE else '']
+            shutoku = ''
+        new_values = [new_class, last_race_label(res), shutoku]
+        old_values = [str(r[c]) if len(r) > c else '' for c in (H_CLASS, H_LAST_RACE, H_SHUTOKU)]
         if new_values != old_values:
             row_no = h['key'] + 2
-            updates.append({'range': f"{col_letter(H_CLASS)}{row_no}:{col_letter(H_LAST_RACE)}{row_no}",
+            updates.append({'range': f"{col_letter(H_CLASS)}{row_no}:{col_letter(H_SHUTOKU)}{row_no}",
                             'values': [new_values]})
     updated = len(updates)
     header = data[0] if data else []
-    if updates or len(header) <= H_LAST_RACE or header[H_CLASS] != HORSE_COLUMNS[H_CLASS]:
+    if updates or len(header) <= H_SHUTOKU or header[H_SHUTOKU] != HORSE_COLUMNS[H_SHUTOKU]:
         ensure_columns(ws, len(HORSE_COLUMNS))
-        updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(H_LAST_RACE)}1",
-                        'values': [[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE]]]})
+        updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(H_SHUTOKU)}1",
+                        'values': [[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE], HORSE_COLUMNS[H_SHUTOKU]]]})
         with_sheets_retry(ws.batch_update, updates)
     return total, updated
 
@@ -2515,7 +2529,7 @@ def import_horses():
 
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        for idx in (H_REGISTRATION, H_REG_STATUS, H_CLASS, H_LAST_RACE):
+        for idx in (H_REGISTRATION, H_REG_STATUS, H_CLASS, H_LAST_RACE, H_SHUTOKU):
             if _blank(headers[idx]):
                 headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
@@ -2762,7 +2776,7 @@ def import_trainer_horses():
         rows = [list(r) for r in data[1:]]
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        for idx in (H_REG_STATUS, H_CLASS, H_LAST_RACE):
+        for idx in (H_REG_STATUS, H_CLASS, H_LAST_RACE, H_SHUTOKU):
             if not headers[idx]:
                 headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
@@ -4467,11 +4481,11 @@ def race_list():
                            next_week=(week_start + timedelta(days=7)).isoformat(),
                            search_text=heading)
 
-def horse_class_of(h):
-    """Horsesシートに記録したクラス（平地）。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
-    text = str(h[H_CLASS]).strip() if len(h) > H_CLASS and h[H_CLASS] else ''
+def horse_class_of(h, today=None):
+    """Horsesシートに記録したクラス。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
+    text = current_horse_class(h, today)
     if text:
-        return text.split('・')[0]
+        return text
     birth_year = date_year(h[H_BIRTH]) if len(h) > H_BIRTH else None
     if birth_year and datetime.now().year - birth_year <= 3:
         return '新馬'
@@ -4526,7 +4540,7 @@ def race_detail():
                 continue
             b_year = date_year(h[H_BIRTH])
             calculated_age = race_date.year - b_year if b_year else "不明"
-            current_class = horse_class_of(h)
+            current_class = horse_class_of(h, race_date)
             if not age_allowed(target_race_data['category'], calculated_age):
                 continue
             if target_race_data['jump'] or class_allowed(target_race_data['class'], current_class):
@@ -5189,7 +5203,7 @@ def api_available_races():
     horse = next((h for h in get_all_horses() if len(h) > 0 and (h[0] == horse_name or row_matches_name(h, horse_name))), None)
     if not horse:
         return {"error": "馬が見つかりませんでした。"}, 404
-    current_class = horse_class_of(horse)
+    current_class = horse_class_of(horse, race_date)
     birth_year = date_year(horse[H_BIRTH]) if len(horse) > H_BIRTH else None
     age = race_date.year - birth_year if birth_year else None
 

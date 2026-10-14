@@ -350,8 +350,25 @@ def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule
     return {'3勝クラス': 900, '2勝クラス': 600, '1勝クラス': 500, '新馬': 400, '未勝利': 400}.get(race_class, 0)
 
 
-def class_from_shutoku(amount, has_started, jump=False):
-    """収得賞金（万円）からクラスを求める"""
+def young_class_until(year):
+    """2歳・3歳馬のクラスが「1勝クラスの次はオープン」になる最終日（3歳の5月まで）。
+    5月31日が土曜日の場合は、その週の開催（6月1日の日曜日）が終わるまで"""
+    may31 = date(year, 5, 31)
+    return date(year, 6, 1) if may31.weekday() == 5 else may31
+
+
+def is_young_class_period(birth_year, today=None):
+    """2歳の間と、3歳の5月まで（young_class_until）か"""
+    if not birth_year:
+        return False
+    today = today or date.today()
+    age = today.year - int(birth_year)
+    return age <= 2 or (age == 3 and today <= young_class_until(today.year))
+
+
+def class_from_shutoku(amount, has_started, jump=False, birth_year=None, today=None):
+    """収得賞金（万円）からクラスを求める。birth_year を指定すると、2歳と3歳の5月までは
+    1勝クラスの次をオープンにする（2勝クラス・3勝クラスは3歳の6月から）"""
     if jump:
         if amount <= 0:
             return '障害未勝利' if has_started else '障害未出走'
@@ -360,6 +377,8 @@ def class_from_shutoku(amount, has_started, jump=False):
         return '未勝利' if has_started else '新馬'
     if amount <= 500:
         return '1勝クラス'
+    if is_young_class_period(birth_year, today):
+        return 'オープン'
     if amount <= 1000:
         return '2勝クラス'
     if amount <= 1600:
@@ -407,7 +426,8 @@ def summarize_results(results, birth_year=None, today=None):
             kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
             shutoku //= 2
         summary[kind] = {'starts': len(started), 'total_prize': total_prize, 'shutoku': shutoku,
-                         'class': class_from_shutoku(shutoku, bool(started), jump), 'kokyu': kokyu}
+                         'class': class_from_shutoku(shutoku, bool(started), jump, birth_year, today),
+                         'kokyu': kokyu}
     return summary
 
 
