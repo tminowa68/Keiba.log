@@ -2146,3 +2146,32 @@ form .select-stables {
 .race-import-status {
     color: #555;
 }
+/* レース情報（番組表） */
+.race-week-label {
+    display: inline-block;
+    margin-right: 10px;
+    color: #555;
+    font-weight: bold;
+}
+.race-condition-only {
+    font-size: 1.05em;
+    color: #333;
+    line-height: 2;
+}
+.race-empty-week {
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+}
+/* 競走馬一覧：クラス・最新レース */
+td.col-class {
+    white-space: nowrap;
+    font-size: 0.9em;
+}
+td.col-last-race {
+    font-size: 0.85em;
+    white-space: nowrap;
+    max-width: 20em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

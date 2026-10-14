@@ -3,26 +3,42 @@
 {% block content %}
 <section>
 <div style="margin-bottom: 20px;">
+    {% set venue_q = ('&venue=' ~ (venue|urlencode)) if venue else '' %}
     <div style="margin-bottom: 12px;">
+        <a href="/races?date={{ prev_week }}{{ venue_q }}">← 前の週</a>
+        <a href="/races" style="margin-left: 10px;">今週</a>
+        <a href="/races?date={{ next_week }}{{ venue_q }}" style="margin-left: 10px;">次の週 →</a>
+        <form method="GET" action="/races" style="display: inline-block; margin-left: 15px;">
+            <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            {% if venue %}<input type="hidden" name="venue" value="{{ venue }}">{% endif %}
+            <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
+        </form>
+    </div>
+
+    <div style="margin-bottom: 12px;">
+        <span class="race-week-label">{{ week_label }}</span>
         {% for d in display_dates %}
-            <a class="date" href="/races?date={{ d.value }}&venue={{ venue }}"
+            <a class="date" href="/races?date={{ d.value }}{{ venue_q }}"
                 style="{% if date == d.value %} background-color: #007bff; color: white; {% else %} background-color: white; color: #007bff; {% endif %}">
                 {{ d.label }}
             </a>
         {% endfor %}
-        
-        日付を選択：
-        <form method="GET" action="/races" style="display: inline-block;">
-            <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
-            <input type="hidden" name="venue" value="{{ venue }}">
-            <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
-        </form>
-        <a style="margin-left: 5px;" href="/races">今週の開催へ</a>
     </div>
 
+    {% if not display_dates %}
+    <div class="race-empty-week">
+        <p>この週の番組はありません。</p>
+        {% if session.get('login') %}
+        <p>
+            <button type="button" id="program-fetch-btn" class="update-btn" style="padding: 6px 14px;">JRAからこの週の番組を取得</button>
+            <span id="program-fetch-status" style="margin-left: 8px;"></span>
+        </p>
+        {% endif %}
+    </div>
+    {% else %}
     <div>
         {% for v in available_venues %}
-            <a href="/races?date={{ date }}&venue={{ v }}" 
+            <a href="/races?date={{ date }}&venue={{ v|urlencode }}"
                style="display: inline-block; padding: 6px 16px; margin-right: 8px; text-decoration: none; border: 1px solid #28a745; border-radius: 4px; font-weight: bold;
                {% if venue == v %}background-color: #28a745; color: white;{% else %}background-color: white; color: #28a745;{% endif %}">
                 {{ v }}
@@ -48,37 +64,24 @@
             <tbody>
                 {% for i in range(start, end + 1) %}
                     {% set race = day_races.get(i) %}
-                    {% if race and (race.name or race.condition) %}
+                    {% if race %}
                     <tr>
                         <td class="col-time">{{ race.time }}</td>
                         <td class="col-num">
-                            <a href="/edit_race?date={{ date }}&venue={{ venue }}&num={{ i }}">
-                            {{ race.num | replace('レース', '') }}R
-                            </a>
+                            <a href="/edit_race?date={{ date }}&venue={{ venue|urlencode }}&num={{ i }}">{{ i }}R</a>
                         </td>
                         <td class="col-details">
-                            <div>
-                                {% if race.name %}
-                                    <span class="race-name">{{ race.name }}</span><br>
-                                    {% if race.condition %}
-                                        <div class="race-condition">{{ race.condition }}</div>
-                                    {% endif %}
-                                {% else %}
-                                    {% if race.condition %}
-                                        <div class="race-condition" style="font-size: 1.1em; line-height: 2.4;">
-                                            {{ race.condition }}
-                                        </div>
-                                    {% endif %}
-                                {% endif %}
-                            </div>
+                            {% if race.name %}
+                                <span class="race-name">{{ race.name }}</span>
+                                {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}
+                                <div class="race-condition">{{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</div>
+                            {% else %}
+                                <div class="race-condition race-condition-only">{{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</div>
+                            {% endif %}
                         </td>
                         <td class="col-course">{{ race.course }}</td>
                         <td class="col-note" style="text-align: center; font-weight: bold;">
-                            {% if race.note == '牡・牝' %}
-                                牡・<span class="female-text">牝</span>
-                            {% elif race.note == '牝' %}
-                                <span class="female-text">牝</span>
-                            {% endif %}
+                            {% if race.note == '牝' %}<span class="female-text">牝</span>{% endif %}
                         </td>
                     </tr>
                     {% endif %}
@@ -90,6 +93,32 @@
     {{ race_table('前半（1〜6レース）', 1, 6) }}
     {{ race_table('後半（7〜12レース）', 7, 12) }}
     </div>
+    {% endif %}
 </div>
 </section>
+
+{% if not display_dates and session.get('login') %}
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
+<script>
+document.getElementById('program-fetch-btn').addEventListener('click', async function() {
+    const btn = this, status = document.getElementById('program-fetch-status');
+    btn.disabled = true;
+    status.style.color = '';
+    status.textContent = 'JRAの開催日程から取得しています...';
+    try {
+        const res = await RaceImport.post('/api/program/fetch', { start: '{{ week_start }}', end: '{{ week_end }}' });
+        if (!res.saved_dates.length) {
+            status.textContent = 'この週の番組はJRAのサイトにもありませんでした。';
+            btn.disabled = false;
+            return;
+        }
+        location.reload();
+    } catch (e) {
+        status.style.color = '#c62828';
+        status.textContent = e.message;
+        btn.disabled = false;
+    }
+});
+</script>
+{% endif %}
 {% endblock %}

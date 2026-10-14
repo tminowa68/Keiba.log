@@ -4,7 +4,7 @@
 <div class="edit-container">
     {% if race %}
     <section class="race-header-card">
-        <h1>{{ race.name if race.name else '' }}</h1>
+        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}</h1>
         <div class="race-info-main">
             {{ date|jpdate(weekday=True) }} ／ {{ venue }} ／ {{ race.num }}
         </div>
@@ -69,7 +69,7 @@
     <section id="special" class="entry-section">
         <div class="entry-form-box">
             <div class="mb-8">
-                <button type="button" class="update-btn btn-secondary" onclick="selectAll(...)">全てにチェックを入れる</button>
+                <button type="button" class="update-btn btn-secondary" onclick="selectAll('checkboxes_special')">全てにチェックを入れる</button>
             </div>
             <div id="checkboxes_special" class="checkbox-list"></div>
             <button class="btn-add" onclick="registerSelected('special')">特別登録へ追加</button>
@@ -93,7 +93,7 @@
     <section id="final" class="entry-section">
         <div class="entry-form-box">
             <div class="mb-8">
-                <button type="button" class="update-btn btn-secondary" onclick="selectAll(...)">全てにチェックを入れる</button>
+                <button type="button" class="update-btn btn-secondary" onclick="selectAll('checkboxes_final')">全てにチェックを入れる</button>
             </div>
             <div id="checkboxes_final" class="checkbox-list"></div>
             <button class="btn-add" onclick="registerSelected('final')">出馬表を確定</button>
@@ -117,7 +117,12 @@
     </section>
 
     <div class="back-link-container">
-        <a href="/races?date={{ date }}&venue={{ venue }}">← レース一覧に戻る</a>
+        <a href="/races?date={{ date }}&venue={{ venue|urlencode }}">← レース一覧に戻る</a>
+    </div>
+    {% else %}
+    <p>{{ date|jpdate(weekday=True) }} {{ venue }} の番組が見つかりません。「データ更新」の「開催日程（番組）インポート」から番組を取り込んでください。</p>
+    <div class="back-link-container">
+        <a href="/races?date={{ date }}&venue={{ venue|urlencode }}">← レース一覧に戻る</a>
     </div>
     {% endif %}
 </div>
@@ -377,6 +382,7 @@ async function registerSelected(type) {
         // for...of を使うことで、await が1つずつ完了するのを待ちます
         for (const cb of checkboxes) {
             const payload = {
+                date: "{{ date }}",
                 venue: "{{ venue }}",
                 sheet_name: "{{ search_text }}",
                 race_num: "{{ race.num }}".replace(/[^0-9]/g, ""),

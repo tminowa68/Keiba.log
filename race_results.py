@@ -9,7 +9,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
   1勝クラス：500万円以下 ／ 2勝クラス：1,000万円以下 ／ 3勝クラス：1,600万円以下 ／ オープン：1,600万円超
 """
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from bs4 import BeautifulSoup, Tag
 
@@ -350,8 +350,27 @@ def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule
     return {'3勝クラス': 900, '2勝クラス': 600, '1勝クラス': 500, '新馬': 400, '未勝利': 400}.get(race_class, 0)
 
 
-def class_from_shutoku(amount, has_started, jump=False):
-    """収得賞金（万円）からクラスを求める"""
+def young_class_until(year):
+    """2歳・3歳馬のクラスが「1勝クラスの次はオープン」になる最終日（3歳の5月の最後の開催週が終わるまで）。
+    5月の最後の土曜日とその翌日の日曜日の開催が5月最後の開催週で、その日曜日まで
+    （例：6月1日が土曜日なら5月26日まで、5月31日が土曜日なら6月1日まで）"""
+    may31 = date(year, 5, 31)
+    last_saturday = may31 - timedelta(days=(may31.weekday() - 5) % 7)
+    return last_saturday + timedelta(days=1)
+
+
+def is_young_class_period(birth_year, today=None):
+    """2歳の間と、3歳の5月まで（young_class_until）か"""
+    if not birth_year:
+        return False
+    today = today or date.today()
+    age = today.year - int(birth_year)
+    return age <= 2 or (age == 3 and today <= young_class_until(today.year))
+
+
+def class_from_shutoku(amount, has_started, jump=False, birth_year=None, today=None):
+    """収得賞金（万円）からクラスを求める。birth_year を指定すると、2歳と3歳の5月までは
+    1勝クラスの次をオープンにする（2勝クラス・3勝クラスは3歳の6月から）"""
     if jump:
         if amount <= 0:
             return '障害未勝利' if has_started else '障害未出走'
@@ -360,6 +379,8 @@ def class_from_shutoku(amount, has_started, jump=False):
         return '未勝利' if has_started else '新馬'
     if amount <= 500:
         return '1勝クラス'
+    if is_young_class_period(birth_year, today):
+        return 'オープン'
     if amount <= 1000:
         return '2勝クラス'
     if amount <= 1600:
@@ -407,5 +428,74 @@ def summarize_results(results, birth_year=None, today=None):
             kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
             shutoku //= 2
         summary[kind] = {'starts': len(started), 'total_prize': total_prize, 'shutoku': shutoku,
-                         'class': class_from_shutoku(shutoku, bool(started), jump), 'kokyu': kokyu}
+                         'class': class_from_shutoku(shutoku, bool(started), jump, birth_year, today),
+                         'kokyu': kokyu}
     return summary
+
+
+# --- 開催日程（競馬番組）の日別ページ ---
+# https://www.jra.go.jp/keiba/calendar2026/2026/11/1101.html（事前に発表された各日の番組）
+
+def program_url(race_date):
+    y, m, d = race_date.year, race_date.month, race_date.day
+    return f"https://www.jra.go.jp/keiba/calendar{y}/{y}/{m}/{m:02d}{d:02d}.html"
+
+
+_PROGRAM_GRADE_RE = re.compile(r'[（(]\s*((?:J・)?G[ⅠⅡⅢ123]|Jpn[ⅠⅡⅢ]|L)\s*[）)]\s*$')
+_PROGRAM_CLASS_RE = re.compile(r'^(障害)?(\d歳(?:以上)?)?(.*)$')
+
+
+def split_program_race_name(text):
+    """「第174回 天皇賞（秋）（GⅠ）」を（レース名, グレード）＝（天皇賞（秋）, G1）に分ける"""
+    text = re.sub(r'\s+', ' ', (text or '')).strip()
+    grade = ''
+    m = _PROGRAM_GRADE_RE.search(text)
+    if m:
+        grade = normalize_grade(m.group(1))
+        text = text[:m.start()].strip()
+    text = re.sub(r'^第\s*\d+\s*回\s*', '', text).strip()
+    return text, grade
+
+
+def parse_program_page(html_or_soup, page_date=None):
+    """開催日程の日別ページから、その日の全レースの番組を返す（競馬場の表示順・レース番号順）"""
+    soup = _soup(html_or_soup)
+    if page_date is None:
+        head = _text(soup.title) + ' ' + _text(soup.select_one('#contentsBody') or soup.body)
+        m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日[（(].曜[）)]\s*競馬番組', head)
+        if not m:
+            raise ValueError('開催日程（競馬番組）のページではありません。')
+        page_date = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    races = []
+    for table in soup.select('#program_list table'):
+        cm = re.search(r'(\d+)回(\S+?)(\d+)日', _text(table.find('caption')))
+        if not cm:
+            continue
+        kai, venue, nichi = int(cm.group(1)), cm.group(2), int(cm.group(3))
+        for tr in table.select('tbody tr'):
+            nm = re.match(r'(\d+)', _text(tr.select_one('th.num')))
+            if not nm:
+                continue
+            name_td = tr.select_one('td.name')
+            name, grade = split_program_race_name(_text(name_td.select_one('p.stakes')) if name_td else '')
+            condition = _text(name_td.select_one('p.race_class')) if name_td else ''
+            cls = _PROGRAM_CLASS_RE.match(condition)
+            jump = bool(cls.group(1))
+            dist_text = _text(name_td.select_one('.race_cond .dist')) if name_td else ''
+            dm = re.search(r'[\d,]+', dist_text)
+            type_text = _text(name_td.select_one('.race_cond .type')) if name_td else ''
+            parts = re.findall(r'[（(]([^）)]*)[）)]', type_text)
+            course_detail = parts[0] if parts else ''
+            marks = ''.join(f"（{p}）" for p in parts[1:])
+            weight = re.sub(r'[（(][^）)]*[）)]', '', type_text).strip()
+            tm = re.search(r'(\d{1,2})時(\d{2})分', _text(tr.select_one('td.time')))
+            races.append({
+                'date': page_date, 'venue': venue, 'kai': kai, 'nichi': nichi, 'num': int(nm.group(1)),
+                'name': name, 'grade': grade, 'jump': jump,
+                'category': cls.group(2) or '', 'class': (cls.group(3) or '').strip(), 'condition': condition,
+                'distance': int(dm.group(0).replace(',', '')) if dm else '',
+                'surface': '障' if jump else ('ダ' if course_detail.startswith('ダ') else ('芝' if course_detail.startswith('芝') else '')),
+                'course_detail': course_detail, 'marks': marks, 'weight_rule': weight,
+                'time': f"{int(tm.group(1))}:{tm.group(2)}" if tm else '',
+            })
+    return races
