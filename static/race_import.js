@@ -1,6 +1,18 @@
 // レース結果の取り込み（import_horses.html の「登録馬の出走レースから取り込み」と horse_detail.html の取り込みボタンで共用）
 (function() {
+    // Google SheetsのAPIの1分あたりの回数制限（429）にかかった場合は、30秒待ってからやり直す（3回まで）
     async function post(url, body) {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await postOnce(url, body);
+            } catch (e) {
+                if (attempt >= 3 || !/429|Quota exceeded/.test(e.message || '')) throw e;
+                await new Promise(resolve => setTimeout(resolve, 30000));
+            }
+        }
+    }
+
+    async function postOnce(url, body) {
         const res = await fetch(url, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
         });
@@ -23,8 +35,8 @@
         opts = opts || {};
         const log = opts.log || function() {};
         const result = { registered: 0, skipped: 0, failed: 0, messages: [] };
-        for (let i = 0; i < (items || []).length; i += 3) {
-            const chunk = items.slice(i, i + 3);
+        for (let i = 0; i < (items || []).length; i += 4) {
+            const chunk = items.slice(i, i + 4);
             log(`未登録の馬を登録しています（${Math.min(i + chunk.length, items.length)}／${items.length}頭）：${chunk.map(x => x.name).join('、')}`);
             let res;
             try {
@@ -56,7 +68,8 @@
         const doneDays = opts.doneDays || new Set();
         const data = await post('/api/race_results/horse_races', { url: horseUrl });
         const races = data.races || [];
-        const todo = opts.overwrite ? races : races.filter(r => !r.imported);
+        // recheck：取り込み済みのレースも取得して（保存はしない）、未登録の出走馬を探す
+        const todo = (opts.overwrite || opts.recheck) ? races : races.filter(r => !r.imported);
         const result = { races: races.length, todo: todo.length, saved: 0, failed: 0 };
         result.errors = [];
         result.unregistered = [];
@@ -82,7 +95,7 @@
                 if (doneDays.has(r.day_key)) continue;
                 log(`${r.label} の開催日の全レースを取得しています...`);
                 const ok = await attempt(r.label, 1, () =>
-                    post('/api/race_results/import_day', { url: r.url, overwrite: !!opts.overwrite }));
+                    post('/api/race_results/import_day', { url: r.url, overwrite: !!opts.overwrite, recheck: !!opts.recheck }));
                 if (ok) doneDays.add(r.day_key);
             }
         } else {
@@ -90,13 +103,15 @@
                 const chunk = todo.slice(i, i + 10);
                 log(`${chunk[0].label} ほか${chunk.length}レースを取得しています...`);
                 await attempt(chunk[0].label, chunk.length, () =>
-                    post('/api/race_results/import_races', { urls: chunk.map(r => r.url), overwrite: !!opts.overwrite }));
+                    post('/api/race_results/import_races', { urls: chunk.map(r => r.url), overwrite: !!opts.overwrite,
+                                                             recheck: !!opts.recheck }));
             }
         }
         // 出走馬のうち未登録の馬を登録する
         if (opts.register && result.unregistered.length) {
             const reg = await registerHorses(result.unregistered, { log: log });
             result.registered = reg.registered;
+            result.registerFailed = reg.failed;
             result.registerMessages = reg.messages;
         }
         return result;

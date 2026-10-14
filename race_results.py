@@ -10,6 +10,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
 """
 import re
 from datetime import date, timedelta
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
@@ -273,7 +274,8 @@ def parse_race_result_page(html_or_soup, url=''):
             'num': _text(td('num')),
             'name': _text(horse_a) if horse_a else _text(td('horse')),
             'icons': [img.get('alt', '') for img in td('horse').select('span.horse_icon img')] if td('horse') else [],
-            'horse_url': horse_a.get('href', '') if horse_a else '',
+            # JRAから取得したページのリンクは「/JRADB/accessU.html?…」のような相対URLなので、完全なURLにする
+            'horse_url': urljoin(JRA_RESULT_URL, horse_a.get('href', '')) if horse_a and horse_a.get('href') else '',
             'sex': ('せん' if am and am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
             'age': int(am.group(2)) if am else '',
             'weight': _text(td('weight')),

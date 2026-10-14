@@ -101,6 +101,7 @@
             <label><input type="checkbox" id="rr-check-all"> すべて選択</label>
             <label><input type="checkbox" id="rr-overwrite"> 取り込み済みのレースも取得し直す</label>
             <label><input type="checkbox" id="rr-register" checked> 未登録の出走馬を登録する</label>
+            <label><input type="checkbox" id="rr-recheck"> 取り込み済みのレースの出走馬も確認する</label>
         </div>
         <table class="rr-days-table">
             <thead><tr><th></th><th>開催日</th><th>取り込み済み</th><th>結果</th></tr></thead>
@@ -223,10 +224,12 @@
             try {
                 let data = null;
                 if (d.url) {
-                    data = await post({ url: d.url, key: d.key, overwrite });
+                    data = await post({ url: d.url, key: d.key, overwrite,
+                                        recheck: $('rr-recheck').checked && $('rr-register').checked });
                 } else {
                     for (const via of viaCandidates(d)) {
-                        data = await post({ via, key: d.key, overwrite });
+                        data = await post({ via, key: d.key, overwrite,
+                                            recheck: $('rr-recheck').checked && $('rr-register').checked });
                         applyDiscovered(data.discovered);
                         if (data.found) break;
                     }
@@ -262,7 +265,8 @@
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         Horses・Sire・DamシートにJRAのURLが登録されている馬について、JRAの競走馬情報のページの「出走レース」から、
         まだ取り込んでいないレースの結果を取り込みます（1頭ずつ順番に処理します）。<br>
-        「同じ日の全レースも取り込む」にすると、出走したレースと同じ日・同じ競馬場の全レースも取り込みます。
+        「同じ日の全レースも取り込む」にすると、出走したレースと同じ日・同じ競馬場の全レースも取り込みます。<br>
+        「取り込み済みのレースの出走馬も確認する」にすると、取り込み済みのレースの結果のページも開いて、未登録の出走馬を登録します（結果は取り込み直しません）。
     </p>
     <div class="rh-options">
         <div>対象：
@@ -276,6 +280,7 @@
             <label><input type="checkbox" id="rh-overwrite"> 取り込み済みのレースも取得し直す</label>
             <label><input type="checkbox" id="rh-resume" checked> 前回の続きから（前回処理を終えた馬を飛ばす）</label>
             <label><input type="checkbox" id="rh-register" checked> 未登録の出走馬を登録する</label>
+            <label><input type="checkbox" id="rh-recheck"> 取り込み済みのレースの出走馬も確認する</label>
         </div>
     </div>
     <div style="margin-top:15px; display:flex; gap:10px;">
@@ -328,7 +333,8 @@
         const sheets = [...document.querySelectorAll('.rh-sheet:checked')].map(cb => cb.value);
         if (!sheets.length) { $('rh-message').textContent = '対象を選んでください。'; return; }
         const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked,
-                       register: $('rh-register').checked, doneDays: new Set() };
+                       register: $('rh-register').checked, recheck: $('rh-recheck').checked && $('rh-register').checked,
+                       doneDays: new Set() };
         stopRequested = false;
         $('rh-start-btn').disabled = true; $('rh-stop-btn').disabled = false;
         $('rh-log').innerHTML = '';
@@ -355,7 +361,8 @@
                     res.errors.forEach(msg => log(`　${msg}`, true));
                     if (res.registered) log(`　未登録の出走馬を${res.registered}頭登録しました`);
                     (res.registerMessages || []).filter(m => m.error).forEach(m => log(`　${m.text}`, true));
-                    if (!res.failed) { done.add(t.url); saveDone(done); }
+                    // 取り込み・登録に失敗した馬は、次回の「前回の続きから」でも処理し直す
+                    if (!res.failed && !res.registerFailed) { done.add(t.url); saveDone(done); }
                 } catch (e) {
                     log(`${head}：${e.message}`, true);
                     if (RaceImport.isFatalError(e.message)) break;

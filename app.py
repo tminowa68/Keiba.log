@@ -34,7 +34,104 @@ else:
     # ローカル開発環境（ファイルが存在すればファイルから読み込み）
     CREDS = Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
 
-gc = gspread.authorize(CREDS)
+class PatientHTTPClient(getattr(gspread, 'HTTPClient', object)):
+    """Google SheetsのAPIの回数制限（1分あたりの読み込み・書き込み回数）にかかった場合（429）は、
+    少し待ってからやり直す（待つのは合計18秒まで。サーバーの1回の処理の時間制限にかからないようにする。
+    それでも制限にかかる場合は、画面の側で少し待ってからやり直す）"""
+    def request(self, *args, **kwargs):
+        for wait in (3, 5, 10, None):
+            try:
+                return super().request(*args, **kwargs)
+            except gspread.exceptions.APIError as e:
+                if wait is None or getattr(e, 'code', None) != 429:
+                    raise
+                time.sleep(wait)
+
+
+class CachedSpreadsheet:
+    """スプレッドシートのシート（タブ）の情報を覚えておく。worksheet() のたびにシートの一覧を
+    読み込むと、Google SheetsのAPIの「1分あたりの読み込み回数」の上限にかかりやすいため"""
+    TTL = 300
+
+    def __init__(self, book):
+        self._book = book
+        self._ws = {}
+        self._ws_list = None
+
+    def __getattr__(self, name):
+        return getattr(self._book, name)
+
+    def _forget(self):
+        self._ws.clear()
+        self._ws_list = None
+
+    def worksheet(self, title):
+        cached = self._ws.get(title)
+        if cached and time.time() - cached[0] < self.TTL:
+            return cached[1]
+        ws = self._book.worksheet(title)
+        self._ws[title] = (time.time(), ws)
+        return ws
+
+    def worksheets(self, *args, **kwargs):
+        if self._ws_list and time.time() - self._ws_list[0] < self.TTL and not args and not kwargs:
+            return list(self._ws_list[1])
+        sheets = self._book.worksheets(*args, **kwargs)
+        self._ws_list = (time.time(), sheets)
+        return list(sheets)
+
+    @property
+    def sheet1(self):
+        return self._book.sheet1
+
+    def add_worksheet(self, *args, **kwargs):
+        self._forget()
+        return self._book.add_worksheet(*args, **kwargs)
+
+    def duplicate_sheet(self, *args, **kwargs):
+        self._forget()
+        return self._book.duplicate_sheet(*args, **kwargs)
+
+    def del_worksheet(self, *args, **kwargs):
+        self._forget()
+        return self._book.del_worksheet(*args, **kwargs)
+
+
+class CachedClient:
+    """gspread の Client の代わり：開いたスプレッドシートを一定時間覚えておく（開くたびに読み込みが発生するため）"""
+    TTL = 600
+
+    def __init__(self, client):
+        self._client = client
+        self._books = {}
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def _cached(self, key, opener):
+        cached = self._books.get(key)
+        if cached and time.time() - cached[0] < self.TTL:
+            return cached[1]
+        book = CachedSpreadsheet(opener())
+        self._books[key] = (time.time(), book)
+        if getattr(book, 'id', None):
+            self._books[('key', book.id)] = (time.time(), book)
+        return book
+
+    def open(self, title, *args, **kwargs):
+        return self._cached(('title', title), lambda: self._client.open(title, *args, **kwargs))
+
+    def open_by_key(self, key):
+        return self._cached(('key', key), lambda: self._client.open_by_key(key))
+
+    def create(self, *args, **kwargs):
+        return self._client.create(*args, **kwargs)
+
+
+try:
+    gc = CachedClient(gspread.authorize(CREDS, http_client=PatientHTTPClient))
+except TypeError:
+    gc = CachedClient(gspread.authorize(CREDS))
 
 # --- データベース初期化 ---
 def add_new_user(username, password):
@@ -1041,7 +1138,24 @@ def get_all_horses():
         sheet_not_ready(f"Horsesシートを読み込めませんでした: {e}")
         return []
 
+_stables_cache = {}   # 美浦・栗東シートの厩舎の一覧（しばらくの間は読み込み直さない）
+STABLES_CACHE_TTL = 60
+
 def get_stables_list():
+    cached = _stables_cache.get('list')
+    if cached and time.time() - cached[0] < STABLES_CACHE_TTL:
+        return [dict(s) for s in cached[1]]
+    stables = _load_stables_list()
+    _stables_cache['list'] = (time.time(), [dict(s) for s in stables])
+    return stables
+
+@app.before_request
+def _forget_stables_on_change():
+    """厩舎を登録・変更する操作の前に、覚えている厩舎の一覧を捨てる"""
+    if request.method == 'POST' and 'stable' in (request.path or ''):
+        _stables_cache.clear()
+
+def _load_stables_list():
     try:
         sh = gc.open(horse_data)
         all_stables = []
@@ -1879,7 +1993,7 @@ def record_race_changes(sh, horse_changes, stables):
     （前のレースと変わった後のレースの間の日付なら直さない）。
     記録後の各馬の転厩・去勢の記録 {馬名: [(日付, 項目, 旧, 新), …]} を返す"""
     ws = get_or_create_worksheet(sh, "Changes", ["年月日", "馬名", "項目", "旧", "新"])
-    data = with_sheets_retry(ws.get_all_values)
+    data = horse_sheet_values("Changes")
     existing = {}
     for i, r in enumerate(data[1:], start=2):
         r = list(r) + [''] * 5
@@ -1914,6 +2028,8 @@ def record_race_changes(sh, horse_changes, stables):
         with_sheets_retry(ws.batch_update, updates)
     if new_rows:
         with_sheets_retry(ws.append_rows, new_rows)
+    if updates or new_rows:
+        remember_sheet_values("Changes")
     return {name: [(parse_full_date(r[0]), r[2], r[3], r[4]) for _, r in rows if parse_full_date(r[0])]
             for name, rows in existing.items()}
 
@@ -1962,12 +2078,37 @@ def fill_trainer_area(sh, area, trainer_name):
     if updates:
         ws_h.batch_update(updates)
 
+def horse_sheet_values(title):
+    """Horse_Dataのシートの全行を読み込む。1回の画面の処理（リクエスト）の中では読み込んだ内容を使い回し、
+    同じシートを何度も読み込まない（Google SheetsのAPIの1分あたりの読み込み回数を減らす）"""
+    from flask import has_request_context
+    cache = None
+    if has_request_context():
+        cache = g.__dict__.setdefault('_sheet_values', {})
+        if title in cache:
+            return cache[title]
+    values = with_sheets_retry(gc.open(horse_data).worksheet(title).get_all_values)
+    if cache is not None:
+        cache[title] = values
+    return values
+
+def remember_sheet_values(title, values=None):
+    """書き込んだシートの内容を覚え直す（values が無ければ忘れて、次は読み込み直す）"""
+    from flask import has_request_context
+    if not has_request_context():
+        return
+    cache = g.__dict__.setdefault('_sheet_values', {})
+    if values is None:
+        cache.pop(title, None)
+    else:
+        cache[title] = values
+
 def update_horse_class_columns(match=None, offset=0, limit=None):
     """Horsesシートのクラス・最新レースの列を、取り込んだレース結果から計算し直す。
     match：対象を絞る関数（Horsesの行を受け取り True なら対象）。offset・limit：対象のうち何頭目から何頭か。
     (対象の頭数, 更新した頭数) を返す"""
     ws = gc.open(horse_data).worksheet("Horses")
-    data = with_sheets_retry(ws.get_all_values)
+    data = horse_sheet_values("Horses")
     rows = data[1:]
     targets = []
     for i, r in enumerate(rows):
@@ -2029,6 +2170,7 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
         updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(H_SHUTOKU)}1",
                         'values': [[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE], HORSE_COLUMNS[H_SHUTOKU]]]})
         with_sheets_retry(ws.batch_update, updates)
+        remember_sheet_values("Horses")
     return total, updated
 
 def update_class_for_runners(parsed_list):
@@ -2128,9 +2270,10 @@ def scan_result_pages(html_list):
     result.sort(key=lambda d: (d['date'], d['key']), reverse=True)
     return result
 
-def import_result_day(url='', via='', key='', overwrite=False):
+def import_result_day(url='', via='', key='', overwrite=False, recheck=False):
     """1開催日（1競馬場）の全レースの結果を取得して保存する。
-    url が無い場合は、同じ週の別の日のレース結果のページ（via）から、その日へのリンクを探す"""
+    url が無い場合は、同じ週の別の日のレース結果のページ（via）から、その日へのリンクを探す。
+    recheck=True なら、取り込み済みのレースも取得して（保存はしない）、未登録の出走馬を探す"""
     discovered = {}
 
     def _discover(html):
@@ -2152,15 +2295,16 @@ def import_result_day(url='', via='', key='', overwrite=False):
     day_urls = RR.result_urls_by_day(html).get(key) or [url]
     existing = imported_race_ids(first['race']['date'].year)
     todo = [u for u in day_urls if RR.race_id_from_cname(u) != first['race']['race_id']
-            and (overwrite or RR.race_id_from_cname(u) not in existing)]
-    parsed, failed = fetch_race_results(todo)
-    if overwrite or first['race']['race_id'] not in existing:
-        parsed.insert(0, first)
+            and (overwrite or recheck or RR.race_id_from_cname(u) not in existing)]
+    fetched, failed = fetch_race_results(todo)
+    fetched.insert(0, first)
+    parsed = [p for p in fetched if overwrite or p['race']['race_id'] not in existing]
     already = len([u for u in day_urls if RR.race_id_from_cname(u) in existing]) if not overwrite else 0
+    unregistered = safe_unregistered_runners(fetched if recheck else parsed)
     saved, skipped = save_race_results(parsed, overwrite=overwrite)
     return {'found': True, 'key': key, 'label': RR.day_label(first['race']['race_id']), 'races': len(day_urls),
             'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
-            'discovered': discovered, 'unregistered': safe_unregistered_runners(parsed)}
+            'discovered': discovered, 'unregistered': unregistered}
 
 def safe_unregistered_runners(parsed):
     try:
@@ -2228,16 +2372,18 @@ def api_race_results_import_races():
     """指定したレースだけの結果を取得して保存する（同じ日の他のレースは取り込まない）"""
     data = request.get_json(silent=True) or {}
     urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:20]
-    overwrite = bool(data.get('overwrite'))
+    overwrite, recheck = bool(data.get('overwrite')), bool(data.get('recheck'))
     try:
-        if not overwrite:
+        if not overwrite and not recheck:
             urls = [u for u in urls if not (race_link_info(u) or {}).get('imported')]
-        parsed, failed = fetch_race_results(urls)
+        fetched, failed = fetch_race_results(urls)
+        parsed = fetched if overwrite else [p for p in fetched
+                                            if not (race_link_info(p['race']['url']) or {}).get('imported')]
+        unregistered = safe_unregistered_runners(fetched if recheck else parsed)
         saved, skipped = save_race_results(parsed, overwrite=overwrite)
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed,
-                    'unregistered': safe_unregistered_runners(parsed)})
+    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed, 'unregistered': unregistered})
 
 # --- 開催日程（競馬番組）：年ごとのファイルの「番組」シート（1レース1行） ---
 PROGRAM_SHEET = "番組"
@@ -2571,7 +2717,7 @@ class AutoRegistrar:
     def __init__(self):
         self.sh = gc.open(horse_data)
         self.ws = {t: self.sh.worksheet(t) for t in ('Horses', 'Sire', 'Dam')}
-        self.data = {t: with_sheets_retry(ws.get_all_values) for t, ws in self.ws.items()}
+        self.data = {t: [list(r) for r in horse_sheet_values(t)] for t in self.ws}
         self.header = {t: (list(d[0]) if d else []) for t, d in self.data.items()}
         self.rows = {t: [list(r) for r in d[1:]] for t, d in self.data.items()}
         self.new_rows = {t: [] for t in self.ws}
@@ -2853,36 +2999,33 @@ class AutoRegistrar:
 
     # --- まとめて書き込む ---
     def save(self):
-        added_horses = []
+        """変更をまとめて書き込む。行を追加・削除したシートは、読み込んだ内容から並べ替えて全体を書き直す
+        （書き込んだ後に読み込み直さないことで、Google SheetsのAPIの読み込み回数を減らす）"""
+        added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
         updated_horses = {display_name_of_row(r) for r in self.updated['Horses'].values()}
-        if self.deleted_horses:
-            # Damシートに移した馬をHorsesシートから消すため、Horsesシートは全体を書き直す
-            ws = self.ws['Horses']
-            header = self.header['Horses'] + [''] * max(0, len(HORSE_COLUMNS) - len(self.header['Horses']))
-            rows = [r for r in self.rows['Horses'] if id(r) not in self.deleted_horses] + self.new_rows['Horses']
-            rows.sort(key=lambda r: display_name_of_row(r))
-            ensure_columns(ws, len(header))
-            ws.clear()
-            with_sheets_retry(ws.update, range_name='A1', values=[header] + rows)
-            added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
-            self.updated['Horses'], self.new_rows['Horses'] = {}, []
         for t, ws in self.ws.items():
             columns = HORSE_COLUMNS if t == 'Horses' else PARENT_COLUMNS
-            if t != 'Horses' and (self.updated[t] or self.new_rows[t]):
-                ensure_parent_header(ws, self.header[t])
-            if self.updated[t]:
+            deleted = self.deleted_horses if t == 'Horses' else set()
+            if self.new_rows[t] or any(id(r) in deleted for r in self.rows[t]):
+                header = list(self.header[t]) + [''] * max(0, len(columns) - len(self.header[t]))
+                for i, name in enumerate(columns):
+                    if not header[i]:
+                        header[i] = name
+                rows = [r for r in self.rows[t] if id(r) not in deleted] + self.new_rows[t]
+                rows = sorted([r for r in rows if display_name_of_row(r)], key=display_name_of_row)
+                ensure_columns(ws, len(header))
+                with_sheets_retry(ws.clear)
+                with_sheets_retry(ws.update, range_name='A1', values=[header] + rows)
+                remember_sheet_values(t, [list(header)] + [list(r) for r in rows])
+            elif self.updated[t]:
+                if t != 'Horses':
+                    ensure_parent_header(ws, self.header[t])
                 ensure_columns(ws, len(columns))
                 last = col_letter(len(columns) - 1)
                 with_sheets_retry(ws.batch_update, [
                     {'range': f"A{idx + 2}:{last}{idx + 2}", 'values': [list(row)[:len(columns)]]}
                     for idx, row in self.updated[t].items()])
-            if self.new_rows[t]:
-                ensure_columns(ws, len(columns))
-                with_sheets_retry(ws.append_rows, [r[:len(columns)] for r in self.new_rows[t]],
-                                  value_input_option='RAW')
-                sort_and_resize_table(ws, sort_col_index=0)
-                if t == 'Horses':
-                    added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
+                remember_sheet_values(t, [list(self.header[t])] + [list(r) for r in self.rows[t]])
         if self.cancel_rows:
             ws_cancel = get_or_create_worksheet(self.sh, "抹消", ["年月日", "馬名"])
             existing = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1}
@@ -2899,10 +3042,9 @@ class AutoRegistrar:
 
 def unregistered_runners(parsed_list):
     """レース結果の出走馬のうち、Horses・Sire・Damのどのシートにも無い馬（地方・海外所属の馬を除く）"""
-    sh = gc.open(horse_data)
     names = set()
     for t in ('Horses', 'Sire', 'Dam'):
-        for r in sh.worksheet(t).get_all_values()[1:]:
+        for r in horse_sheet_values(t)[1:]:
             names.update(n.strip() for n in r[:2] if n and n.strip())
     items, seen = [], set()
     for parsed in parsed_list:
@@ -2930,10 +3072,15 @@ def api_auto_register():
             if not name:
                 continue
             try:
-                msg = reg.register_horse(name, str(item.get('url') or ''), item.get('known') or None)
+                url = str(item.get('url') or '')
+                if url.startswith('/'):
+                    url = 'https://www.jra.go.jp' + url
+                msg = reg.register_horse(name, url, item.get('known') or None)
                 results.append({'name': name, 'message': msg or f"{name}：登録済み",
                                 'ok': bool(msg) and 'スキップ' not in msg})
             except Exception as e:
+                if '429' in str(e) or 'Quota exceeded' in str(e):
+                    raise   # 回数制限は全体をやり直してもらう（画面の側で少し待ってからやり直す）
                 results.append({'name': name, 'message': f"{name}：失敗（{e}）", 'ok': False})
         reg.save()
     except Exception as e:
@@ -3013,7 +3160,7 @@ def api_race_results_import_day():
     data = request.get_json(silent=True) or {}
     try:
         result = import_result_day(url=data.get('url', ''), via=data.get('via', ''), key=data.get('key', ''),
-                                   overwrite=bool(data.get('overwrite')))
+                                   overwrite=bool(data.get('overwrite')), recheck=bool(data.get('recheck')))
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify(result)
