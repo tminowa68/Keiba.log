@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}血統登録 - keiba.log{% endblock %}
 {% block content %}
+<script src="{{ url_for('static', filename='name_check.js') }}"></script>
 <h2>血統の登録</h2>
 <section>
     {% with messages = get_flashed_messages() %}
@@ -423,6 +424,16 @@ async function fetchFromJra() {
             return;
         }
 
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(urlInput);
+            return;
+        }
+
         applyFetchedHorseData(data);
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
@@ -519,6 +530,16 @@ async function fetchFromOther() {
             return;
         }
 
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(urlInput);
+            return;
+        }
+
         // 父・母・英馬名（日本産の馬は生年月日・馬主名・産地・生産牧場も）を入力する
         applyFetchedHorseData(data);
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
@@ -554,6 +575,16 @@ async function applyEquibaseText() {
         if (!res.ok || data.error) {
             statusEl.textContent = data.error || '読み取りに失敗しました。';
             statusEl.style.color = 'red';
+            return;
+        }
+
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(document.getElementById('equibase_text_input'));
             return;
         }
 
