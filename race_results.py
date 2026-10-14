@@ -9,7 +9,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
   1勝クラス：500万円以下 ／ 2勝クラス：1,000万円以下 ／ 3勝クラス：1,600万円以下 ／ オープン：1,600万円超
 """
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from bs4 import BeautifulSoup, Tag
 
@@ -351,10 +351,12 @@ def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule
 
 
 def young_class_until(year):
-    """2歳・3歳馬のクラスが「1勝クラスの次はオープン」になる最終日（3歳の5月まで）。
-    5月31日が土曜日の場合は、その週の開催（6月1日の日曜日）が終わるまで"""
+    """2歳・3歳馬のクラスが「1勝クラスの次はオープン」になる最終日（3歳の5月の最後の開催週が終わるまで）。
+    5月の最後の土曜日とその翌日の日曜日の開催が5月最後の開催週で、その日曜日まで
+    （例：6月1日が土曜日なら5月26日まで、5月31日が土曜日なら6月1日まで）"""
     may31 = date(year, 5, 31)
-    return date(year, 6, 1) if may31.weekday() == 5 else may31
+    last_saturday = may31 - timedelta(days=(may31.weekday() - 5) % 7)
+    return last_saturday + timedelta(days=1)
 
 
 def is_young_class_period(birth_year, today=None):
