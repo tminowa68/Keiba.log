@@ -416,7 +416,13 @@
                 </tr>
             </thead>
             <tbody>
-                {% for r in race_results %}
+                {% for r in race_history %}
+                {% if r.kind == 'change' %}
+                <tr class="transfer-row">
+                    <td class="nowrap">{{ r.date_label }}</td>
+                    <td colspan="19">{{ r.text }}</td>
+                </tr>
+                {% else %}
                 <tr>
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
@@ -439,6 +445,7 @@
                     <td class="num">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
                     <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
                 </tr>
+                {% endif %}
                 {% else %}
                 <tr>
                     <td colspan="20" class="no-data-text">出走履歴がありません。</td>

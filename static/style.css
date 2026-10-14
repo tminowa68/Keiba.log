@@ -2196,3 +2196,11 @@ td.col-last-race {
 .auto-register-log .ng {
     color: #c62828;
 }
+/* 出走履歴：レースの間の転厩 */
+.race-result-table tr.transfer-row td {
+    text-align: left;
+    background: #fff8e1;
+    color: #8d6e00;
+    font-weight: bold;
+    font-size: 0.95em;
+}
