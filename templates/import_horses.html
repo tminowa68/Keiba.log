@@ -83,7 +83,9 @@
         ・「JRAから開催一覧を取得」：JRAのサイトから直近の開催の一覧を取得します。<br>
         ・ファイルから読み込む：JRAの「レース結果」の<strong>開催選択</strong>・<strong>レース選択</strong>・<strong>レース結果</strong>のいずれかのページを保存したファイル（.mhtml／.html）を指定します（複数可）。
         レース結果のページ1つで、同じ週の全開催日を取り込めます。<br>
-        取り込む開催日を選んで「取り込み実行」を押すと、1日（1競馬場）ずつ全レースの結果を取得します。取り込み済みのレースは飛ばします。
+        取り込む開催日を選んで「取り込み実行」を押すと、1日（1競馬場）ずつ全レースの結果を取得します。取り込み済みのレースは飛ばします。<br>
+        「未登録の出走馬を登録する」にすると、Horses・Sire・Damのどのシートにも無い出走馬を、JRAの競走馬情報から競走馬として登録します
+        （地方・海外所属の馬は登録しません。父・母が未登録・情報不足なら、父・母も登録します）。
     </p>
 
     <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:15px;">
@@ -98,6 +100,7 @@
         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; margin-bottom:8px; font-size:0.9em;">
             <label><input type="checkbox" id="rr-check-all"> すべて選択</label>
             <label><input type="checkbox" id="rr-overwrite"> 取り込み済みのレースも取得し直す</label>
+            <label><input type="checkbox" id="rr-register" checked> 未登録の出走馬を登録する</label>
         </div>
         <table class="rr-days-table">
             <thead><tr><th></th><th>開催日</th><th>取り込み済み</th><th>結果</th></tr></thead>
@@ -231,9 +234,17 @@
                 if (!data || !data.found) throw new Error('この開催日のレース結果へのリンクが見つかりませんでした');
                 applyDiscovered(data.discovered);
                 totalSaved += data.saved;
+                let regText = '';
+                if ($('rr-register').checked && (data.unregistered || []).length) {
+                    d.status = `${data.saved}レース取り込み／未登録の出走馬を登録中...`; render();
+                    const reg = await RaceImport.registerHorses(data.unregistered,
+                        { log: text => message(`${d.label}：${text}`) });
+                    regText = `／${reg.registered}頭を登録` + (reg.skipped ? `（${reg.skipped}頭はスキップ）` : '')
+                        + (reg.failed ? `／${reg.failed}頭は登録に失敗` : '');
+                }
                 d.imported = overwrite ? data.saved : (data.already + data.saved);
                 d.status = `${data.saved}レース取り込み` + (data.already ? `（${data.already}レースは取り込み済み）` : '')
-                    + (data.failed && data.failed.length ? `／${data.failed.length}レース失敗` : '');
+                    + (data.failed && data.failed.length ? `／${data.failed.length}レース失敗` : '') + regText;
                 d.ok = !(data.failed && data.failed.length);
                 d.checked = false;
             } catch (e) {
@@ -264,6 +275,7 @@
             <label><input type="checkbox" id="rh-whole-day" checked> 同じ日の全レースも取り込む</label>
             <label><input type="checkbox" id="rh-overwrite"> 取り込み済みのレースも取得し直す</label>
             <label><input type="checkbox" id="rh-resume" checked> 前回の続きから（前回処理を終えた馬を飛ばす）</label>
+            <label><input type="checkbox" id="rh-register" checked> 未登録の出走馬を登録する</label>
         </div>
     </div>
     <div style="margin-top:15px; display:flex; gap:10px;">
@@ -315,7 +327,8 @@
     $('rh-start-btn').addEventListener('click', async () => {
         const sheets = [...document.querySelectorAll('.rh-sheet:checked')].map(cb => cb.value);
         if (!sheets.length) { $('rh-message').textContent = '対象を選んでください。'; return; }
-        const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked, doneDays: new Set() };
+        const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked,
+                       register: $('rh-register').checked, doneDays: new Set() };
         stopRequested = false;
         $('rh-start-btn').disabled = true; $('rh-stop-btn').disabled = false;
         $('rh-log').innerHTML = '';
@@ -340,6 +353,8 @@
                     log(`${head}：出走${res.races}レース／取り込み${res.saved}レース`
                         + (res.failed ? `／失敗${res.failed}レース` : ''), res.failed > 0);
                     res.errors.forEach(msg => log(`　${msg}`, true));
+                    if (res.registered) log(`　未登録の出走馬を${res.registered}頭登録しました`);
+                    (res.registerMessages || []).filter(m => m.error).forEach(m => log(`　${m.text}`, true));
                     if (!res.failed) { done.add(t.url); saveDone(done); }
                 } catch (e) {
                     log(`${head}：${e.message}`, true);

@@ -380,6 +380,7 @@
     <div class="race-import-box">
         <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}">JRAの出走レースを取り込む</button>
         <label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label>
+        <label><input type="checkbox" id="race-import-register" checked> 未登録の出走馬を登録する</label>
         <span id="race-import-status" class="race-import-status"></span>
     </div>
     {% endif %}
@@ -743,6 +744,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const res = await RaceImport.importHorse(btn.dataset.url, {
                 wholeDay: document.getElementById('race-import-whole-day').checked,
+                register: document.getElementById('race-import-register').checked,
                 log: text => { status.textContent = text; }
             });
             if (!res.todo) {

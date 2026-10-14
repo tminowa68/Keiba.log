@@ -4,6 +4,7 @@
     {% if last_updated %}
     <p class="last-updated-info">最終更新：{{ last_updated }}</p>
     {% endif %}
+    {% with target_source='index', target_count=missing_url_count, target_label='URLが未登録の馬をJRAから登録' %}{% include "_auto_register.html" %}{% endwith %}
     <div id="stable_alert_box" class="stable-alert-box" style="display: none;">
         <p>以下の厩舎の所属頭数/入厩頭数が上限を超えています。確認してください。</p>
         <p id="stable_alert_list" class="stable-alert-list"></p>

@@ -1,0 +1,47 @@
+{# JRAから自動登録するボタン：target_source（index／weekly）、target_count、target_label、target_date #}
+{% if session.get('login') and target_count %}
+<div class="auto-register-box">
+    <button type="button" id="auto-register-btn" class="update-btn">{{ target_label }}（{{ target_count }}頭）</button>
+    <span id="auto-register-status" class="auto-register-status"></span>
+    <div id="auto-register-log" class="auto-register-log" style="display:none;"></div>
+</div>
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
+<script>
+document.getElementById('auto-register-btn').addEventListener('click', async function() {
+    const btn = this, status = document.getElementById('auto-register-status'), box = document.getElementById('auto-register-log');
+    const log = (text, isError) => {
+        box.style.display = '';
+        const line = document.createElement('div');
+        line.textContent = text;
+        if (isError) line.className = 'ng';
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+    };
+    btn.disabled = true;
+    status.style.color = '';
+    status.textContent = '対象の馬を確認しています...';
+    try {
+        const params = new URLSearchParams({ source: {{ target_source|tojson }}, date: {{ (target_date or '')|tojson }} });
+        const res = await fetch('/api/auto_register/targets?' + params.toString());
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || '対象の馬を取得できませんでした。');
+        const reg = await RaceImport.registerHorses(data.items, { log: text => { status.textContent = text; } });
+        reg.messages.forEach(m => log(m.text, m.error || /スキップ/.test(m.text)));
+        status.textContent = `完了しました（${reg.registered}頭を登録` + (reg.skipped ? `、${reg.skipped}頭はスキップ` : '')
+            + (reg.failed ? `、${reg.failed}頭は失敗` : '') + '）。' + (reg.registered ? 'ページを読み込み直すと反映されます。' : '');
+        if (reg.registered) {
+            const reload = document.createElement('a');
+            reload.href = 'javascript:location.reload()';
+            reload.textContent = '読み込み直す';
+            reload.style.marginLeft = '8px';
+            status.appendChild(reload);
+        }
+    } catch (e) {
+        status.style.color = '#c62828';
+        status.textContent = e.message;
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+{% endif %}

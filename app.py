@@ -460,6 +460,45 @@ def _parse_status_from_header(soup):
 
     return ('放牧' if rest_span else '入厩'), None
 
+JRA_KAKU_ICONS = ('カクチ', 'カクガイ')   # 〔地〕地方所属馬・〔外〕外国調教馬（JRAの競走馬としては登録しない）
+JRA_KAKU_ERROR = "地方または海外所属の馬は地方またはその他のタブを選択して登録してください。"
+
+def _jra_link_url(a):
+    """競走馬のリンク（href または onclick="doAction('/JRADB/accessU.html', 'pw01dud…')"）を、開けるURLにする"""
+    if a is None:
+        return ''
+    href = a.get('href') or ''
+    m = re.search(r'CNAME=(pw01dud[0-9A-Za-z]+/[0-9A-Fa-f]{2})', href)
+    if not m:
+        m = re.search(r"doAction\(\s*'[^']*accessU[^']*'\s*,\s*'(pw01dud[0-9A-Za-z]+/[0-9A-Fa-f]{2})'", a.get('onclick') or '')
+    return f"https://www.jra.go.jp/JRADB/accessU.html?CNAME={m.group(1)}" if m else ''
+
+def _dd_link_url(soup, label):
+    """<dt>label</dt> の <dd> にある競走馬のリンク先（JRAに競走馬として登録されている馬だけリンクがある）"""
+    dt = soup.find('dt', string=lambda s: s and s.strip() == label)
+    dd = (dt.find_next_sibling('dd') or dt.find_next('dd')) if dt else None
+    if not dd:
+        return ''
+    for a in dd.find_all('a'):
+        url = _jra_link_url(a)
+        if url:
+            return url
+    return ''
+
+def _jra_horse_icons(soup, opt_span=None):
+    """馬名の前の記号（マルチ・カクチ など）の一覧"""
+    areas = list(soup.select('div.header_line'))
+    if opt_span is not None:
+        parent = opt_span.find_parent('div')
+        if parent is not None:
+            areas.append(parent)
+    icons = []
+    for area in areas:
+        for img in area.select('img[alt]'):
+            if img['alt'] and img['alt'] not in icons:
+                icons.append(img['alt'])
+    return icons
+
 def fetch_jra_horse_info(url):
     soup = _fetch_jra_soup(url)
 
@@ -488,6 +527,21 @@ def fetch_jra_horse_info(url):
             # 馬名の取得で英馬名まで含んでしまった場合は取り除く
             if result.get('name', '').endswith(name_en_span.get_text(strip=True)):
                 result['name'] = result['name'][:-len(name_en_span.get_text(strip=True))].strip()
+
+    # 地方・海外所属の馬（馬名の前に〔地〕〔外〕の記号がある）
+    icons = _jra_horse_icons(soup, opt_span)
+    kaku = next((i for i in icons if i in JRA_KAKU_ICONS), '')
+    if kaku:
+        result['kaku'] = kaku
+
+    # 父・母・母の父のリンク（JRAに競走馬として登録されている馬だけリンクがある）
+    for key, label in (('sire_url', '父'), ('dam_url', '母'), ('dam_sire_url', '母の父')):
+        link = _dd_link_url(soup, label)
+        if link:
+            result[key] = link
+    dam_sire = _dt_dd_text(soup, '母の父')
+    if dam_sire:
+        result['dam_sire'] = dam_sire
 
     sire = _dt_dd_text(soup, '父')
     if sire:
@@ -1322,7 +1376,11 @@ def index():
     if stable_filter:
         results = [h for h in results if len(h) > H_STABLE and h[H_STABLE] == stable_filter]
         
+    # URLボタンが出ている馬（JRA・NARのURLが無い馬）の数：JRAから登録するボタンに表示する
+    missing_url_count = len([h for h in results
+                             if not any(len(h) > c and str(h[c] or '').strip() for c in (H_JRA_URL, H_NAR_URL))])
     return render_template('index.html', 
+                           missing_url_count=missing_url_count,
                            results=results, 
                            stables=get_stables_list(), 
                            current_year=datetime.now().year,
@@ -1338,6 +1396,9 @@ def api_fetch_jra_horse():
         data = fetch_jra_horse_info(url)
         if not data:
             return jsonify({"error": "ページから情報を取得できませんでした。"}), 404
+        if data.get('kaku'):
+            # 地方・海外所属の馬はJRAのタブでは登録できないようにする
+            return jsonify({"error": JRA_KAKU_ERROR, "kaku": data['kaku']}), 400
         return jsonify(data), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -1919,7 +1980,14 @@ def import_result_day(url='', via='', key='', overwrite=False):
     saved, skipped = save_race_results(parsed, overwrite=overwrite)
     return {'found': True, 'key': key, 'label': RR.day_label(first['race']['race_id']), 'races': len(day_urls),
             'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
-            'discovered': discovered}
+            'discovered': discovered, 'unregistered': safe_unregistered_runners(parsed)}
+
+def safe_unregistered_runners(parsed):
+    try:
+        return unregistered_runners(parsed) if parsed else []
+    except Exception as e:
+        print(f"未登録の出走馬の確認に失敗しました: {e}")
+        return []
 
 def race_link_info(url):
     """レース結果のURLから、表示用の情報と取り込み済みかどうかを返す"""
@@ -1988,7 +2056,8 @@ def api_race_results_import_races():
         saved, skipped = save_race_results(parsed, overwrite=overwrite)
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed})
+    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed,
+                    'unregistered': safe_unregistered_runners(parsed)})
 
 # --- 開催日程（競馬番組）：年ごとのファイルの「番組」シート（1レース1行） ---
 PROGRAM_SHEET = "番組"
@@ -2170,6 +2239,508 @@ def api_race_results_update_classes():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify({'total': total, 'next': offset + limit, 'updated': updated})
+
+# ==============================================================================
+# JRAの競走馬検索と、未登録の馬の自動登録
+# ==============================================================================
+JRA_SEARCH_ACTION = "https://www.jra.go.jp/JRADB/accessR.html"
+JRA_SEARCH_CNAME = "pw02uliD19999"   # 競馬メニューの「競走馬検索」
+_jra_search_form = {}   # 検索のページのフォーム（送り先・項目）を覚えておく
+
+def _js_function_body(js, name):
+    """JavaScriptの function name(...) { … } の中身を取り出す"""
+    m = re.search(r'function\s+' + re.escape(name) + r'\s*\([^)]*\)\s*\{', js)
+    if not m:
+        return ''
+    depth, i = 1, m.end()
+    while i < len(js) and depth:
+        depth += {'{': 1, '}': -1}.get(js[i], 0)
+        i += 1
+    return js[m.end():i - 1]
+
+def load_jra_search_form():
+    """競走馬検索のページを開き、「検索」ボタン（doSearch）と同じ送信内容（送り先・項目）を調べる"""
+    from urllib.parse import urljoin
+    if _jra_search_form and time.time() - _jra_search_form.get('time', 0) < 3600:
+        return _jra_search_form
+    html = fetch_jra_html(JRA_SEARCH_ACTION, cname=JRA_SEARCH_CNAME)
+    soup = BeautifulSoup(html, 'html.parser')
+    name_input = soup.find('input', attrs={'name': 'iv_h_name'}) or soup.find('input', id='iv_h_name')
+    if name_input is None:
+        raise ValueError('競走馬検索のページに馬名の入力欄が見つかりません。')
+    form = name_input.find_parent('form')
+    fields = {}
+    for el in (form or soup).find_all(['input', 'select', 'textarea']):
+        key = el.get('name')
+        if not key:
+            continue
+        if el.name == 'select':
+            opt = el.find('option', selected=True) or el.find('option')
+            fields[key] = opt.get('value', opt.get_text(strip=True)) if opt else ''
+        elif el.get('type', '').lower() in ('checkbox', 'radio'):
+            if el.has_attr('checked'):
+                fields[key] = el.get('value', 'on')
+        elif el.get('type', '').lower() not in ('button', 'submit', 'image', 'reset'):
+            fields[key] = el.get('value', '')
+    action = urljoin(JRA_SEARCH_ACTION, form.get('action')) if form is not None and form.get('action') else JRA_SEARCH_ACTION
+    # 「検索」ボタンの処理（doSearch）から、送り先と cname を読み取る
+    scripts = [sc.get_text() for sc in soup.find_all('script') if not sc.get('src')]
+    for sc in soup.find_all('script', src=True):
+        src = urljoin(JRA_SEARCH_ACTION, sc['src'])
+        if '/JRADB/' in src:
+            try:
+                scripts.append(requests.get(src, timeout=15).content.decode('cp932', errors='replace'))
+            except Exception:
+                pass
+    body = next((b for b in (_js_function_body(js, 'doSearch') for js in scripts) if b), '')
+    m = re.search(r"doAction\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]", body)
+    if m:
+        action, fields['cname'] = urljoin(JRA_SEARCH_ACTION, m.group(1)), m.group(2)
+    else:
+        am = re.search(r"\.action\s*=\s*['\"]([^'\"]+)['\"]", body)
+        if am:
+            action = urljoin(JRA_SEARCH_ACTION, am.group(1))
+        cm = re.search(r"['\"](pw\d{2}[a-z]{3}[0-9A-Za-z]*(?:/[0-9A-Fa-f]{2})?)['\"]", body)
+        if cm:
+            fields['cname'] = cm.group(1)
+    _jra_search_form.clear()
+    _jra_search_form.update({'time': time.time(), 'action': action, 'fields': fields})
+    return _jra_search_form
+
+def parse_jra_search_results(html):
+    """競走馬検索の結果のページから [{'name', 'url', 'icons', 'kaku', 'sex', 'age', 'trainer', 'area'}] を返す。
+    「該当データはありませんでした」の場合は空の一覧"""
+    soup = BeautifulSoup(html, 'html.parser')
+    results, found_table = [], False
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '検索結果' not in caption.get_text():
+            continue
+        found_table = True
+        for tr in table.select('tbody tr'):
+            td = tr.select_one('td.horse')
+            if not td:
+                continue
+            a = next((x for x in td.find_all('a') if _jra_link_url(x)), None)
+            icons = [img.get('alt', '') for img in td.select('img[alt]')]
+            age_text = (tr.select_one('td.age').get_text(strip=True) if tr.select_one('td.age') else '')
+            am = re.match(r'(牡|牝|せん|セン|騸)(\d+)', age_text)
+            trainer_td = tr.select_one('td.trainer')
+            results.append({
+                'name': a.get_text(strip=True) if a else td.get_text(strip=True),
+                'url': _jra_link_url(a),
+                'icons': icons,
+                'kaku': next((i for i in icons if i in JRA_KAKU_ICONS), ''),
+                'sex': ('せん' if am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
+                'age': int(am.group(2)) if am else None,
+                'trainer': (trainer_td.select_one('.cell.left') or trainer_td).get_text(strip=True) if trainer_td else '',
+                'area': (trainer_td.select_one('.icon').get_text(strip=True) if trainer_td and trainer_td.select_one('.icon') else ''),
+            })
+    if not found_table and '該当データはありませんでした' not in soup.get_text():
+        raise ValueError('競走馬検索の結果のページを読み取れませんでした。')
+    return results
+
+def search_jra_horses(name):
+    """JRAの競走馬検索で馬名を検索する（競馬メニューの「競走馬検索」に馬名を入力して「検索」を押すのと同じ）"""
+    form = load_jra_search_form()
+    fields = dict(form['fields'])
+    fields['iv_h_name'] = name
+    data = {k: (v.encode('cp932', errors='replace') if isinstance(v, str) else v) for k, v in fields.items()}
+    resp = requests.post(form['action'], data=data,
+                         headers={"User-Agent": "Mozilla/5.0 (compatible; keiba.log/1.0)"}, timeout=20)
+    resp.raise_for_status()
+    try:
+        return parse_jra_search_results(resp.content.decode('cp932', errors='replace'))
+    except ValueError:
+        _jra_search_form.clear()   # ページの形式が変わった場合に備えて、次回は検索のページを読み直す
+        raise
+
+def _same_name(a, b):
+    norm = lambda t: re.sub(r'[\s　]', '', str(t or '')).lower()
+    return bool(norm(a)) and norm(a) == norm(b)
+
+def jra_info_conflicts(info, known):
+    """競走馬情報（fetch_jra_horse_info）と、分かっている情報（known）が食い違うか"""
+    known = known or {}
+    birth = format_date8(info['birth_year'], info['birth_month'], info['birth_day']) if info.get('birth_year') else ''
+    kb = str(known.get('birth') or '')
+    if kb and birth:
+        if len(kb) >= 8 and kb[:8] != birth:
+            return True
+        if kb[:4] != birth[:4]:
+            return True
+    if known.get('born_before') and info.get('birth_year') and int(info['birth_year']) >= int(known['born_before']):
+        return True
+    for key in ('sire', 'dam'):
+        k, v = known.get(key), info.get(key)
+        if k and v and is_english_name(k) == is_english_name(v) and not _same_name(k, v):
+            return True
+    if known.get('gender') and info.get('gender'):
+        g = {'せん': '牡'}.get(info['gender'], info['gender'])
+        if {'せん': '牡'}.get(known['gender'], known['gender']) != g:
+            return True
+    if known.get('cancel_date') and info.get('cancel_date') and known['cancel_date'] != info['cancel_date']:
+        return True
+    return False
+
+class AutoRegistrar:
+    """未登録の馬をJRAの競走馬情報から登録する（Horsesに無い馬は新規登録、URLが無い馬はURLと空欄の項目を埋める）。
+    親（父・母・母の父）も、未登録・情報不足ならリンク先（リンクが無ければ競走馬検索）から登録する"""
+    MAX_PARENT_DEPTH = 4
+
+    def __init__(self):
+        self.sh = gc.open(horse_data)
+        self.ws = {t: self.sh.worksheet(t) for t in ('Horses', 'Sire', 'Dam')}
+        self.data = {t: with_sheets_retry(ws.get_all_values) for t, ws in self.ws.items()}
+        self.header = {t: (list(d[0]) if d else []) for t, d in self.data.items()}
+        self.rows = {t: [list(r) for r in d[1:]] for t, d in self.data.items()}
+        self.new_rows = {t: [] for t in self.ws}
+        self.updated = {t: {} for t in self.ws}   # 行番号（0始まり）→ 行
+        self.cancel_rows = []
+        self.stables = None
+        self.info_cache = {}
+        self.log = []
+
+    # --- 共通 ---
+    def info(self, url):
+        if url not in self.info_cache:
+            self.info_cache[url] = fetch_jra_horse_info(url)
+        return self.info_cache[url]
+
+    def all_rows(self, t):
+        return self.rows[t] + self.new_rows[t]
+
+    def find_rows(self, t, name):
+        return [r for r in self.all_rows(t) if row_matches_name(r, name)]
+
+    def in_any_sheet(self, name):
+        return any(self.find_rows(t, name) for t in ('Horses', 'Sire', 'Dam'))
+
+    def search_url(self, name, known):
+        """競走馬検索で馬名が完全一致する馬を探す。(URL, 見送った理由) を返す"""
+        try:
+            results = search_jra_horses(name)
+        except Exception as e:
+            return None, f'競走馬検索に失敗（{e}）'
+        exact = [r for r in results if _same_name(r['name'], name)]
+        if not exact:
+            return None, '該当データなし'
+        candidates = [r for r in exact if not r['kaku'] and r['url']]
+        if not candidates:
+            return None, '地方または海外所属の馬'
+        if len(candidates) == 1 and not known:
+            return candidates[0]['url'], ''
+        # 同名の馬が複数いる場合（または照合できる情報がある場合）は、生年月日・父母・抹消日などで照合する
+        matched = []
+        for c in candidates:
+            try:
+                if not jra_info_conflicts(self.info(c['url']), known):
+                    matched.append(c)
+            except Exception:
+                continue
+        if len(matched) == 1:
+            return matched[0]['url'], ''
+        return None, ('同名の馬が複数いて特定できません' if matched else '情報が一致する馬がいません')
+
+    def record_cancel(self, name, info):
+        if info.get('status') == '抹消' and info.get('cancel_date'):
+            self.cancel_rows.append([info['cancel_date'], name])
+
+    # --- 競走馬（Horses） ---
+    def horse_values(self, info):
+        if self.stables is None:
+            self.stables = get_stables_list()
+        values = jra_info_to_columns(info, self.stables)
+        values[H_STATUS] = info.get('status', '')
+        return values
+
+    def register_horse(self, name, url='', known=None):
+        """Horsesに無い馬を登録する／URLが無い馬はURLと空欄の項目を埋める。結果の文を返す"""
+        rows = self.find_rows('Horses', name)
+        if rows and any(str(r[c]).strip() for r in rows for c in (H_JRA_URL, H_NAR_URL) if len(r) > c):
+            return None   # 登録済み（URLあり）
+        if not rows:
+            # Sire・Damシートにある馬は、URLが無ければURLと空欄の項目を埋める
+            for t in ('Sire', 'Dam'):
+                p_rows = self.find_rows(t, name)
+                if not p_rows:
+                    continue
+                if any(str(r[c]).strip() for r in p_rows for c in (P_JRA_URL, P_NAR_URL) if len(r) > c):
+                    return None
+                return self.fill_parent_url(t, p_rows[0], name, url, known)
+        if not url:
+            url, reason = self.search_url(name, known)
+            if not url:
+                return f"{name}：スキップ（{reason}）"
+        info = self.info(url)
+        if info.get('kaku'):
+            return f"{name}：スキップ（地方または海外所属の馬）"
+        if info.get('name') and not _same_name(info['name'], name) and not _same_name(info.get('name_en'), name):
+            return f"{name}：スキップ（リンク先の馬名が「{info.get('name')}」で一致しません）"
+        values = self.horse_values(info)
+        if rows:
+            row = rows[0]
+            idx = self.rows['Horses'].index(row) if row in self.rows['Horses'] else None
+            row.extend([''] * (len(HORSE_COLUMNS) - len(row)))
+            row[H_JRA_URL] = url
+            for col, val in values.items():
+                if col != H_STATUS and not str(row[col]).strip():
+                    row[col] = val
+            if info.get('status') == '抹消' and row[H_STATUS] != '抹消':
+                row[H_STATUS] = '抹消'
+            if idx is not None:
+                self.updated['Horses'][idx] = row
+            message = f"{name}：URLを登録"
+        else:
+            row = [''] * len(HORSE_COLUMNS)
+            if is_english_name(name):
+                row[H_NAME_EN] = name
+            else:
+                row[H_NAME] = name
+            for col, val in values.items():
+                row[col] = val
+            row[H_JRA_URL] = url
+            row[H_REG_STATUS] = row[H_STATUS]
+            self.new_rows['Horses'].append(row)
+            message = f"{name}：登録"
+        self.record_cancel(name, info)
+        parents = self.register_parents(info, date_year(row[H_BIRTH]))
+        return message + (f"（血統：{'、'.join(parents)}）" if parents else '')
+
+    # --- 親（Sire・Dam） ---
+    def fill_parent_url(self, t, row, name, url, known):
+        """Sire・DamシートでURLが無い馬に、URLと空欄の項目を埋める"""
+        known = dict(known or {}, gender='牡' if t == 'Sire' else '牝')
+        if not url:
+            url, reason = self.search_url(name, known)
+            if not url:
+                return f"{name}：スキップ（{reason}）"
+        info = self.info(url)
+        if info.get('kaku'):
+            return f"{name}：スキップ（地方または海外所属の馬）"
+        row.extend([''] * (len(PARENT_COLUMNS) - len(row)))
+        for col, val in self.parent_values(info).items():
+            if not str(row[col]).strip():
+                row[col] = val
+        row[P_JRA_URL] = url
+        if row in self.rows[t]:
+            self.updated[t][self.rows[t].index(row)] = row
+        self.record_cancel(name, info)
+        parents = self.register_parents(info, date_year(row[P_BIRTH]), 1)
+        return f"{name}：{'父馬' if t == 'Sire' else '母馬'}のURLを登録" + (f"（血統：{'、'.join(parents)}）" if parents else '')
+
+    def parent_record(self, t, name, child_birth_year):
+        """血統表と同じように、仔より前に生まれた同名の馬（生年が分からない馬も含む）を探す"""
+        rows = self.find_rows(t, name)
+        if child_birth_year:
+            birth = lambda r: date_year(r[P_BIRTH]) if len(r) > P_BIRTH else None
+            before = [r for r in rows if birth(r) and birth(r) < child_birth_year]
+            unknown = [r for r in rows if not birth(r)]
+            rows = before or unknown
+        return rows[0] if rows else None
+
+    @staticmethod
+    def parent_needs_update(row):
+        """血統表に「編集」のリンクが表示される状態か（未登録、または生年月日・父・母・産地・英馬名のどれかが空欄）"""
+        if row is None:
+            return True
+        row = list(row) + [''] * len(PARENT_COLUMNS)
+        return not all(str(row[c]).strip() for c in (P_BIRTH, P_SIRE, P_DAM, P_REGION, P_NAME_EN))
+
+    def parent_values(self, info):
+        values = {P_NAME_EN: info.get('name_en', ''), P_SIRE: info.get('sire', ''), P_DAM: info.get('dam', ''),
+                  P_OWNER: info.get('owner', ''), P_BREEDER: info.get('breeder', '')}
+        if info.get('birth_year'):
+            values[P_BIRTH] = format_date8(info['birth_year'], info['birth_month'], info['birth_day'])
+        if info.get('birthplace'):
+            match = find_birthplace_match(info['birthplace'])
+            if match:
+                values[P_REGION], values[P_DETAIL] = match['region'], match['detail'] or ''
+            else:
+                values[P_REGION] = info['birthplace']
+        return {k: v for k, v in values.items() if v}
+
+    def register_parent(self, t, name, url, child_birth_year, depth):
+        """親を登録する（既にある場合は空欄の項目を埋める）。登録した馬の文の一覧を返す"""
+        row = self.parent_record(t, name, child_birth_year)
+        if not self.parent_needs_update(row):
+            return []
+        known = {'gender': '牡' if t == 'Sire' else '牝', 'born_before': child_birth_year}
+        if not url:
+            url, reason = self.search_url(name, known)
+            if not url:
+                return []
+        try:
+            info = self.info(url)
+        except Exception as e:
+            return [f"{name}（取得に失敗：{e}）"]
+        if info.get('kaku') or jra_info_conflicts(info, known):
+            return []
+        values = self.parent_values(info)
+        if row is not None:
+            row.extend([''] * (len(PARENT_COLUMNS) - len(row)))
+            for col, val in values.items():
+                if not str(row[col]).strip():
+                    row[col] = val
+            if not str(row[P_JRA_URL]).strip():
+                row[P_JRA_URL] = url
+            if row in self.rows[t]:
+                self.updated[t][self.rows[t].index(row)] = row
+            done = [f"{name}を更新"]
+        else:
+            row = [''] * len(PARENT_COLUMNS)
+            if is_english_name(name):
+                row[P_NAME_EN] = name
+            else:
+                row[P_NAME] = name
+            for col, val in values.items():
+                row[col] = val
+            row[P_JRA_URL] = url
+            self.new_rows[t].append(row)
+            done = [f"{name}を登録"]
+        self.record_cancel(name, info)
+        if depth < self.MAX_PARENT_DEPTH:
+            done += self.register_parents(info, date_year(row[P_BIRTH]), depth + 1)
+        return done
+
+    def register_parents(self, info, birth_year, depth=0):
+        """父・母（母がJRAに無くても母の父にリンクがあれば母の父）を登録する"""
+        done = []
+        for t, name_key, url_key in (('Sire', 'sire', 'sire_url'), ('Dam', 'dam', 'dam_url'),
+                                     ('Sire', 'dam_sire', 'dam_sire_url')):
+            name = (info.get(name_key) or '').strip()
+            if not name:
+                continue
+            # 母の父は、リンクがある場合だけ確認する（母のページからたどれない場合のため）
+            if name_key == 'dam_sire' and not info.get(url_key):
+                continue
+            dam_row_birth = None
+            if name_key == 'dam_sire':
+                dam_row = self.parent_record('Dam', info.get('dam', ''), birth_year)
+                dam_row_birth = date_year(dam_row[P_BIRTH]) if dam_row is not None else None
+            done += self.register_parent(t, name, info.get(url_key, ''),
+                                         dam_row_birth or birth_year, depth)
+        return done
+
+    # --- まとめて書き込む ---
+    def save(self):
+        added_horses = []
+        for t, ws in self.ws.items():
+            columns = HORSE_COLUMNS if t == 'Horses' else PARENT_COLUMNS
+            if self.updated[t]:
+                ensure_columns(ws, len(columns))
+                last = col_letter(len(columns) - 1)
+                with_sheets_retry(ws.batch_update, [
+                    {'range': f"A{idx + 2}:{last}{idx + 2}", 'values': [list(row)[:len(columns)]]}
+                    for idx, row in self.updated[t].items()])
+            if self.new_rows[t]:
+                ensure_columns(ws, len(columns))
+                with_sheets_retry(ws.append_rows, [r[:len(columns)] for r in self.new_rows[t]],
+                                  value_input_option='RAW')
+                sort_and_resize_table(ws, sort_col_index=0)
+                if t == 'Horses':
+                    added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
+        if self.cancel_rows:
+            ws_cancel = get_or_create_worksheet(self.sh, "抹消", ["年月日", "馬名"])
+            existing = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1}
+            rows = [r for r in self.cancel_rows if r[1] not in existing]
+            if rows:
+                ws_cancel.append_rows(rows)
+        # 登録した馬・URLを登録した馬のクラス・最新レースを計算する
+        names = set(added_horses) | {display_name_of_row(r) for r in self.updated['Horses'].values()}
+        if names:
+            try:
+                update_horse_class_columns(lambda r: display_name_of_row(r) in names)
+            except Exception as e:
+                print(f"クラス・最新レースの更新に失敗しました: {e}")
+
+def unregistered_runners(parsed_list):
+    """レース結果の出走馬のうち、Horses・Sire・Damのどのシートにも無い馬（地方・海外所属の馬を除く）"""
+    sh = gc.open(horse_data)
+    names = set()
+    for t in ('Horses', 'Sire', 'Dam'):
+        for r in sh.worksheet(t).get_all_values()[1:]:
+            names.update(n.strip() for n in r[:2] if n and n.strip())
+    items, seen = [], set()
+    for parsed in parsed_list:
+        for r in parsed['runners']:
+            name = r.get('name', '').strip()
+            if not name or name in names or name in seen or not r.get('horse_url'):
+                continue
+            if any(i in JRA_KAKU_ICONS for i in r.get('icons', [])):
+                continue
+            seen.add(name)
+            items.append({'name': name, 'url': r['horse_url']})
+    return items
+
+@app.route('/api/auto_register', methods=['POST'])
+@login_required
+def api_auto_register():
+    """未登録の馬（またはURLが無い馬）をJRAの競走馬情報から登録する。items：[{'name', 'url', 'known'}]（1回に5頭まで）"""
+    data = request.get_json(silent=True) or {}
+    items = (data.get('items') or [])[:5]
+    try:
+        reg = AutoRegistrar()
+        results = []
+        for item in items:
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            try:
+                msg = reg.register_horse(name, str(item.get('url') or ''), item.get('known') or None)
+                results.append({'name': name, 'message': msg or f"{name}：登録済み",
+                                'ok': bool(msg) and 'スキップ' not in msg})
+            except Exception as e:
+                results.append({'name': name, 'message': f"{name}：失敗（{e}）", 'ok': False})
+        reg.save()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'results': results})
+
+@app.route('/api/auto_register/targets')
+@login_required
+def api_auto_register_targets():
+    """自動登録の対象：source=index は競走馬一覧でURLボタンが出ている馬、
+    source=weekly は週間レポートでHorsesシートに無い馬（date の週）"""
+    source = request.args.get('source', '')
+    sh = gc.open(horse_data)
+    horses = sh.worksheet('Horses').get_all_values()[1:]
+    items = []
+    if source == 'index':
+        for r in horses:
+            name = display_name_of_row(r)
+            status = r[H_STATUS].strip() if len(r) > H_STATUS else ''
+            if not name or status == '抹消' or any(len(r) > c and r[c].strip() for c in (H_JRA_URL, H_NAR_URL)):
+                continue
+            known = {'birth': r[H_BIRTH] if len(r) > H_BIRTH else '', 'sire': r[H_SIRE] if len(r) > H_SIRE else '',
+                     'dam': r[H_DAM] if len(r) > H_DAM else '', 'gender': r[H_GENDER] if len(r) > H_GENDER else ''}
+            items.append({'name': name, 'known': {k: v for k, v in known.items() if v}})
+    elif source == 'weekly':
+        base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
+        week_start = base - timedelta(days=base.weekday())
+        week_end = week_start + timedelta(days=6)
+        in_week = lambda d: d is not None and week_start <= d <= week_end
+        registered = {n.strip() for r in horses for n in r[:2] if n and n.strip()}
+        parents = set()   # Sire・Damシートにあり、URLも登録されている馬（URLが無い馬は対象にする）
+        for t in ('Sire', 'Dam'):
+            for r in sh.worksheet(t).get_all_values()[1:]:
+                if any(len(r) > c and r[c].strip() for c in (P_JRA_URL, P_NAR_URL)):
+                    parents.update(n.strip() for n in r[:2] if n and n.strip())
+        found = {}
+        def _add(name, known=None):
+            name = (name or '').strip()
+            if name and name not in registered and name not in parents and name not in found:
+                found[name] = known or {}
+        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', 0, 1), ('放牧入厩', 0, 1), ('放牧入厩', 2, 1)):
+            try:
+                for r in sh.worksheet(title).get_all_values()[1:]:
+                    d = parse_full_date(r[date_col] if len(r) > date_col else '')
+                    if in_week(d) and len(r) > name_col:
+                        _add(r[name_col], {'cancel_date': d.strftime('%Y%m%d')} if title == '抹消' else None)
+            except gspread.WorksheetNotFound:
+                pass
+        items = [{'name': n, 'known': k} for n, k in sorted(found.items())]
+    return jsonify({'items': items})
 
 @app.route('/api/race_results/scan', methods=['POST'])
 @login_required
@@ -3218,7 +3789,11 @@ def weekly():
         registered, cancelled, pasture, changes = (
             [i for i in items if _match(i)] for items in (registered, cancelled, pasture, changes))
 
+    # Horsesシートに無い馬（Sire・Damシートにある馬はURLが無い場合だけ）：JRAから登録するボタンに表示する
+    unregistered_count = len({i['name'] for items in (registered, cancelled, pasture, changes) for i in items
+                              if not i['linkable'] and not (i['parent_type'] and i['has_url'])})
     return render_template('weekly.html',
+                           unregistered_count=unregistered_count,
                            registered=registered, cancelled=cancelled, pasture=pasture, changes=changes,
                            week_label=f"{format_date_jp(week_start, weekday=True)}〜{format_date_jp(week_end, weekday=True)}",
                            stables=get_stables_list(), stable=stable_filter,
@@ -3262,6 +3837,10 @@ def add_horse():
                       values=[[HORSE_COLUMNS[H_REGISTRATION], HORSE_COLUMNS[H_REG_STATUS]]])
 
         jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
+        kaku_error = jra_url_kaku_error(jra_url)
+        if kaku_error:
+            flash(f"エラー：{kaku_error}")
+            return redirect('/add_horse')
         new_row = [''] * len(HORSE_COLUMNS)
         new_row[H_NAME] = name
         new_row[H_NAME_EN] = name_en
@@ -3391,6 +3970,15 @@ def split_horse_urls(jra_url, nar_url=''):
     if is_nar_url(jra_url):
         nar_url, jra_url = nar_url or jra_url, ''
     return jra_url, nar_url
+
+def jra_url_kaku_error(url):
+    """JRAのURLの馬が地方・海外所属ならエラーの文を返す（ページを取得できない場合は止めない）"""
+    if not is_jra_url(url):
+        return None
+    try:
+        return JRA_KAKU_ERROR if fetch_jra_horse_info(url).get('kaku') else None
+    except Exception:
+        return None
 
 def is_jra_url(url):
     """JRA公式サイトのURLかどうか"""
@@ -3890,6 +4478,10 @@ def add_parent():
             else:
                 name_ja, name_en = p_name, (request.form.get('name_en') or '').strip()
             jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
+            kaku_error = jra_url_kaku_error(jra_url)
+            if kaku_error:
+                flash(f"エラー：{kaku_error}")
+                return redirect(url_for('add_parent', p_type=p_type, p_name=p_name, origin=origin or ''))
 
             # 「同名の馬を登録する」がチェックされている場合は、既存の同名データを
             # 上書きせず、常に新規レコードとして追加する
@@ -4052,6 +4644,11 @@ def update_horse():
         if not name_ja:
             new_name_en = (new_name or '').strip() or new_name_en
         jra_url, nar_url = split_horse_urls(request.form.get('jra_url'), request.form.get('nar_url'))
+        old_row = next((r for r in data[1:] if row_matches_name(r, old_name)), None)
+        if old_row is not None and jra_url != (old_row[H_JRA_URL] if len(old_row) > H_JRA_URL else ''):
+            kaku_error = jra_url_kaku_error(jra_url)
+            if kaku_error:
+                return f"エラー：{kaku_error}", 400
 
         for i, row in enumerate(data):
             if i > 0 and row_matches_name(row, old_name):
