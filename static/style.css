@@ -871,6 +871,71 @@ form .select-stables {
 .status-highlight {
     color: #d32f2f;
 }
+/* 出走レース：本賞金・収得賞金・クラスのまとめと出走履歴 */
+.race-summary-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+.race-summary-box {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 15px;
+    font-weight: bold;
+    line-height: 1.7;
+    min-width: 180px;
+}
+.race-summary-title {
+    color: #555;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 4px;
+}
+.race-summary-note {
+    color: #888;
+    font-size: 0.8em;
+    margin: 6px 0 0;
+}
+.race-result-scroll {
+    overflow-x: auto;
+}
+.race-result-table {
+    border-collapse: collapse;
+    font-size: 0.85em;
+    width: 100%;
+}
+.race-result-table th,
+.race-result-table td {
+    border: 1px solid #ddd;
+    padding: 3px 6px;
+    text-align: center;
+}
+.race-result-table th {
+    white-space: nowrap;
+}
+.race-result-table td.nowrap {
+    white-space: nowrap;
+    text-align: left;
+}
+.race-result-table td.num {
+    text-align: right;
+    white-space: nowrap;
+}
+.race-result-table td.place-1 {
+    color: #d32f2f;
+    font-weight: bold;
+}
+.grade-badge {
+    display: inline-block;
+    font-size: 0.8em;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #fff;
+    background: #777;
+}
+.grade-badge.grade-g1 { background: #1565c0; }
+.grade-badge.grade-g2 { background: #c62828; }
+.grade-badge.grade-g3 { background: #2e7d32; }
+.grade-badge.grade-l { background: #8d6e63; }
 .race-history-header {
     display: flex;
     justify-content: space-between;
