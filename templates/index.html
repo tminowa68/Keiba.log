@@ -64,8 +64,10 @@
                     <th>馬名</th>
                     <th>性別</th>
                     <th>馬齢</th>
+                    <th>クラス</th>
                     <th>父</th>
                     <th>厩舎</th>
+                    <th>最新レース</th>
                 </tr>
             </thead>
             <tbody>
@@ -93,8 +95,10 @@
                             {{ current_year - horse[3].year }}歳
                         {% else %}-{% endif %}
                     </td>
+                    <td class="col-class">{{ horse[17] if horse|length > 17 else '' }}</td>
                     <td class="col-sire"><span class="text-10ch" title="{{ horse[4] }}">{{ horse[4] }}</span></td>
                     <td>{{ horse[7] }}・{{ horse[8] }}</td>
+                    <td class="col-last-race">{{ (horse[18] if horse|length > 18 else '')|short_race }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -118,10 +122,16 @@ const allHorsesData = [
         // 状態データを追加 (無い場合は仮に'在厩'とする)
         status: "{{ horse[9] if horse|length > 9 else '在厩' }}",
         url: "{{ (horse[13] or (horse[14] if horse|length > 14 else '')) if horse|length > 13 else '' }}",
+        horseClass: {{ (horse[17] if horse|length > 17 else '')|tojson }},
+        lastRace: {{ ((horse[18] if horse|length > 18 else '')|short_race)|tojson }},
         hasAlert: {{ 'true' if has_alert else 'false' }}
     },
     {% endfor %}
 ];
+
+function escapeHtml(text) {
+    return String(text || '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
 
 // 馬名の並び替え用比較関数
 // ヴ(U+30F4)はUnicode上でエ・オより後ろに配置されているため、localeCompareに
@@ -491,8 +501,10 @@ function renderAgeTables() {
                         <th>馬名</th>
                         <th>性別</th>
                         <th>馬齢</th>
+                        <th>クラス</th>
                         <th>父</th>
                         <th>厩舎</th>
+                        <th>最新レース</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -508,8 +520,10 @@ function renderAgeTables() {
                             </td>
                             <td class="col-gender ${genderClass}">${h.gender}</td>
                             <td class="col-age">${h.age || '-'}歳</td>
+                            <td class="col-class">${escapeHtml(h.horseClass)}</td>
                             <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
                             <td>${h.stable}</td>
+                            <td class="col-last-race">${escapeHtml(h.lastRace)}</td>
                         </tr>
                         `;
                     }).join('')}
@@ -547,7 +561,9 @@ function renderAgeTables() {
                             <th class="col-name">馬名</th>
                             <th class="col-gender">性別</th>
                             ${label === '5歳以上' ? `<th class="col-age">馬齢</th>` : ''}
+                            <th class="col-class">クラス</th>
                             <th class="col-sire">父</th>
+                            <th>最新レース</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -563,11 +579,13 @@ function renderAgeTables() {
                                 </td>
                                 <td class="col-gender ${genderClass}">${h.gender}</td>
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
+                                <td class="col-class">${escapeHtml(h.horseClass)}</td>
                                 <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
+                                <td class="col-last-race">${escapeHtml(h.lastRace)}</td>
                             </tr>
                             `;
                         }).join('')}
-                        ${groups[label].length === 0 ? '<tr><td colspan="5" style="text-align:center; color:#999;">なし</td></tr>' : ''}
+                        ${groups[label].length === 0 ? '<tr><td colspan="7" style="text-align:center; color:#999;">なし</td></tr>' : ''}
                     </tbody>
                 </table>
             </div>

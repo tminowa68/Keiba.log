@@ -359,4 +359,127 @@
     });
 })();
 </script>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>クラス・最新レースの再計算</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        Horsesシートの「クラス」「最新レース」の列を、取り込んだレース結果から計算し直します（競走馬一覧に表示します）。<br>
+        レース結果を取り込むと、出走した登録馬の分は自動で計算し直します。最初の1回や、馬を登録した後などに実行してください。
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+        <label style="font-size:0.9em;"><input type="checkbox" id="uc-cancelled"> 抹消馬も含める</label>
+        <button type="button" id="uc-btn" class="rr-btn">再計算する</button>
+    </div>
+    <div id="uc-message" style="margin-top:10px; font-size:0.9em;"></div>
+</section>
+
+<script>
+(function() {
+    const btn = document.getElementById('uc-btn'), msg = document.getElementById('uc-message');
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        msg.style.color = '';
+        let offset = 0, total = null, updated = 0;
+        try {
+            do {
+                msg.textContent = total === null ? '計算しています...' : `計算しています（${Math.min(offset, total)}／${total}頭）...`;
+                const res = await RaceImport.post('/api/race_results/update_classes',
+                    { offset: offset, limit: 40, include_cancelled: document.getElementById('uc-cancelled').checked });
+                total = res.total; offset = res.next; updated += res.updated;
+            } while (offset < total);
+            msg.textContent = `完了しました（${total}頭のうち${updated}頭を更新）。`;
+        } catch (e) {
+            msg.style.color = '#c62828';
+            msg.textContent = e.message;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+})();
+</script>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>開催日程（番組）インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの「開催日程」の各日の競馬番組（例：「開催日程 2026年11月1日（日曜） 競馬番組」）を取り込み、「レース情報」の番組表に表示します。
+        同じ日の番組を取り込み直すと入れ替えます。<br>
+        ・「JRAから取得」：指定した期間の各日のページをJRAのサイトから取得します（開催の無い日は飛ばします）。<br>
+        ・ファイルから取り込む：各日のページを保存したファイル（.mhtml／.html）を指定します（複数可）。
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:10px;">
+        <label>期間：<input type="date" id="pg-start"></label>
+        <span>〜</span>
+        <input type="date" id="pg-end">
+        <button type="button" id="pg-fetch-btn" class="rr-btn">JRAから取得</button>
+    </div>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:10px;">
+        <input type="file" id="pg-files" accept=".mhtml,.mht,.html,.htm" multiple>
+        <button type="button" id="pg-upload-btn" class="rr-btn">ファイルから取り込む</button>
+    </div>
+    <div id="pg-message" style="margin-top:10px; font-size:0.9em;"></div>
+</section>
+
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    // 期間の初期値：今日から4週間後まで
+    const today = new Date();
+    $('pg-start').value = iso(today);
+    $('pg-end').value = iso(new Date(today.getTime() + 27 * 86400000));
+
+    function message(text, isError) {
+        $('pg-message').textContent = text;
+        $('pg-message').style.color = isError ? '#c62828' : '#333';
+    }
+    function setBusy(busy) {
+        $('pg-fetch-btn').disabled = busy; $('pg-upload-btn').disabled = busy;
+    }
+    function summary(dates, failed) {
+        return (dates.length ? `${dates.length}日分の番組を取り込みました（${dates.join('、')}）。` : '番組のある日はありませんでした。')
+            + (failed.length ? `　取得できなかった日：${failed.join('、')}` : '');
+    }
+
+    $('pg-fetch-btn').addEventListener('click', async () => {
+        const parse = v => { const [y, m, d] = (v || '').split('-').map(Number); return new Date(y, m - 1, d); };
+        const start = parse($('pg-start').value), end = parse($('pg-end').value);
+        if (isNaN(start) || isNaN(end) || end < start) { message('期間を正しく指定してください。', true); return; }
+        setBusy(true);
+        const dates = [], failed = [];
+        try {
+            // 1回に7日分ずつ取得する
+            for (let s = new Date(start); s <= end; s = new Date(s.getTime() + 7 * 86400000)) {
+                const e = new Date(Math.min(end.getTime(), s.getTime() + 6 * 86400000));
+                message(`取得しています：${s.getMonth() + 1}/${s.getDate()}〜${e.getMonth() + 1}/${e.getDate()}`);
+                const res = await RaceImport.post('/api/program/fetch', { start: iso(s), end: iso(e) });
+                dates.push(...res.labels); failed.push(...res.failed);
+            }
+            message(summary(dates, failed), failed.length > 0);
+        } catch (e) {
+            message((dates.length ? summary(dates, failed) + '　' : '') + e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+
+    $('pg-upload-btn').addEventListener('click', async () => {
+        const files = $('pg-files').files;
+        if (!files.length) { message('ファイルを選択してください。', true); return; }
+        const fd = new FormData();
+        for (const f of files) fd.append('program_files', f);
+        setBusy(true);
+        message('取り込んでいます...');
+        try {
+            const res = await fetch('/api/program/upload', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || '取り込みに失敗しました。');
+            message(summary(data.labels, data.failed), data.failed.length > 0);
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+})();
+</script>
 {% endblock %}

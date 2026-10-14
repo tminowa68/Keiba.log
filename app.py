@@ -72,10 +72,12 @@ def login_required(f):
 # シートの列構成
 # ==============================================================================
 # Horsesシートの列（0始まりの番号）。馬名は和名ならA列、英字ならB列（英馬名）に記録する
+# クラス・最新レースは取り込んだレース結果から計算して書き込む列（毎回レース結果を読み込まなくて済むように）
 HORSE_COLUMNS = ["馬名", "英馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態",
-                 "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態"]
+                 "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態", "クラス", "最新レース"]
 (H_NAME, H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE, H_STATUS,
- H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS) = range(len(HORSE_COLUMNS))
+ H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS,
+ H_CLASS, H_LAST_RACE) = range(len(HORSE_COLUMNS))
 # Sire・Damシートの列
 PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL"]
 (P_NAME, P_NAME_EN, P_BIRTH, P_SIRE, P_DAM, P_OWNER, P_REGION, P_DETAIL, P_BREEDER,
@@ -1044,143 +1046,6 @@ def get_stables_list():
         sheet_not_ready(f"美浦・栗東シートを読み込めませんでした: {e}")
         return []
 
-# --- 賞金・クラス判定 ---
-def calc_added_prize(rank, condition, race_name, horse_birthday_str, race_date_str):
-    condition, race_name = str(condition or ""), str(race_name or "")
-    try: rank = int(rank)
-    except (ValueError, TypeError): return 0
-
-    race_year = int(race_date_str[:4])
-    birth_year = date_year(horse_birthday_str) or race_year - 3 # 読み取れない場合のフォールバック
-
-    age = race_year - birth_year
-
-    if "G" in race_name or "重賞" in condition or "J・G" in race_name:
-        if rank == 1:
-            if age <= 2: return 600
-            if age == 3: return 1200 if race_date_str <= f"{race_year}-06-30" else 1200
-            return 1200
-        if rank == 2:
-            if age <= 2: return 200
-            if age == 3 and race_date_str <= f"{race_year}-06-30": return 400
-            return 0
-    
-    if rank == 1:
-        if "新馬" in condition or "未勝利" in condition: return 400
-        if "1勝" in condition or "500万" in condition: return 500
-        if "2勝" in condition or "1000万" in condition: return 600
-        if "3勝" in condition or "1600万" in condition: return 900
-        if "オープン" in condition:
-            is_listed = "L" in race_name or "リステッド" in race_name
-            return 800 if is_listed else 700
-            
-    return 0
-
-def judge_class_by_prize(total_prize, has_raced, age, race_month):
-    if total_prize == 0: 
-        return "未勝利" if has_raced else "新馬"
-    
-    if age == 2 or (age == 3 and race_month <= 5):
-        if total_prize <= 500: return "1勝クラス"
-        return "オープン"
-    else:
-        if total_prize <= 500: return "1勝クラス"
-        if total_prize <= 1000: return "2勝クラス"
-        if total_prize <= 1600: return "3勝クラス"
-        return "オープン"
-
-def judge_required_class(condition_str):
-    s = str(condition_str or "")
-    if "1勝" in s or "500万" in s: return "1勝クラス"
-    if "2勝" in s or "1000万" in s: return "2勝クラス"
-    if "3勝" in s or "1600万" in s: return "3勝クラス"
-    if "オープン" in s or "重賞" in s: return "オープン"
-    if "未勝利" in s: return "未勝利"
-    if "新馬" in s: return "新馬"
-    return None
-
-def get_class_from_results(horse_name, target_date_str, all_results_dict, horse_birthday_str):
-    total_prize = 0
-    target_dt = datetime.strptime(target_date_str, '%Y-%m-%d')
-    results = all_results_dict.get(horse_name, [])
-    
-    past_races = [r for r in results if datetime.strptime(r['date'], '%Y-%m-%d') < target_dt]
-    
-    for r in past_races:
-        total_prize += calc_added_prize(r['rank'], r['condition'], r['race_name'], horse_birthday_str, r['date'])
-            
-    race_year = target_dt.year
-    race_month = target_dt.month
-    birth_year = date_year(horse_birthday_str) or race_year - 3
-
-    age = race_year - birth_year
-    return judge_class_by_prize(total_prize, len(past_races) > 0, age, race_month)
-
-def load_all_horse_results():
-    all_results = {}
-    files = gc.list_spreadsheet_files()
-    entry_files = [f for f in files if re.search(r'^\d{4}_entry_.+$', f['name'])]
-    
-    for f_info in entry_files:
-        try:
-            sh = gc.open_by_key(f_info['id'])
-            for ws in sh.worksheets():
-                data = ws.get_all_values()
-                race_date = "2025-01-01" # 簡易仮置き
-                if len(data) < 3: continue
-                
-                for r_num in range(1, 13):
-                    name_col_idx = (r_num - 1) * 4 + 2
-                    rank_col_idx = (r_num - 1) * 4
-                    for row in data[2:]:
-                        if name_col_idx < len(row):
-                            h_name = row[name_col_idx]
-                            if not h_name: continue
-                            rank_val = row[rank_col_idx] if rank_col_idx < len(row) else ""
-                            if h_name not in all_results: all_results[h_name] = []
-                            all_results[h_name].append({
-                                'date': race_date,
-                                'rank': rank_val,
-                                'condition': "レース条件",
-                                'race_name': "レース名"
-                            })
-        except Exception:
-            continue
-    return all_results
-
-# --- レース情報の抽出 ---
-def format_excel_time(time_val):
-    if not time_val: return ""
-    return str(time_val)[:5] # スプレッドシートからは文字列で取得されるため簡易整形
-
-def extract_race_name(race_col_data):
-    if len(race_col_data) <= 2: return ""
-    name_strs = race_col_data[:-2]
-    hit_text = next((str(c) for c in name_strs if any(x in str(c) for x in ["G", "L", "J・G"])), None)
-    if not hit_text and name_strs: hit_text = str(name_strs[-1])
-    formatted_text = re.sub(r'第\s*\d+\s*回', '', hit_text).strip()
-    return re.sub(r'第.*?回\s*', '', formatted_text).strip()
-
-def extract_race_condition(race_col_data):
-    if len(race_col_data) < 2: return ""
-    cond_str = str(race_col_data[-2])
-    match_age = re.search(r'(\d歳(?:以上)?)', cond_str)
-    age_part = match_age.group(1) if match_age else ""
-    class_part = "障害" if "障害" in cond_str else ""
-    for c in ["未勝利", "新馬", "1勝クラス", "2勝クラス", "3勝クラス", "オープン"]:
-        if c in cond_str: class_part += c
-    return f"{age_part} {class_part}".strip()
-
-def extract_race_course(race_col_data):
-    if not race_col_data: return ""
-    course_str = str(race_col_data[-1])
-    cond_str = str(race_col_data[-2]) if len(race_col_data) > 1 else ""
-    cource_part = "障" if "障害" in cond_str or "障" in course_str else ("芝" if "芝" in course_str else ("ダ" if "ダ" in course_str else ""))
-    straight_part = "直線 " if "直" in course_str else ""
-    dist_match = re.search(r'[\d,]+', course_str)
-    distance_part = dist_match.group(0) if dist_match else ""
-    return f"{cource_part} {straight_part} {distance_part}m".strip()
-
 # --- ファイル操作・整理の共通処理 ---
 def sort_and_resize_table(ws, sort_col_index=0, key=None):
     """スプレッドシートのデータをメモリ上でソートし一括更新する（key を指定するとその値で並べ替える）"""
@@ -1202,120 +1067,6 @@ def sort_and_resize_table(ws, sort_col_index=0, key=None):
     rows.sort(key=lambda x: key(x[sort_col_index]) if x[sort_col_index] else "")
     ws.clear()
     ws.update(range_name='A1', values=[headers] + rows)
-
-def get_schedule_data(target_year):
-    race_data = f'{target_year}_Race_Data'
-    available_dates, venue_data_map, date_map, venue_map = [], {}, {}, {}
-    
-    try:
-        sh = gc.open(race_data)
-        ws_sched = sh.worksheet("Schedule")
-        data = ws_sched.get_all_values()
-        
-        for row in data[1:]:
-            if not row or not row[0]: continue
-            
-            d_val = row[0]
-            d_str = d_val.replace('/', '-')
-            available_dates.append(d_str)
-            
-            v_info = {}
-            for i in [1, 5, 9]:
-                if i + 3 < len(row) and row[i+1]:
-                    v_id = row[i]
-                    v_name = row[i+1]
-                    v_day = row[i+2]
-                    search_text = row[i+3]
-                    
-                    v_info[str(v_name)] = {"id": v_id, "day": v_day}
-                    
-                    date_map[search_text] = d_str
-                    venue_map[search_text] = f"{v_id}回{v_name}"
-            
-            venue_data_map[d_str] = v_info
-            
-    except Exception as e:
-        print(f"Error reading schedule: {e}")
-        pass
-        
-    return available_dates, venue_data_map, date_map, venue_map
-
-def get_race_info_from_sheet(ws_race_data, search_text, target_r_num=None):
-    races_info = {}
-    if not ws_race_data or len(ws_race_data) < 1: return races_info
-    
-    headers = ws_race_data[0]
-    target_col_idx = None
-    
-    # 1行目から SearchText に一致する列を探す（空白スペースなどのズレを吸収するためstripで比較）
-    clean_search = str(search_text).strip()
-    for i, h in enumerate(headers):
-        if str(h).strip() == clean_search:
-            target_col_idx = i
-            break
-            
-    # 見つからなければ空の辞書を返す
-    if target_col_idx is None: return races_info
-
-    # target_col_idx   : レース番号 (例: 1レース)
-    # target_col_idx+1 : レース名・条件 (例: 3歳未勝利)
-    # target_col_idx+2 : 発走時刻 (例: 10:05)
-    label_col_idx = target_col_idx 
-    data_col_idx = target_col_idx + 1
-    time_col_idx = target_col_idx + 2
-
-    all_rows = ws_race_data[2:] 
-    race_start_indices = {}
-
-    # 各レースの開始行を特定する
-    for i, row_cells in enumerate(all_rows):
-        if label_col_idx < len(row_cells):
-            val = str(row_cells[label_col_idx]).strip()
-            # 「1R」「12」などから数字だけを確実に抽出
-            match = re.search(r'^(\d+)', val)
-            if match:
-                r_num = int(match.group(1))
-                if 1 <= r_num <= 12 and r_num not in race_start_indices:
-                    race_start_indices[r_num] = i
-
-    sorted_races = sorted(race_start_indices.items())
-    
-    for idx, (r_num, start_idx) in enumerate(sorted_races):
-        if target_r_num and r_num != target_r_num: continue
-        
-        # 次のレースの開始行の1つ前まで。12R（最後のレース）の場合はファイルの最後まで。
-        end_idx = sorted_races[idx + 1][1] - 1 if idx + 1 < len(sorted_races) else len(all_rows) - 1
-        
-        race_col_data = []
-        for i in range(start_idx, end_idx + 1):
-            if data_col_idx < len(all_rows[i]):
-                val = str(all_rows[i][data_col_idx]).strip()
-                # ★重要: 空のセルを除外することで、コースや条件の抽出（後ろから〇番目）を正常に機能させる
-                if val:
-                    race_col_data.append(val)
-
-        time_val = ""
-        if time_col_idx < len(all_rows[start_idx]):
-            time_val = str(all_rows[start_idx][time_col_idx]).strip()
-
-        num_val = all_rows[start_idx][label_col_idx] if label_col_idx < len(all_rows[start_idx]) else f"{r_num}R"
-
-        note_val = ""
-        combined_text = "".join(str(v) for v in race_col_data)
-        if "牡・牝" in combined_text:
-            note_val = "牡・牝"
-        elif "（牝）" in combined_text or "(牝)" in combined_text:
-            note_val = "牝"
-
-        races_info[r_num] = {
-            'time': format_excel_time(time_val),
-            'num': num_val,
-            'name': extract_race_name(race_col_data),
-            'condition': extract_race_condition(race_col_data),
-            'course': extract_race_course(race_col_data),
-            'note': note_val
-        }
-    return races_info
 
 def extract_year(date_str):
     """ '20000101', '2000/1/1', '2000-01-01', '2000' などの文字列から西暦を抽出 """
@@ -1782,7 +1533,7 @@ def runner_sheet_row(race, r):
 def save_race_results(parsed_list, overwrite=False):
     """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
     (取り込んだレース, 飛ばしたレース) のラベル一覧を返す"""
-    saved, skipped = [], []
+    saved, skipped, saved_ids = [], [], set()
     by_year = {}
     for parsed in parsed_list:
         by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
@@ -1814,6 +1565,7 @@ def save_race_results(parsed_list, overwrite=False):
             race_rows.append(race_sheet_row(race))
             runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
             saved.append(label)
+            saved_ids.add(race['race_id'])
         if replace_ids:
             # 入れ替えるレースの古い行を消す（下の行から消して行番号がずれないようにする）
             # 同じレースの行は続いているため、続いている行はまとめて消す
@@ -1836,6 +1588,9 @@ def save_race_results(parsed_list, overwrite=False):
             with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in runner_rows],
                               value_input_option='RAW')
         _imported_ids_cache[year] = (time.time(), existing)
+    if saved_ids:
+        # 出走した登録馬のクラス・最新レースを計算し直す
+        update_class_for_runners([p for p in parsed_list if p['race']['race_id'] in saved_ids])
     return saved, skipped
 
 def fetch_jra_html(url, cname=None):
@@ -1870,64 +1625,175 @@ def fetch_race_results(urls):
                 failed.append(err)
     return parsed, failed
 
-def query_runner_rows(book, horse_name, horse_id):
+def _gviz_quote(text):
+    return '"' + str(text).replace('"', '') + '"'
+
+def query_runner_rows(book, horse_ids, horse_names):
     """成績シートから、馬IDまたは馬名が一致する行だけを取り出す（Googleのクエリ機能で絞り込み、全行は読まない）"""
     import csv, io
-    conds = []
-    if horse_id:
-        conds.append(f"{col_letter(RUNNER_COL['馬ID'])} = \"{horse_id}\"")
-    if horse_name and '"' not in horse_name:
-        conds.append(f"{col_letter(RUNNER_COL['馬名'])} = \"{horse_name}\"")
-    if not conds:
+    horse_ids = sorted({i for i in horse_ids if i})
+    horse_names = sorted({n for n in horse_names if n})
+    if not horse_ids and not horse_names:
         return []
+    id_col, name_col = col_letter(RUNNER_COL['馬ID']), col_letter(RUNNER_COL['馬名'])
+    conds = [f"{id_col} = {_gviz_quote(i)}" for i in horse_ids] + [f"{name_col} = {_gviz_quote(n)}" for n in horse_names]
     try:
         session = gc.http_client.session
         resp = session.get(f"https://docs.google.com/spreadsheets/d/{book.id}/gviz/tq",
                            params={'tqx': 'out:csv', 'sheet': RUNNER_SHEET, 'headers': '1',
-                                   'tq': 'select * where ' + ' or '.join(conds)}, timeout=20)
+                                   'tq': 'select * where ' + ' or '.join(conds)}, timeout=30)
         resp.raise_for_status()
         rows = list(csv.reader(io.StringIO(resp.content.decode('utf-8'))))
+        if rows and rows[0] and rows[0][0] != RUNNER_SHEET_COLUMNS[0]:
+            raise ValueError('クエリの結果の形式が違います')
         return [r for r in rows[1:] if r and r[0]]
     except Exception as e:
         # クエリが使えない場合は成績シートを全部読んで絞り込む
         print(f"成績シートのクエリに失敗したため全件を読み込みます: {e}")
+        ids, names = set(horse_ids), set(horse_names)
         rows = book.worksheet(RUNNER_SHEET).get_all_values()[1:]
-        return [r for r in rows if (horse_id and len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] == horse_id)
-                or (horse_name and len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] == horse_name)]
+        return [r for r in rows if (len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] in ids)
+                or (len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] in names)]
 
-def get_horse_race_results(horse_name, horse_id='', birth_year=None):
-    """競走馬の出走成績（新しい順）と、本賞金・収得賞金・クラスのまとめを返す"""
+def runner_row_to_result(r):
+    """成績シートの1行を出走成績（表示・収得賞金の計算用）にする"""
+    r = list(r) + [''] * len(RUNNER_SHEET_COLUMNS)
+    c = lambda name: str(r[RUNNER_COL[name]]).strip()
+    race_date = parse_full_date(c('年月日'))
+    if not race_date:
+        return None
+    prize = c('本賞金').replace(',', '')
+    return {
+        'race_id': c('レースID'), 'date': race_date, 'date_label': format_date_jp(race_date, weekday=True),
+        'venue': c('場'), 'num': c('R'), 'name': c('レース名'), 'grade': c('グレード'),
+        'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': c('記号'),
+        'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
+        'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
+        'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
+        'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
+        'prize': int(prize) if prize.isdigit() else 0,
+        'horse_name': c('馬名'), 'horse_id': c('馬ID'),
+    }
+
+def collect_race_results(horses):
+    """複数の馬の出走成績をまとめて集める。horses：[{'key', 'name', 'horse_id', 'birth_year'}]。
+    {key: 出走成績の一覧（新しい順）} を返す"""
+    if not horses:
+        return {}
     this_year = datetime.now().year
-    first_year = (birth_year + 2) if birth_year else 2017
-    results = []
+    first_year = min(((h['birth_year'] or 2015) + 2) for h in horses)
+    by_id = {h['horse_id']: h['key'] for h in horses if h.get('horse_id')}
+    by_name = {}
+    for h in horses:
+        if h.get('name'):
+            by_name.setdefault(h['name'], []).append(h['key'])
+    found = {h['key']: {} for h in horses}
     for year in range(max(first_year, 2000), this_year + 1):
         book = get_result_book(year)
         if not book:
             continue
-        for r in query_runner_rows(book, horse_name, horse_id):
-            r = list(r) + [''] * len(RUNNER_SHEET_COLUMNS)
-            c = lambda name: str(r[RUNNER_COL[name]]).strip()
-            race_date = parse_full_date(c('年月日'))
-            if not race_date:
-                continue
-            results.append({
-                'race_id': c('レースID'), 'date': race_date, 'date_label': format_date_jp(race_date, weekday=True),
-                'venue': c('場'), 'num': c('R'), 'name': c('レース名'), 'grade': c('グレード'),
-                'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': c('記号'),
-                'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
-                'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
-                'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
-                'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
-                'prize': int(c('本賞金').replace(',', '')) if c('本賞金').replace(',', '').isdigit() else 0,
-            })
-    # 同じレースが重なって見つかった場合（馬IDと馬名の両方で一致）は1つにする
-    unique = {}
-    for r in results:
-        unique.setdefault(r['race_id'] or (r['date'], r['venue'], r['num']), r)
-    results = sorted(unique.values(), key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0),
-                     reverse=True)
+        # 馬IDで探し、馬IDが分からない馬は馬名で探す
+        ids = [h['horse_id'] for h in horses if h.get('horse_id')]
+        names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
+        for i in range(0, max(len(ids), len(names)), 40):
+            for row in query_runner_rows(book, ids[i:i + 40], names[i:i + 40]):
+                res = runner_row_to_result(row)
+                if not res:
+                    continue
+                keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
+                for key in keys:
+                    found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
+    order = lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0)
+    return {key: sorted(v.values(), key=order, reverse=True) for key, v in found.items()}
+
+def get_horse_race_results(horse_name, horse_id='', birth_year=None):
+    """競走馬の出走成績（新しい順）と、本賞金・収得賞金・クラスのまとめを返す"""
+    results = collect_race_results([{'key': 0, 'name': horse_name, 'horse_id': horse_id,
+                                     'birth_year': birth_year}])[0]
     summary = RR.summarize_results(results, birth_year=birth_year)
     return results, summary
+
+def class_label(summary):
+    """Horsesシートに記録するクラス（障害に出走した馬は「・障害オープン」のように障害のクラスも付ける）"""
+    text = summary['flat']['class']
+    if summary['jump']['starts']:
+        text += '・' + summary['jump']['class']
+    return text
+
+def last_race_label(results):
+    """Horsesシートに記録する最新レース（例：2026/10/4 東京5R メイクデビュー東京 1着）"""
+    if not results:
+        return ''
+    r = results[0]
+    d = r['date']
+    place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
+    name = r['name'] or f"{r['category']}{r['class']}"
+    return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
+
+def update_horse_class_columns(match=None, offset=0, limit=None):
+    """Horsesシートのクラス・最新レースの列を、取り込んだレース結果から計算し直す。
+    match：対象を絞る関数（Horsesの行を受け取り True なら対象）。offset・limit：対象のうち何頭目から何頭か。
+    (対象の頭数, 更新した頭数) を返す"""
+    ws = gc.open(horse_data).worksheet("Horses")
+    data = with_sheets_retry(ws.get_all_values)
+    rows = data[1:]
+    targets = []
+    for i, r in enumerate(rows):
+        name = display_name_of_row(r)
+        if not name or (match and not match(r)):
+            continue
+        targets.append((i, r, name))
+    total = len(targets)
+    targets = targets[offset:offset + limit] if limit else targets[offset:]
+    if not targets:
+        return total, 0
+    horses = []
+    for i, r, name in targets:
+        horses.append({'key': i, 'name': name,
+                       'horse_id': RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else ''),
+                       'birth_year': date_year(r[H_BIRTH]) if len(r) > H_BIRTH else None})
+    results = collect_race_results(horses)
+    updates = []
+    for h in horses:
+        res = results.get(h['key'], [])
+        r = rows[h['key']]
+        if res:
+            new_class = class_label(RR.summarize_results(res, birth_year=h['birth_year']))
+        else:
+            new_class = '新馬' if h['birth_year'] and datetime.now().year - h['birth_year'] <= 3 else ''
+        new_values = [new_class, last_race_label(res)]
+        old_values = [r[H_CLASS] if len(r) > H_CLASS else '', r[H_LAST_RACE] if len(r) > H_LAST_RACE else '']
+        if new_values != old_values:
+            row_no = h['key'] + 2
+            updates.append({'range': f"{col_letter(H_CLASS)}{row_no}:{col_letter(H_LAST_RACE)}{row_no}",
+                            'values': [new_values]})
+    updated = len(updates)
+    header = data[0] if data else []
+    if updates or len(header) <= H_LAST_RACE or header[H_CLASS] != HORSE_COLUMNS[H_CLASS]:
+        ensure_columns(ws, len(HORSE_COLUMNS))
+        updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(H_LAST_RACE)}1",
+                        'values': [[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE]]]})
+        with_sheets_retry(ws.batch_update, updates)
+    return total, updated
+
+def update_class_for_runners(parsed_list):
+    """取り込んだレースに出走した登録馬（Horses）のクラス・最新レースを計算し直す"""
+    ids, names = set(), set()
+    for parsed in parsed_list:
+        for r in parsed['runners']:
+            if r.get('horse_id'):
+                ids.add(r['horse_id'])
+            if r.get('name'):
+                names.add(r['name'])
+    if not ids and not names:
+        return
+    def _match(row):
+        hid = RR.horse_id_from_url(row[H_JRA_URL] if len(row) > H_JRA_URL else '')
+        return (hid and hid in ids) or display_name_of_row(row) in names
+    try:
+        update_horse_class_columns(_match)
+    except Exception as e:
+        print(f"クラス・最新レースの更新に失敗しました: {e}")
 
 def imported_race_ids(year):
     """その年のレースシートに取り込み済みのレースIDの集合（しばらくの間は覚えておいた結果を返す）"""
@@ -2109,6 +1975,187 @@ def api_race_results_import_races():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed})
+
+# --- 開催日程（競馬番組）：年ごとのファイルの「番組」シート（1レース1行） ---
+PROGRAM_SHEET = "番組"
+PROGRAM_COLUMNS = ["年月日", "場", "回", "日", "R", "レース名", "グレード", "区分", "年齢条件", "クラス", "条件",
+                   "距離", "コース", "コース詳細", "記号", "重量", "発走時刻"]
+PROGRAM_COL = {name: i for i, name in enumerate(PROGRAM_COLUMNS)}
+_program_cache = {}   # 年 → (読み込んだ時刻, 行の一覧)
+PROGRAM_CACHE_TTL = 300
+
+def program_sheet_row(race):
+    return [race['date'].strftime('%Y%m%d'), race['venue'], race['kai'], race['nichi'], race['num'], race['name'],
+            race['grade'], '障害' if race['jump'] else '平地', race['category'], race['class'], race['condition'],
+            race['distance'], race['surface'], race['course_detail'], race['marks'], race['weight_rule'], race['time']]
+
+def save_program(races):
+    """番組を保存する。同じ日の番組が既にあれば入れ替える（番組は変更されることがあるため）。保存した日の一覧を返す"""
+    by_year = {}
+    for race in races:
+        by_year.setdefault(race['date'].year, []).append(race)
+    saved_dates = set()
+    for year, items in sorted(by_year.items()):
+        book = get_result_book(year, create=True)
+        ws = _result_sheet(book, PROGRAM_SHEET, PROGRAM_COLUMNS)
+        dates = {r['date'].strftime('%Y%m%d') for r in items}
+        col = with_sheets_retry(ws.col_values, 1)
+        blocks = []
+        for idx in range(2, len(col) + 1):
+            if col[idx - 1] in dates:
+                if blocks and blocks[-1][1] == idx - 1:
+                    blocks[-1][1] = idx
+                else:
+                    blocks.append([idx, idx])
+        for start, end in reversed(blocks):
+            with_sheets_retry(ws.delete_rows, start, end)
+        items.sort(key=lambda r: (r['date'], r.get('order', 0), r['num']))
+        with_sheets_retry(ws.append_rows, [[str(v) for v in program_sheet_row(r)] for r in items],
+                          value_input_option='RAW')
+        saved_dates |= {r['date'] for r in items}
+        _program_cache.pop(year, None)
+    return sorted(saved_dates)
+
+def get_program_rows(year):
+    """その年の番組シートの行（しばらくの間は覚えておく）"""
+    year = int(year)
+    cached = _program_cache.get(year)
+    if cached and time.time() - cached[0] < PROGRAM_CACHE_TTL:
+        return cached[1]
+    rows = []
+    book = get_result_book(year)
+    if book:
+        try:
+            rows = book.worksheet(PROGRAM_SHEET).get_all_values()[1:]
+        except gspread.WorksheetNotFound:
+            rows = []
+    rows = [list(r) + [''] * (len(PROGRAM_COLUMNS) - len(r)) for r in rows if r and r[0]]
+    _program_cache[year] = (time.time(), rows)
+    return rows
+
+def program_race_from_row(r):
+    """番組シートの1行を画面表示用にする"""
+    c = lambda name: str(r[PROGRAM_COL[name]]).strip()
+    dist = c('距離')
+    dist_label = f"{int(dist):,}m" if dist.isdigit() else ''
+    jump = c('区分') == '障害'
+    detail = c('コース詳細')
+    course = f"障 {dist_label}（{detail}）" if jump and detail else f"{detail or c('コース')} {dist_label}".strip()
+    marks = c('記号')
+    num = int(c('R')) if c('R').isdigit() else 0
+    return {'date': parse_full_date(c('年月日')), 'venue': c('場'), 'kai': c('回'), 'nichi': c('日'),
+            'num': f"{num}レース", 'race_num': num, 'name': c('レース名'), 'grade': c('グレード'), 'jump': jump,
+            'category': c('年齢条件'), 'class': c('クラス'), 'condition': c('条件'),
+            'course': course, 'distance': dist, 'surface': c('コース'), 'course_detail': detail,
+            'marks': marks, 'note': '牝' if '牝' in marks else '', 'weight_rule': c('重量'), 'time': c('発走時刻')}
+
+def get_program_for_dates(dates):
+    """指定した日の番組を {日付: {競馬場: {レース番号: レース}}} で返す（競馬場は番組の表示順）"""
+    wanted = set(dates)
+    result = {}
+    for year in sorted({d.year for d in wanted}):
+        for r in get_program_rows(year):
+            race = program_race_from_row(r)
+            if race['date'] in wanted and race['venue']:
+                result.setdefault(race['date'], {}).setdefault(race['venue'], {})[race['race_num']] = race
+    return result
+
+def find_program_race(race_date, venue, num):
+    d = race_date if isinstance(race_date, date) else parse_full_date(race_date)
+    if not d:
+        return None
+    return get_program_for_dates([d]).get(d, {}).get(venue, {}).get(int(num))
+
+def fetch_program_days(start, end):
+    """JRAの開催日程の日別ページを期間内の全日分取得して読み取る（開催の無い日はページが無い）"""
+    from concurrent.futures import ThreadPoolExecutor
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+    def _one(d):
+        try:
+            return d, RR.parse_program_page(fetch_jra_html(RR.program_url(d)), page_date=d), None
+        except requests.exceptions.HTTPError as e:
+            if getattr(e.response, 'status_code', None) == 404:
+                return d, [], None
+            return d, [], f"{d.month}/{d.day}（{e}）"
+        except Exception as e:
+            return d, [], f"{d.month}/{d.day}（{e}）"
+
+    races, failed = [], []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for d, day_races, err in pool.map(_one, days):
+            races.extend(day_races)
+            if err:
+                failed.append(err)
+    return races, failed
+
+def _add_program_order(races):
+    """番組の表示順（競馬場の並び）を覚えておく"""
+    venues = {}
+    for r in races:
+        order = venues.setdefault(r['date'], [])
+        if r['venue'] not in order:
+            order.append(r['venue'])
+        r['order'] = order.index(r['venue'])
+    return races
+
+def program_result_message(saved_dates, failed):
+    labels = [f"{d.month}/{d.day}" for d in saved_dates]
+    return {'saved_dates': [d.isoformat() for d in saved_dates], 'labels': labels, 'failed': failed}
+
+@app.route('/api/program/fetch', methods=['POST'])
+@login_required
+def api_program_fetch():
+    """期間（最大14日）の番組をJRAの開催日程のページから取得して保存する"""
+    data = request.get_json(silent=True) or {}
+    start, end = parse_full_date(data.get('start')), parse_full_date(data.get('end'))
+    if not start or not end or end < start:
+        return jsonify({'error': '期間を正しく指定してください。'}), 400
+    end = min(end, start + timedelta(days=13))
+    try:
+        races, failed = fetch_program_days(start, end)
+        saved = save_program(_add_program_order(races)) if races else []
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(program_result_message(saved, failed))
+
+@app.route('/api/program/upload', methods=['POST'])
+@login_required
+def api_program_upload():
+    """開催日程の日別ページを保存したファイル（.mhtml／.html、複数可）から番組を取り込む"""
+    races, failed = [], []
+    for f in request.files.getlist('program_files'):
+        if not f or not f.filename:
+            continue
+        try:
+            day_races = RR.parse_program_page(_extract_html_from_upload(f.read()))
+            if not day_races:
+                failed.append(f"{f.filename}（番組が見つかりません）")
+            races.extend(day_races)
+        except Exception as e:
+            failed.append(f"{f.filename}（{e}）")
+    if not races:
+        return jsonify({'error': '番組を読み取れませんでした。' + ' '.join(failed)}), 400
+    try:
+        saved = save_program(_add_program_order(races))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(program_result_message(saved, failed))
+
+@app.route('/api/race_results/update_classes', methods=['POST'])
+@login_required
+def api_race_results_update_classes():
+    """Horsesシートの全馬（抹消を除く）のクラス・最新レースを計算し直す（offset から limit 頭ずつ）"""
+    data = request.get_json(silent=True) or {}
+    offset, limit = int(data.get('offset') or 0), min(int(data.get('limit') or 40), 100)
+    include_cancelled = bool(data.get('include_cancelled'))
+    match = None if include_cancelled else (
+        lambda r: str(r[H_STATUS] if len(r) > H_STATUS else '').strip() != '抹消')
+    try:
+        total, updated = update_horse_class_columns(match, offset=offset, limit=limit)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'total': total, 'next': offset + limit, 'updated': updated})
 
 @app.route('/api/race_results/scan', methods=['POST'])
 @login_required
@@ -2468,7 +2515,7 @@ def import_horses():
 
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        for idx in (H_REGISTRATION, H_REG_STATUS):
+        for idx in (H_REGISTRATION, H_REG_STATUS, H_CLASS, H_LAST_RACE):
             if _blank(headers[idx]):
                 headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
@@ -2715,8 +2762,9 @@ def import_trainer_horses():
         rows = [list(r) for r in data[1:]]
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        if not headers[H_REG_STATUS]:
-            headers[H_REG_STATUS] = HORSE_COLUMNS[H_REG_STATUS]
+        for idx in (H_REG_STATUS, H_CLASS, H_LAST_RACE):
+            if not headers[idx]:
+                headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
         for r in rows:
             while len(r) < len(headers):
@@ -4222,92 +4270,31 @@ def horse_detail(name, active_tab):
         # 再読み込みするかホームに戻るかを選ぶ画面にする
         raise SheetNotReady(f"Horsesシートに『{name}』が見つかりません")
 
+    # 出走予定（Entryシートの今日以降のレース）。レース名・条件・コースは番組から
     horse_races = []
-    
-    schedule_cache = {}
-    race_master_cache_by_year = {}
-    
     try:
-        sh = gc.open(horse_data)
-        ws_entry = sh.worksheet("Entry")
-        records = ws_entry.get_all_values()
-        
-        entry_rows = []
-        if len(records) > 1:
-            # 対象の馬のデータだけを抽出
-            for row in records[1:]:
-                if len(row) >= 4 and row[3] == name:
-                    entry_rows.append({
-                        'race_date': row[0],
-                        'venue': row[1],
-                        'race_num': int(row[2]) if row[2].isdigit() else 0,
-                        'status': row[4] if len(row) > 4 else "-",
-                        'horse_num': row[5] if len(row) > 5 else "-",
-                        'rank': row[6] if len(row) > 6 else "-"
-                    })
-        
-        # SQLiteの "ORDER BY race_date DESC, race_num DESC" と同じようにソート
-        entry_rows.sort(key=lambda x: (x['race_date'], x['race_num']), reverse=True)
-        
-        # 結果はレース結果のファイルから表示するため、ここでは今日以降（出走予定）のレースだけにする
         today = datetime.now().date()
-        entry_rows = [row for row in entry_rows
-                      if (parse_full_date(row['race_date']) or date.min) >= today]
-
-        for row in entry_rows:
-            r_date = row['race_date']
-            r_venue = row['venue']
-            r_num = int(row['race_num'])
-            target_year = r_date[:4]
-            
-            if target_year not in schedule_cache:
-                _, v_data_map, _, _ = get_schedule_data(target_year)
-                schedule_cache[target_year] = v_data_map
-            
-            v_data_map = schedule_cache[target_year]
-            
-            if target_year not in race_master_cache_by_year:
-                race_master_data = {}
-                try:
-                    rm_sh = gc.open(f"{target_year}_Race_Data")
-                    for sheet in rm_sh.worksheets():
-                        race_master_data[sheet.title] = sheet.get_all_values()
-                except Exception: 
-                    pass
-                race_master_cache_by_year[target_year] = race_master_data
-
-            r_name, r_condition, r_course = "-", "-", "-"
-            
-            v_info = v_data_map.get(r_date, {}).get(r_venue)
-            
-            if v_info:
-                m_sheet_name = f"{v_info['id']}回{r_venue}"
-                search_text = f"{v_info['id']}回{r_venue}{v_info['day']}日"
-                
-                if m_sheet_name in race_master_cache_by_year[target_year]:
-                    race_info_cache = get_race_info_from_sheet(
-                        race_master_cache_by_year[target_year][m_sheet_name], 
-                        search_text
-                    )
-                    if r_num in race_info_cache:
-                        r_name = race_info_cache[r_num].get('name', '-')
-                        r_condition = race_info_cache[r_num].get('condition', '-')
-                        r_course = race_info_cache[r_num].get('course', '-')
-
-            display_date = format_date_jp(r_date, weekday=True)
-
+        records = gc.open(horse_data).worksheet("Entry").get_all_values()
+        for row in records[1:]:
+            if len(row) < 4 or row[3] != name:
+                continue
+            r_date = parse_full_date(row[0])
+            if not r_date or r_date < today:
+                continue
+            r_num = int(row[2]) if str(row[2]).isdigit() else 0
+            race = find_program_race(r_date, row[1], r_num) if r_num else None
             horse_races.append({
-                'sort_date': r_date, 
-                'date_label': display_date, 
-                'venue': r_venue, 
+                'sort_key': (r_date, r_num),
+                'date_label': format_date_jp(r_date, weekday=True),
+                'date': r_date.isoformat(),
+                'venue': row[1],
                 'num': r_num,
-                'name': r_name,
-                'condition': r_condition,
-                'course': r_course,
-                'status': row['status'] if row['status'] else "-", 
-                'rank': row['rank'] if row['rank'] else "-"
+                'name': (race['name'] or '-') if race else '-',
+                'condition': race['condition'] if race else '-',
+                'course': race['course'] if race else '-',
+                'status': (row[4] if len(row) > 4 else '') or '-',
             })
-                
+        horse_races.sort(key=lambda r: r['sort_key'])
     except Exception as e:
         print(f"スプレッドシート(Entry)の読み込みエラー: {e}")
 
@@ -4422,201 +4409,138 @@ def edit_horse(name):
         raise SheetNotReady(f"Horsesシートに『{name}』が見つかりません")
     return render_template('edit_horse.html', horse=horse, stables=get_stables_list(), current_year=datetime.now().year) if horse else ("Horse not found", 404)
 
+def racing_week_start(d):
+    """開催週の初日（火曜日）。土日と、祝日の月曜日の開催を同じ週にまとめる"""
+    return d - timedelta(days=(d.weekday() - 1) % 7)
+
+def format_month_day(d, weekday=True):
+    """日付を年なしの「10月18日(日)」にする"""
+    return f"{d.month}月{d.day}日" + (f"({JP_WEEKDAYS[d.weekday()]})" if weekday else '')
+
+def short_race_label(text):
+    """最新レースの表示：今年のレースは年を省く（例：2026/10/4 東京5R … → 10/4 東京5R …）"""
+    text = str(text or '').strip()
+    prefix = f"{datetime.now().year}/"
+    return text[len(prefix):] if text.startswith(prefix) else text
+
+app.jinja_env.filters['short_race'] = short_race_label
+app.jinja_env.filters['mdate'] = lambda v, weekday=True: (
+    format_month_day(v, weekday) if isinstance(v, date) else
+    (format_month_day(parse_full_date(v), weekday) if parse_full_date(v) else str(v or '')))
+
 @app.route('/races')
 def race_list():
-    req_date = request.args.get('date')
-    req_venue = request.args.get('venue')
-    
-    today_obj = datetime.now()
-    target_year = req_date[:4] if req_date else str(today_obj.year)
-    race_data = f'{target_year}_Race_Data' 
-    
-    available_dates, venue_data_map, _, _ = get_schedule_data(target_year)
-    
-    def parse_date(d_str):
-        return datetime.strptime(d_str.replace('-', '/'), '%Y/%m/%d')
+    """番組表：開催週（火〜月）ごとに、開催日・競馬場を選んでその日の番組を表示する"""
+    today = datetime.now().date()
+    base = parse_full_date(request.args.get('date') or '') or today
+    week_start = racing_week_start(base)
+    week_days = [week_start + timedelta(days=i) for i in range(7)]
+    program = get_program_for_dates(week_days)
+    race_days = sorted(program)
 
-    sorted_dates = sorted(available_dates, key=parse_date)
+    # 表示する開催日：指定された日（無ければ今日以降で最初の開催日、それも無ければ週の最後の開催日）
+    if base in program:
+        selected = base
+    else:
+        selected = next((d for d in race_days if d >= base), race_days[-1] if race_days else None)
 
-    # --- 1 & 2: 基準日の設定と直近開催日の取得 ---
-    today_dt = datetime(today_obj.year, today_obj.month, today_obj.day)
-    
-    try:
-        base_dt = parse_date(req_date) if req_date else today_dt
-    except ValueError:
-        base_dt = today_dt
-
-    future_dates = [d for d in sorted_dates if parse_date(d) >= base_dt]
-    date = future_dates[0] if future_dates else (sorted_dates[-1] if sorted_dates else today_obj.strftime('%Y/%-m/%-d'))
-
-    # --- 日付ブロック（節）の作成 ---
-    date_blocks, current_block = [], []
-    for i, d in enumerate(sorted_dates):
-        d_obj = parse_date(d)
-        if i == 0:
-            current_block.append(d)
-        else:
-            prev_obj = parse_date(sorted_dates[i-1])
-            if (d_obj - prev_obj).days <= 2:
-                current_block.append(d)
-            else:
-                date_blocks.append(current_block)
-                current_block = [d]
-    if current_block:
-        date_blocks.append(current_block)
-
-    current_day_venues = venue_data_map.get(date, {})
-    
-    # --- 3: 会場選択の保持 ---
-    venue = req_venue
-    if not venue or venue not in current_day_venues:
-        venue = list(current_day_venues.keys())[0] if current_day_venues else ""
-
-    display_dates = []
-    current_date_block = next((b for b in date_blocks if date in b), [])
-    for d in current_date_block:
-        dt_obj = parse_date(d)
-        display_dates.append({
-            'value': d, 
-            'label': format_date_jp(dt_obj, weekday=True)
-        })
-
-    try:
-        date_for_input = parse_date(date).strftime('%Y-%m-%d')
-    except:
-        date_for_input = date
-
-    # --- 以下、スプレッドシートからのレース情報取得処理 ---
-    day_races = {i: None for i in range(1, 13)}
-    search_text = "開催情報が見つかりません"
-
-    venue_info = current_day_venues.get(venue)
-    if venue_info:
-        try:
-            wb = gc.open(race_data)
-            target_sheet_name = f"{venue_info['id']}回{venue}"
-            ws = wb.worksheet(target_sheet_name)
-            
-            search_text = venue_info.get('search_text', f"{venue_info['id']}回{venue}{venue_info['day']}日")
-            
-            fetched_races = get_race_info_from_sheet(ws.get_all_values(), search_text)
-            
-            for i in range(1, 13):
-                if i in fetched_races:
-                    day_races[i] = fetched_races[i]
-                else:
-                    day_races[i] = {'num': f"{i}レース", 
-                                    'name': '', 
-                                    'condition': '情報なし', 
-                                    'course': '', 
-                                    'time': '',
-                                    'note': ''
-                                    }
-        except Exception as e:
-            print(f"Error fetching race details: {e}")
-            for i in range(1, 13):
-                day_races[i] = {'num': f"{i}レース", 
-                                'name': '', 
-                                'condition': '取得失敗', 
-                                'course': '', 
-                                'time': '',
-                                'note': ''
-                                }
+    venues = list(program.get(selected, {}).keys()) if selected else []
+    venue = request.args.get('venue', '')
+    if venue not in venues:
+        venue = venues[0] if venues else ''
+    day_races = program.get(selected, {}).get(venue, {}) if selected else {}
+    first = next(iter(day_races.values()), None)
+    heading = f"{first['kai']}回{venue}{first['nichi']}日" if first else ''
 
     return render_template('race_list.html',
-                           date=date,
-                           date_for_input=date_for_input,
-                           venue=venue, 
+                           date=selected.isoformat() if selected else '',
+                           selected=selected,
+                           date_for_input=(selected or base).isoformat(),
+                           venue=venue,
                            day_races=day_races,
-                           available_venues=list(current_day_venues.keys()),
-                           available_dates=available_dates, 
-                           display_dates=display_dates,
-                           search_text=search_text)
+                           available_venues=venues,
+                           display_dates=[{'value': d.isoformat(), 'label': format_month_day(d)} for d in race_days],
+                           week_label=f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
+                           week_start=week_start.isoformat(),
+                           week_end=week_days[-1].isoformat(),
+                           prev_week=(week_start - timedelta(days=7)).isoformat(),
+                           next_week=(week_start + timedelta(days=7)).isoformat(),
+                           search_text=heading)
+
+def horse_class_of(h):
+    """Horsesシートに記録したクラス（平地）。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
+    text = str(h[H_CLASS]).strip() if len(h) > H_CLASS and h[H_CLASS] else ''
+    if text:
+        return text.split('・')[0]
+    birth_year = date_year(h[H_BIRTH]) if len(h) > H_BIRTH else None
+    if birth_year and datetime.now().year - birth_year <= 3:
+        return '新馬'
+    return ''
+
+def class_allowed(race_class, horse_class):
+    """レースのクラスに出走できるか（新馬は未出走の馬、未勝利は未勝利・未出走の馬、オープンは全馬）"""
+    if race_class == '新馬':
+        return horse_class == '新馬'
+    if race_class == '未勝利':
+        return horse_class in ('新馬', '未勝利')
+    if race_class == 'オープン':
+        return True
+    return race_class == horse_class
+
+def age_allowed(category, age):
+    """レースの年齢条件（2歳／3歳／3歳以上／4歳以上）に合う馬齢か（馬齢が分からなければ合うとみなす）"""
+    m = re.match(r'(\d)歳(以上)?', category or '')
+    if not m or not isinstance(age, int):
+        return True
+    return age >= int(m.group(1)) if m.group(2) else age == int(m.group(1))
+
+def read_entries(race_date, venue, num):
+    """Entryシートから、指定したレースにエントリーした馬の一覧を返す"""
+    entries = []
+    try:
+        rows = gc.open(horse_data).worksheet("Entry").get_all_values()[1:]
+    except Exception:
+        return entries
+    for row in rows:
+        if len(row) < 4 or parse_full_date(row[0]) != race_date or row[1] != venue:
+            continue
+        if not str(row[2]).isdigit() or int(row[2]) != int(num):
+            continue
+        entries.append({'name': row[3], 'status': row[4] if len(row) > 4 else '',
+                        'num': row[5] if len(row) > 5 else '', 'rank': row[6] if len(row) > 6 else ''})
+    return entries
 
 @app.route('/edit_race')
 def race_detail():
-    req_date, r_num_target = request.args.get('date'), request.args.get('num', default=1, type=int)
-    target_year = req_date[:4] if req_date else str(datetime.now().year)
-    
-    available_dates, venue_data_map, _, _ = get_schedule_data(target_year)
-    
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    future_dates = [d for d in available_dates if d >= today_str]
-    date = req_date if req_date and req_date in available_dates else (future_dates[0] if future_dates else (available_dates[-1] if available_dates else today_str))
+    race_date = parse_full_date(request.args.get('date') or '') or datetime.now().date()
+    venue = request.args.get('venue', '')
+    r_num_target = request.args.get('num', default=1, type=int)
 
-    current_day_venues = venue_data_map.get(date, {})
-    default_venue = list(current_day_venues.keys())[0] if current_day_venues else ''
-    venue = request.args.get('venue', default_venue)
-
-    target_race_data, search_text = None, "開催情報が見つかりません"
-    venue_info = current_day_venues.get(venue)
-    
-    race_data = f"{target_year}_Race_Data"
-    if venue_info:
-        try:
-            wb = gc.open(race_data)
-            target_sheet_name = f"{venue_info['id']}回{venue}"
-            ws = wb.worksheet(target_sheet_name)
-            search_text = f"{venue_info['id']}回{venue}{venue_info['day']}日"
-            races_info = get_race_info_from_sheet(ws.get_all_values(), search_text, target_r_num=r_num_target)
-            target_race_data = races_info.get(r_num_target)
-        except Exception: pass
+    target_race_data = find_program_race(race_date, venue, r_num_target)
+    search_text = f"{target_race_data['kai']}回{venue}{target_race_data['nichi']}日" if target_race_data else "番組が見つかりません"
 
     available_horses_with_class = []
     if target_race_data:
-        all_results_dict = load_all_horse_results()
-        race_req_class = judge_required_class(target_race_data['condition'])
-        
         for h in get_all_horses():
-            if len(h) <= H_STABLE: continue
-            horse_birthday_str = h[H_BIRTH]
-
-            try:
-                b_year = date_year(horse_birthday_str)
-                calculated_age = int(target_year) - b_year
-            except:
-                calculated_age = "不明"
-
-            current_class = get_class_from_results(h[H_NAME], date, all_results_dict, horse_birthday_str)
-
-            if race_req_class == "新馬":
-                if current_class == "新馬":
-                    available_horses_with_class.append({
-                        'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
-                    })
-            elif race_req_class == "未勝利":
-                if current_class in ["新馬", "未勝利"]:
-                    available_horses_with_class.append({
-                        'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
-                    })
-            elif race_req_class == "オープン" or current_class == race_req_class:
+            if len(h) <= H_STABLE or str(h[H_STATUS] if len(h) > H_STATUS else '').strip() == '抹消':
+                continue
+            b_year = date_year(h[H_BIRTH])
+            calculated_age = race_date.year - b_year if b_year else "不明"
+            current_class = horse_class_of(h)
+            if not age_allowed(target_race_data['category'], calculated_age):
+                continue
+            if target_race_data['jump'] or class_allowed(target_race_data['class'], current_class):
                 available_horses_with_class.append({
-                    'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age, 'class': current_class, 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
+                    'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age,
+                    'class': current_class or '不明', 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
                 })
-                
-    entered_horses = []
-    entry_file = f'{target_year}_entry_{venue}'
-    try:
-        wb_entry = gc.open(entry_file)
-        ws_entry = wb_entry.worksheet(search_text)
-        data = ws_entry.get_all_values()
-        
-        rank_col, num_col, name_col, status_col = (r_num_target - 1)*4, (r_num_target - 1)*4 + 1, (r_num_target - 1)*4 + 2, (r_num_target - 1)*4 + 3
-        if len(data) > 2:
-            for row in data[2:]:
-                if name_col < len(row) and row[name_col]:
-                    entered_horses.append({
-                        'rank': row[rank_col] if rank_col < len(row) else "",
-                        'num': row[num_col] if num_col < len(row) else "",
-                        'name': row[name_col], 
-                        'status': row[status_col] if status_col < len(row) else ""
-                    })
-    except Exception: pass
 
     return render_template('race_detail.html',
-                           date=date, venue=venue, race=target_race_data,
-                           available_dates=available_dates, available_horses=available_horses_with_class,
-                           all_horses=get_all_horses(), entered_horses=entered_horses, search_text=search_text)
+                           date=race_date.isoformat(), venue=venue, race=target_race_data,
+                           available_horses=available_horses_with_class,
+                           all_horses=get_all_horses(),
+                           entered_horses=read_entries(race_date, venue, r_num_target) if target_race_data else [],
+                           search_text=search_text)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required
@@ -5258,70 +5182,31 @@ def api_relatives():
 @app.route('/api/available_races')
 def api_available_races():
     horse_name = request.args.get('horse_name')
-    date_str = request.args.get('date') # YYYY-MM-DD
-    
-    if not horse_name or not date_str:
+    race_date = parse_full_date(request.args.get('date') or '')
+    if not horse_name or not race_date:
         return {"error": "パラメータが不足しています。"}, 400
-        
-    all_horses = get_all_horses()
-    horse = next((h for h in all_horses if len(h) > 0 and h[0] == horse_name), None)
+
+    horse = next((h for h in get_all_horses() if len(h) > 0 and (h[0] == horse_name or row_matches_name(h, horse_name))), None)
     if not horse:
         return {"error": "馬が見つかりませんでした。"}, 404
-        
-    horse_birthday_str = horse[H_BIRTH]
-    all_results_dict = load_all_horse_results()
-    
-    # 対象日時点での馬のクラスを取得
-    current_class = get_class_from_results(horse_name, date_str, all_results_dict, horse_birthday_str)
-    
-    target_year = date_str[:4]
-    _, venue_data_map, _, _ = get_schedule_data(target_year)
-    
-    current_day_venues = venue_data_map.get(date_str, {})
-    if not current_day_venues:
-        return {"races": [], "message": "指定された日に開催されるレースはありません。"}, 200
-        
-    race_data = f"{target_year}_Race_Data"
+    current_class = horse_class_of(horse)
+    birth_year = date_year(horse[H_BIRTH]) if len(horse) > H_BIRTH else None
+    age = race_date.year - birth_year if birth_year else None
+
+    day = get_program_for_dates([race_date]).get(race_date, {})
+    if not day:
+        return {"races": [], "message": "指定された日の番組はありません（番組が取り込まれていない場合は「データ更新」の「開催日程（番組）インポート」から取り込んでください）。"}, 200
+
     available_races = []
-    
-    try:
-        wb = gc.open(race_data)
-        for venue, venue_info in current_day_venues.items():
-            target_sheet_name = f"{venue_info['id']}回{venue}"
-            try:
-                ws = wb.worksheet(target_sheet_name)
-                search_text = f"{venue_info['id']}回{venue}{venue_info['day']}日"
-                races_info = get_race_info_from_sheet(ws.get_all_values(), search_text)
-                
-                for r_num, race in races_info.items():
-                    race_req_class = judge_required_class(race['condition'])
-                    
-                    # 出走可能かどうかのクラス判定
-                    allowed = False
-                    if race_req_class == "新馬" and current_class == "新馬":
-                        allowed = True
-                    elif race_req_class == "未勝利" and current_class in ["新馬", "未勝利"]:
-                        allowed = True
-                    elif race_req_class == "オープン":
-                        allowed = True
-                    elif race_req_class == current_class:
-                        allowed = True
-                        
-                    if allowed:
-                        available_races.append({
-                            'venue': venue,
-                            'race_num': r_num,
-                            'name': race.get('name', '-'),
-                            'condition': race.get('condition', '-'),
-                            'course': race.get('course', '-'),
-                            'time': race.get('time', '')
-                        })
-            except Exception:
+    for venue, races in day.items():
+        for r_num, race in sorted(races.items()):
+            if race['jump'] or not class_allowed(race['class'], current_class) or not age_allowed(race['category'], age):
                 continue
-    except Exception as e:
-        return {"error": f"レースデータの取得に失敗しました: {e}"}, 500
-        
-    return {"races": available_races, "current_class": current_class}, 200
+            available_races.append({
+                'venue': venue, 'race_num': r_num, 'name': race['name'] or '-',
+                'condition': race['condition'], 'course': race['course'], 'time': race['time']
+            })
+    return {"races": available_races, "current_class": current_class or '不明'}, 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001 ,use_reloader=False)
