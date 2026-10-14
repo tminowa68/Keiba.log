@@ -831,8 +831,8 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
     const detailSelect = document.getElementById('detail_select');
     if (!regionSelect || !detailSelect) return;
 
-    // 産地（第1階層）の選択肢を生成
-    regionSelect.innerHTML = '';
+    // 産地（第1階層）の選択肢を生成（初期値は「産地を選択してください」）
+    regionSelect.innerHTML = '<option value="" disabled selected>-- 産地を選択してください --</option>';
     for (const region in locationData) {
         const opt = document.createElement('option');
         opt.value = region;
@@ -861,7 +861,7 @@ function initParentBirthplaceFields(monthSelectId, hasEmptyOption) {
         const birthPeriod = getCurrentBirthPeriod();
 
         // 毎回リセットし、初期選択肢を追加
-        detailSelect.innerHTML = '<option value="" disabled selected>-- 産地を選択してください --</option>';
+        detailSelect.innerHTML = '<option value="" disabled selected>-- 地域を選択してください --</option>';
         
         let hasDetails = false;
 
