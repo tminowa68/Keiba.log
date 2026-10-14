@@ -1,5 +1,5 @@
 import sqlite3
-import re, os
+import re, os, time
 import json
 import requests
 import email
@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+import race_results as RR
 
 # --- gspread関連のインポート ---
 import gspread
@@ -1662,6 +1663,486 @@ def fetch_nar_horse_info(url):
     resp.raise_for_status()
     return parse_nar_horse_page(BeautifulSoup(resp.content, 'html.parser'))
 
+# ==============================================================================
+# レース結果（年ごとのファイル「{年}_レース結果」：レースシート＝1レース1行、成績シート＝1頭1行）
+# ==============================================================================
+RESULT_BOOK_NAME = "{year}_レース結果"
+RACE_SHEET = "レース"
+RUNNER_SHEET = "成績"
+RACE_SHEET_COLUMNS = ["レースID", "年月日", "場", "回", "日", "R", "レース名", "グレード", "区分", "年齢条件",
+                      "クラス", "記号", "重量", "距離", "コース", "コース詳細", "発走時刻", "天候", "芝", "ダート",
+                      "頭数", "1着本賞金", "2着本賞金", "3着本賞金", "4着本賞金", "5着本賞金", "JRAのURL"]
+RUNNER_SHEET_COLUMNS = ["レースID", "年月日", "場", "R", "レース名", "グレード", "区分", "年齢条件", "クラス",
+                        "記号", "距離", "コース", "馬場", "頭数", "着順", "枠", "馬番", "馬名", "馬ID", "性別",
+                        "年齢", "斤量", "減量", "騎手", "タイム", "着差", "通過順", "上り", "馬体重", "増減",
+                        "調教師", "人気", "本賞金"]
+RUNNER_COL = {name: i for i, name in enumerate(RUNNER_SHEET_COLUMNS)}
+_result_book_keys = {}   # 年 → スプレッドシートのID（開くたびにファイルを検索しないよう覚えておく）
+_result_book_missing = {}  # 年 → 見つからなかった時刻（無いファイルを何度も探さないよう、しばらく覚えておく）
+RESULT_BOOK_MISSING_TTL = 600
+
+def get_result_book(year, create=False):
+    """年ごとのレース結果のファイルを開く。無ければ create=True の時だけ作成し、Horse_Dataと同じ人に共有する。
+    無くて作らない場合は None を返す"""
+    year = int(year)
+    if year in _result_book_keys:
+        try:
+            return gc.open_by_key(_result_book_keys[year])
+        except Exception:
+            _result_book_keys.pop(year, None)
+    name = RESULT_BOOK_NAME.format(year=year)
+    if not create and time.time() - _result_book_missing.get(year, 0) < RESULT_BOOK_MISSING_TTL:
+        return None
+    try:
+        book = gc.open(name)
+    except gspread.SpreadsheetNotFound:
+        if not create:
+            _result_book_missing[year] = time.time()
+            return None
+        try:
+            book = gc.create(name)
+        except Exception as e:
+            raise RuntimeError(
+                f"「{name}」を作成できませんでした（{e}）。Googleドライブで「{name}」という名前のスプレッドシートを作り、"
+                f"Horse_Dataと同じように共有してから、もう一度実行してください。")
+        # Horse_Dataを共有している人にも同じように共有する（作成したファイルを見られるように）
+        try:
+            for perm in gc.open(horse_data).list_permissions():
+                if perm.get('type') == 'user' and perm.get('emailAddress') and perm.get('role') in ('owner', 'writer'):
+                    book.share(perm['emailAddress'], perm_type='user', role='writer', notify=False)
+        except Exception as e:
+            print(f"レース結果のファイルの共有に失敗しました: {e}")
+    _result_book_keys[year] = book.id
+    _result_book_missing.pop(year, None)
+    return book
+
+def _result_sheet(book, title, columns):
+    try:
+        ws = book.worksheet(title)
+    except gspread.WorksheetNotFound:
+        if title == RACE_SHEET and len(book.worksheets()) == 1 and book.sheet1.title in ('Sheet1', 'シート1'):
+            ws = book.sheet1
+            ws.update_title(title)
+        else:
+            ws = book.add_worksheet(title=title, rows=1000, cols=len(columns))
+        ensure_columns(ws, len(columns))
+        ws.update(range_name='A1', values=[columns])
+    return ws
+
+_result_sheets_cache = {}   # 年 → (レースシート, 成績シート)
+_imported_ids_cache = {}    # 年 → (読み込んだ時刻, 取り込み済みのレースIDの集合)
+IMPORTED_IDS_TTL = 600
+
+def result_sheets(year, create=False):
+    """年ごとのファイルのレースシート・成績シートを返す（ファイルが無く作らない場合は None）。
+    続けて取り込む時にシートを開き直さない（Google SheetsのAPIの回数を減らす）よう覚えておく"""
+    year = int(year)
+    if year in _result_sheets_cache:
+        return _result_sheets_cache[year]
+    book = get_result_book(year, create=create)
+    if not book:
+        return None
+    sheets = (_result_sheet(book, RACE_SHEET, RACE_SHEET_COLUMNS),
+              _result_sheet(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS))
+    _result_sheets_cache[year] = sheets
+    return sheets
+
+def forget_result_sheets(year):
+    _result_sheets_cache.pop(int(year), None)
+    _imported_ids_cache.pop(int(year), None)
+    _result_book_keys.pop(int(year), None)
+
+def with_sheets_retry(func, *args, **kwargs):
+    """Google SheetsのAPIの回数制限（429）にかかった場合は、少し待ってやり直す"""
+    for attempt in range(4):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status != 429 or attempt == 3:
+                raise
+            time.sleep(15 * (attempt + 1))
+
+def race_sheet_row(race):
+    prizes = list(race.get('prizes') or []) + [''] * 5
+    return [race['race_id'], race['date'].strftime('%Y%m%d'), race['venue'], race['kai'], race['nichi'], race['num'],
+            race['name'], race['grade'], '障害' if race['jump'] else '平地', race['category'], race['class'],
+            race['rule'], race['weight_rule'], race['distance'], race['surface'], race['course_detail'], race['time'],
+            race['weather'], race['turf'], race['dirt'], race['runners_count']] + prizes[:5] + [race['url']]
+
+def runner_sheet_row(race, r):
+    going = race['turf'] if race['surface'] == '芝' else (race['dirt'] if race['surface'] == 'ダ'
+                                                         else '/'.join(x for x in (race['turf'], race['dirt']) if x))
+    return [race['race_id'], race['date'].strftime('%Y%m%d'), race['venue'], race['num'], race['name'], race['grade'],
+            '障害' if race['jump'] else '平地', race['category'], race['class'], race['rule'], race['distance'],
+            race['surface'], going, race['runners_count'], r['place'], r['waku'], r['num'], r['name'], r['horse_id'],
+            r['sex'], r['age'], r['weight'], r['mark'], r['jockey'], r['time'], r['margin'], r['corners'], r['last'],
+            r['body_weight'], r['body_diff'], r['trainer'], r['pop'], r['prize']]
+
+def save_race_results(parsed_list, overwrite=False):
+    """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
+    (取り込んだレース, 飛ばしたレース) のラベル一覧を返す"""
+    saved, skipped = [], []
+    by_year = {}
+    for parsed in parsed_list:
+        by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
+    for year, items in sorted(by_year.items()):
+        try:
+            ws_race, ws_runner = result_sheets(year, create=True)
+            existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
+        except Exception:
+            # シートが消された場合などに備えて、覚えているシートを忘れてから開き直す
+            forget_result_sheets(year)
+            ws_race, ws_runner = result_sheets(year, create=True)
+            existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
+        race_rows, runner_rows, replace_ids, this_time = [], [], set(), set()
+        for parsed in items:
+            race = parsed['race']
+            label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R"
+            if not race['race_id']:
+                skipped.append(f"{label}（レースIDを読み取れません）")
+                continue
+            if race['race_id'] in this_time:
+                continue   # 同じレースが2回指定された場合
+            if race['race_id'] in existing and not overwrite:
+                skipped.append(f"{label}（取り込み済み）")
+                continue
+            if race['race_id'] in existing:
+                replace_ids.add(race['race_id'])
+            existing.add(race['race_id'])
+            this_time.add(race['race_id'])
+            race_rows.append(race_sheet_row(race))
+            runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
+            saved.append(label)
+        if replace_ids:
+            # 入れ替えるレースの古い行を消す（下の行から消して行番号がずれないようにする）
+            # 同じレースの行は続いているため、続いている行はまとめて消す
+            for ws in (ws_race, ws_runner):
+                ids = ws.col_values(1)
+                blocks = []
+                for idx in range(2, len(ids) + 1):
+                    if ids[idx - 1] in replace_ids:
+                        if blocks and blocks[-1][1] == idx - 1:
+                            blocks[-1][1] = idx
+                        else:
+                            blocks.append([idx, idx])
+                for start, end in reversed(blocks):
+                    ws.delete_rows(start, end)
+        # すべて文字列のまま書き込む（数字の列も文字列にしておくと、成績シートのクエリで型が混ざらない）
+        if race_rows:
+            with_sheets_retry(ws_race.append_rows, [[str(v) for v in row] for row in race_rows],
+                              value_input_option='RAW')
+        if runner_rows:
+            with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in runner_rows],
+                              value_input_option='RAW')
+        _imported_ids_cache[year] = (time.time(), existing)
+    return saved, skipped
+
+def fetch_jra_html(url, cname=None):
+    """JRAのページを取得してHTMLを返す（cname を指定すると、ページのボタンと同じようにPOSTで開く）"""
+    from urllib.parse import urlparse
+    if not any(urlparse(url).netloc.endswith(h) for h in JRA_ALLOWED_HOSTS):
+        raise ValueError("JRAのURLではありません。")
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; keiba.log/1.0)"}
+    if cname:
+        resp = requests.post(url, data={'cname': cname}, headers=headers, timeout=20)
+    else:
+        resp = requests.get(url, headers=headers, timeout=20)
+    resp.raise_for_status()
+    return resp.content.decode('cp932', errors='replace')
+
+def fetch_race_results(urls):
+    """レース結果のURLの一覧を取得して読み取る。(読み取った結果, 失敗の一覧) を返す"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(url):
+        try:
+            return RR.parse_race_result_page(fetch_jra_html(url), url=url), None
+        except Exception as e:
+            return None, f"{url}（{e}）"
+
+    parsed, failed = [], []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for result, err in pool.map(_one, urls):
+            if result:
+                parsed.append(result)
+            if err:
+                failed.append(err)
+    return parsed, failed
+
+def query_runner_rows(book, horse_name, horse_id):
+    """成績シートから、馬IDまたは馬名が一致する行だけを取り出す（Googleのクエリ機能で絞り込み、全行は読まない）"""
+    import csv, io
+    conds = []
+    if horse_id:
+        conds.append(f"{col_letter(RUNNER_COL['馬ID'])} = \"{horse_id}\"")
+    if horse_name and '"' not in horse_name:
+        conds.append(f"{col_letter(RUNNER_COL['馬名'])} = \"{horse_name}\"")
+    if not conds:
+        return []
+    try:
+        session = gc.http_client.session
+        resp = session.get(f"https://docs.google.com/spreadsheets/d/{book.id}/gviz/tq",
+                           params={'tqx': 'out:csv', 'sheet': RUNNER_SHEET, 'headers': '1',
+                                   'tq': 'select * where ' + ' or '.join(conds)}, timeout=20)
+        resp.raise_for_status()
+        rows = list(csv.reader(io.StringIO(resp.content.decode('utf-8'))))
+        return [r for r in rows[1:] if r and r[0]]
+    except Exception as e:
+        # クエリが使えない場合は成績シートを全部読んで絞り込む
+        print(f"成績シートのクエリに失敗したため全件を読み込みます: {e}")
+        rows = book.worksheet(RUNNER_SHEET).get_all_values()[1:]
+        return [r for r in rows if (horse_id and len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] == horse_id)
+                or (horse_name and len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] == horse_name)]
+
+def get_horse_race_results(horse_name, horse_id='', birth_year=None):
+    """競走馬の出走成績（新しい順）と、本賞金・収得賞金・クラスのまとめを返す"""
+    this_year = datetime.now().year
+    first_year = (birth_year + 2) if birth_year else 2017
+    results = []
+    for year in range(max(first_year, 2000), this_year + 1):
+        book = get_result_book(year)
+        if not book:
+            continue
+        for r in query_runner_rows(book, horse_name, horse_id):
+            r = list(r) + [''] * len(RUNNER_SHEET_COLUMNS)
+            c = lambda name: str(r[RUNNER_COL[name]]).strip()
+            race_date = parse_full_date(c('年月日'))
+            if not race_date:
+                continue
+            results.append({
+                'race_id': c('レースID'), 'date': race_date, 'date_label': format_date_jp(race_date, weekday=True),
+                'venue': c('場'), 'num': c('R'), 'name': c('レース名'), 'grade': c('グレード'),
+                'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': c('記号'),
+                'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
+                'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
+                'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
+                'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
+                'prize': int(c('本賞金').replace(',', '')) if c('本賞金').replace(',', '').isdigit() else 0,
+            })
+    # 同じレースが重なって見つかった場合（馬IDと馬名の両方で一致）は1つにする
+    unique = {}
+    for r in results:
+        unique.setdefault(r['race_id'] or (r['date'], r['venue'], r['num']), r)
+    results = sorted(unique.values(), key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0),
+                     reverse=True)
+    summary = RR.summarize_results(results, birth_year=birth_year)
+    return results, summary
+
+def imported_race_ids(year):
+    """その年のレースシートに取り込み済みのレースIDの集合（しばらくの間は覚えておいた結果を返す）"""
+    year = int(year)
+    cached = _imported_ids_cache.get(year)
+    if cached and time.time() - cached[0] < IMPORTED_IDS_TTL:
+        return cached[1]
+    try:
+        sheets = result_sheets(year)
+        ids = set(with_sheets_retry(sheets[0].col_values, 1)[1:]) if sheets else set()
+    except Exception:
+        forget_result_sheets(year)
+        sheets = result_sheets(year)
+        ids = set(with_sheets_retry(sheets[0].col_values, 1)[1:]) if sheets else set()
+    if sheets:
+        _imported_ids_cache[year] = (time.time(), ids)
+    return ids
+
+JRA_RESULT_MENU_ACTION = "https://www.jra.go.jp/JRADB/accessS.html"
+JRA_RESULT_MENU_CNAME = "pw01skl00999999/B3"   # 競馬メニューの「レース結果」（開催選択のページ）
+
+def fetch_live_kaisai_html():
+    """JRAのサイトから「レース結果」の開催選択のページを取得する"""
+    action, cname = JRA_RESULT_MENU_ACTION, JRA_RESULT_MENU_CNAME
+    try:
+        # 競馬メニューの「レース結果」のリンクと同じ操作で開く（リンク先が変わっていても追従できるように）
+        menu = BeautifulSoup(fetch_jra_html("https://www.jra.go.jp/keiba/"), 'html.parser')
+        for a in menu.find_all('a', onclick=True):
+            m = re.search(r"doAction\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)", a['onclick'])
+            if m and a.get_text(strip=True) == 'レース結果' and 'accessS' in m.group(1):
+                action, cname = 'https://www.jra.go.jp' + m.group(1), m.group(2)
+                break
+    except Exception as e:
+        print(f"競馬メニューの取得に失敗したため、既定のリンク先を使います: {e}")
+    return fetch_jra_html(action, cname=cname)
+
+def kaisai_day_key(label, race_date):
+    """開催選択のページの「4回東京2日」と日付から、レースIDの開催日の部分を作る"""
+    m = re.fullmatch(r'(\d+)回(\S+?)(\d+)日', label or '')
+    code = next((c for c, v in RR.VENUES.items() if m and v == m.group(2)), None)
+    if not m or not code or not race_date:
+        return ''
+    return f"{code}{race_date.year}{int(m.group(1)):02d}{int(m.group(3)):02d}{race_date.strftime('%Y%m%d')}"
+
+def scan_result_pages(html_list):
+    """アップロード（またはJRAから取得）したページから、取り込む開催日の一覧を作る"""
+    days = {}
+    today = datetime.now().date()
+    for html in html_list:
+        soup = BeautifulSoup(html, 'html.parser')
+        for item in RR.parse_kaisai_page(soup, today=today):
+            key = kaisai_day_key(item['label'], item['date'])
+            if key:
+                days.setdefault(key, {'key': key, 'url': ''})
+        for key, urls in RR.result_urls_by_day(soup).items():
+            days.setdefault(key, {'key': key, 'url': ''})
+            if not days[key]['url']:
+                days[key]['url'] = urls[0]
+    if not days:
+        return []
+    imported = {}
+    for key in days:
+        year = int(key[2:6])
+        if year not in imported:
+            imported[year] = {}
+            for rid in imported_race_ids(year):
+                k = RR.day_key(rid)
+                imported[year][k] = imported[year].get(k, 0) + 1
+    result = []
+    for key, d in days.items():
+        rid = f"pw01sde10{key[:10]}00{key[10:]}"
+        info = RR.parse_race_id(rid)
+        if not info:
+            continue
+        result.append({'key': key, 'url': d['url'], 'date': info['date'].isoformat(),
+                       'label': RR.day_label(rid), 'imported': imported[int(key[2:6])].get(key, 0)})
+    result.sort(key=lambda d: (d['date'], d['key']), reverse=True)
+    return result
+
+def import_result_day(url='', via='', key='', overwrite=False):
+    """1開催日（1競馬場）の全レースの結果を取得して保存する。
+    url が無い場合は、同じ週の別の日のレース結果のページ（via）から、その日へのリンクを探す"""
+    discovered = {}
+
+    def _discover(html):
+        for k, urls in RR.result_urls_by_day(html).items():
+            discovered.setdefault(k, urls[0])
+
+    if not url:
+        if not via:
+            raise ValueError('この開催日のレース結果へのリンクが見つかりません。')
+        via_html = fetch_jra_html(via)
+        _discover(via_html)
+        url = discovered.get(key, '')
+        if not url:
+            return {'found': False, 'discovered': discovered}
+    html = fetch_jra_html(url)
+    _discover(html)
+    first = RR.parse_race_result_page(html, url=url)
+    key = RR.day_key(first['race']['race_id']) or key
+    day_urls = RR.result_urls_by_day(html).get(key) or [url]
+    existing = imported_race_ids(first['race']['date'].year)
+    todo = [u for u in day_urls if RR.race_id_from_cname(u) != first['race']['race_id']
+            and (overwrite or RR.race_id_from_cname(u) not in existing)]
+    parsed, failed = fetch_race_results(todo)
+    if overwrite or first['race']['race_id'] not in existing:
+        parsed.insert(0, first)
+    already = len([u for u in day_urls if RR.race_id_from_cname(u) in existing]) if not overwrite else 0
+    saved, skipped = save_race_results(parsed, overwrite=overwrite)
+    return {'found': True, 'key': key, 'label': RR.day_label(first['race']['race_id']), 'races': len(day_urls),
+            'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
+            'discovered': discovered}
+
+def race_link_info(url):
+    """レース結果のURLから、表示用の情報と取り込み済みかどうかを返す"""
+    rid = RR.race_id_from_cname(url)
+    info = RR.parse_race_id(rid)
+    if not info:
+        return None
+    d = info['date']
+    return {'url': url, 'race_id': rid, 'day_key': RR.day_key(rid), 'date': d.isoformat(),
+            'label': f"{d.year}年{d.month}月{d.day}日 {info['venue']}{info['num']}R",
+            'imported': rid in imported_race_ids(d.year)}
+
+@app.route('/api/race_results/horse_targets', methods=['POST'])
+@login_required
+def api_race_results_horse_targets():
+    """JRAのURLが登録されている馬の一覧（Horses・Sire・Damシートから、指定されたシートのみ）"""
+    data = request.get_json(silent=True) or {}
+    wanted = set(data.get('sheets') or ['Horses'])
+    keyword = str(data.get('keyword') or '').strip()
+    sh = gc.open(horse_data)
+    targets, seen = [], set()
+    for title, name_col, en_col, url_col in (('Horses', H_NAME, H_NAME_EN, H_JRA_URL),
+                                             ('Sire', P_NAME, P_NAME_EN, P_JRA_URL),
+                                             ('Dam', P_NAME, P_NAME_EN, P_JRA_URL)):
+        if title not in wanted:
+            continue
+        try:
+            rows = sh.worksheet(title).get_all_values()[1:]
+        except gspread.WorksheetNotFound:
+            continue
+        for r in rows:
+            url = r[url_col].strip() if len(r) > url_col else ''
+            if not url or 'jra.go.jp' not in url or url in seen:
+                continue
+            name = display_name_of_row(r) if title == 'Horses' else (
+                (r[name_col] if len(r) > name_col else '') or (r[en_col] if len(r) > en_col else ''))
+            if keyword and keyword not in name and keyword not in (r[en_col] if len(r) > en_col else ''):
+                continue
+            seen.add(url)
+            targets.append({'name': name, 'sheet': title, 'url': url})
+    return jsonify({'targets': targets})
+
+@app.route('/api/race_results/horse_races', methods=['POST'])
+@login_required
+def api_race_results_horse_races():
+    """JRAの競走馬情報のページの「出走レース」から、各レースのレース結果のURLと取り込み済みかどうかを返す"""
+    data = request.get_json(silent=True) or {}
+    try:
+        urls = RR.parse_horse_race_urls(fetch_jra_html(str(data.get('url') or '')))
+        races = [info for info in (race_link_info(u) for u in urls) if info]
+    except Exception as e:
+        return jsonify({'error': f'競走馬のページを読み取れませんでした: {e}'}), 400
+    return jsonify({'races': races})
+
+@app.route('/api/race_results/import_races', methods=['POST'])
+@login_required
+def api_race_results_import_races():
+    """指定したレースだけの結果を取得して保存する（同じ日の他のレースは取り込まない）"""
+    data = request.get_json(silent=True) or {}
+    urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:20]
+    overwrite = bool(data.get('overwrite'))
+    try:
+        if not overwrite:
+            urls = [u for u in urls if not (race_link_info(u) or {}).get('imported')]
+        parsed, failed = fetch_race_results(urls)
+        saved, skipped = save_race_results(parsed, overwrite=overwrite)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed})
+
+@app.route('/api/race_results/scan', methods=['POST'])
+@login_required
+def api_race_results_scan():
+    """開催選択・レース選択・レース結果のページ（アップロード）またはJRAのサイトから、取り込む開催日の一覧を返す"""
+    html_list = []
+    try:
+        if request.form.get('live') == '1':
+            html_list.append(fetch_live_kaisai_html())
+        else:
+            for f in request.files.getlist('race_files'):
+                if f and f.filename:
+                    html_list.append(_extract_html_from_upload(f.read()))
+            if not html_list:
+                return jsonify({'error': 'ファイルが選択されていません。'}), 400
+        days = scan_result_pages(html_list)
+    except Exception as e:
+        return jsonify({'error': f'ページの読み取りに失敗しました: {e}'}), 400
+    if not days:
+        return jsonify({'error': 'レース結果へのリンクが見つかりませんでした。JRAの「レース結果」の開催選択・'
+                                 'レース選択・レース結果のいずれかのページを指定してください。'}), 400
+    return jsonify({'days': days})
+
+@app.route('/api/race_results/import_day', methods=['POST'])
+@login_required
+def api_race_results_import_day():
+    data = request.get_json(silent=True) or {}
+    try:
+        result = import_result_day(url=data.get('url', ''), via=data.get('via', ''), key=data.get('key', ''),
+                                   overwrite=bool(data.get('overwrite')))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(result)
+
 @app.route('/api/fetch_nar_horse')
 @login_required
 def api_fetch_nar_horse():
@@ -1786,12 +2267,12 @@ LOCATION_DATA = {
             "浦河町", "えりも町", "荻伏村", "様似町", "様似村",
             "静内町", "新ひだか町", "新冠町", "新冠村", "日高町",
             "日高村", "平取町", "幌泉町", "幌泉村", "三石町",
-            "三石村", "門別町"
+            "三石村", "門別町", "門別村", "平取村"
         ],
         "胆振総合振興局": [
-            "厚真町", "安平町", "安平村", "虻田町", "追分町",
+            "厚真町", "厚真村", "安平町", "安平村", "虻田町", "追分町",
             "追分村", "白老町", "白老村", "伊達市", "伊達町",
-            "洞爺湖町", "洞爺村", "苫小牧市", "豊浦町", "登別市",
+            "洞爺湖町", "洞爺村", "苫小牧市", "苫小牧町", "豊浦町", "豊浦村", "登別市",
             "登別町", "早来町", "早来村", "穂別町", "穂別村",
             "幌別町", "幌別村", "むかわ町", "鵡川町", "鵡川村",
             "室蘭市"
@@ -1800,7 +2281,7 @@ LOCATION_DATA = {
             "池田町", "帯広市", "清水町", "清水村", "士幌町", "士幌村", "大樹町", "大樹村", "幕別町", "幕別村"
         ],
         "石狩振興局": [
-            "千歳市"
+            "千歳市", "千歳町"
         ],
         "渡島総合振興局": [
             "函館市", "森町"
@@ -3768,6 +4249,11 @@ def horse_detail(name, active_tab):
         # SQLiteの "ORDER BY race_date DESC, race_num DESC" と同じようにソート
         entry_rows.sort(key=lambda x: (x['race_date'], x['race_num']), reverse=True)
         
+        # 結果はレース結果のファイルから表示するため、ここでは今日以降（出走予定）のレースだけにする
+        today = datetime.now().date()
+        entry_rows = [row for row in entry_rows
+                      if (parse_full_date(row['race_date']) or date.min) >= today]
+
         for row in entry_rows:
             r_date = row['race_date']
             r_venue = row['venue']
@@ -3902,9 +4388,20 @@ def horse_detail(name, active_tab):
             ggranddam_node.get('birth_year') if ggranddam_node else None
         )
 
+    # 出走履歴（年ごとのレース結果のファイルから、馬IDまたは馬名で探す）と本賞金・収得賞金・クラス
+    race_results, race_summary_data = [], RR.summarize_results([])
+    if active_tab == 'races':
+        try:
+            horse_id = RR.horse_id_from_url(horse[H_JRA_URL] if len(horse) > H_JRA_URL else '')
+            race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
+        except Exception as e:
+            print(f"レース結果の読み込みエラー: {e}")
+
     return render_template('horse_detail.html', 
                            horse=horse, 
                            horse_races=horse_races,
+                           race_results=race_results,
+                           race_summary_data=race_summary_data,
                            family_table1=family_table1,
                            family_table2=family_table2,
                            sire_info=sire_info, 

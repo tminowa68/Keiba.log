@@ -75,4 +75,288 @@
         </div>
     </form>
 </section>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>レース結果 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの「レース結果」のページから、出走した全馬の成績を年ごとのファイル（例：「2026_レース結果」）に記録します。<br>
+        ・「JRAから開催一覧を取得」：JRAのサイトから直近の開催の一覧を取得します。<br>
+        ・ファイルから読み込む：JRAの「レース結果」の<strong>開催選択</strong>・<strong>レース選択</strong>・<strong>レース結果</strong>のいずれかのページを保存したファイル（.mhtml／.html）を指定します（複数可）。
+        レース結果のページ1つで、同じ週の全開催日を取り込めます。<br>
+        取り込む開催日を選んで「取り込み実行」を押すと、1日（1競馬場）ずつ全レースの結果を取得します。取り込み済みのレースは飛ばします。
+    </p>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:15px;">
+        <button type="button" id="rr-live-btn" class="rr-btn">JRAから開催一覧を取得</button>
+        <span style="color:#888;">または</span>
+        <input type="file" id="rr-files" accept=".mhtml,.mht,.html,.htm" multiple>
+        <button type="button" id="rr-scan-btn" class="rr-btn">ファイルから読み込む</button>
+    </div>
+    <div id="rr-message" style="margin-top:10px; font-size:0.9em;"></div>
+
+    <div id="rr-days-box" style="display:none; margin-top:15px;">
+        <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; margin-bottom:8px; font-size:0.9em;">
+            <label><input type="checkbox" id="rr-check-all"> すべて選択</label>
+            <label><input type="checkbox" id="rr-overwrite"> 取り込み済みのレースも取得し直す</label>
+        </div>
+        <table class="rr-days-table">
+            <thead><tr><th></th><th>開催日</th><th>取り込み済み</th><th>結果</th></tr></thead>
+            <tbody id="rr-days"></tbody>
+        </table>
+        <div style="margin-top:15px;">
+            <button type="button" id="rr-import-btn" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">取り込み実行</button>
+        </div>
+    </div>
+</section>
+
+<style>
+    .rr-btn { background:#2196F3; color:#fff; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; }
+    .rr-btn:disabled, #rr-import-btn:disabled { opacity:0.5; cursor:default; }
+    .rr-days-table { border-collapse:collapse; font-size:0.9em; width:100%; max-width:640px; }
+    .rr-days-table th, .rr-days-table td { border:1px solid #ddd; padding:4px 8px; text-align:left; }
+    .rr-days-table th { background:#f5f5f5; color:#333; }
+    .rr-days-table td:first-child, .rr-days-table td:nth-child(3) { text-align:center; }
+    .rr-ok { color:#2e7d32; }
+    .rr-ng { color:#c62828; }
+</style>
+
+<script>
+(function() {
+    let days = [];   // {key, url, date, label, imported, status}
+    const $ = id => document.getElementById(id);
+
+    function message(text, isError) {
+        $('rr-message').textContent = text;
+        $('rr-message').style.color = isError ? '#c62828' : '#333';
+    }
+
+    function setBusy(busy) {
+        ['rr-live-btn', 'rr-scan-btn', 'rr-import-btn'].forEach(id => $(id).disabled = busy);
+    }
+
+    function render() {
+        const tbody = $('rr-days');
+        tbody.innerHTML = '';
+        days.forEach((d, i) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td><input type="checkbox" class="rr-day" data-i="${i}" ${d.checked ? 'checked' : ''}></td>`
+                + `<td>${d.label}</td><td>${d.imported ? d.imported + 'レース' : '－'}</td>`
+                + `<td class="${d.ok === false ? 'rr-ng' : 'rr-ok'}">${d.status || ''}</td>`;
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('.rr-day').forEach(cb => cb.addEventListener('change', () => {
+            days[cb.dataset.i].checked = cb.checked;
+        }));
+        $('rr-days-box').style.display = days.length ? '' : 'none';
+    }
+
+    async function scan(formData) {
+        setBusy(true);
+        message('読み込んでいます...');
+        try {
+            const res = await fetch('/api/race_results/scan', { method: 'POST', body: formData });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || '読み込みに失敗しました。');
+            days = data.days.map(d => Object.assign(d, { checked: !d.imported }));
+            message(`${days.length}日分の開催が見つかりました。取り込む開催日を選んでください。`);
+            render();
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    $('rr-live-btn').addEventListener('click', () => {
+        const fd = new FormData();
+        fd.append('live', '1');
+        scan(fd);
+    });
+    $('rr-scan-btn').addEventListener('click', () => {
+        const files = $('rr-files').files;
+        if (!files.length) { message('ファイルを選択してください。', true); return; }
+        const fd = new FormData();
+        for (const f of files) fd.append('race_files', f);
+        scan(fd);
+    });
+    $('rr-check-all').addEventListener('change', e => {
+        days.forEach(d => d.checked = e.target.checked);
+        render();
+    });
+
+    async function post(body) {
+        const res = await fetch('/api/race_results/import_day', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || '取り込みに失敗しました。');
+        return data;
+    }
+
+    // 取得したページにあったリンク（同じ週の各開催日）を、リンクが無い開催日に当てはめる
+    function applyDiscovered(discovered) {
+        days.forEach(d => { if (!d.url && discovered && discovered[d.key]) d.url = discovered[d.key]; });
+    }
+
+    // リンクが無い開催日は、前後3日以内（同じ週）の開催日のページからリンクを探す
+    function viaCandidates(day) {
+        const t = new Date(day.date).getTime();
+        return days.filter(d => d.url && d !== day && Math.abs(new Date(d.date).getTime() - t) <= 3 * 86400000)
+                   .map(d => d.url);
+    }
+
+    $('rr-import-btn').addEventListener('click', async () => {
+        const targets = days.filter(d => d.checked);
+        if (!targets.length) { message('取り込む開催日を選んでください。', true); return; }
+        const overwrite = $('rr-overwrite').checked;
+        setBusy(true);
+        let totalSaved = 0;
+        // リンクがある開催日を先に処理する（その結果からリンクが無い開催日のリンクが見つかる）
+        targets.sort((a, b) => (a.url ? 0 : 1) - (b.url ? 0 : 1));
+        for (let n = 0; n < targets.length; n++) {
+            const d = targets[n];
+            message(`取り込んでいます（${n + 1}／${targets.length}）：${d.label}`);
+            d.status = '取得中...'; d.ok = undefined; render();
+            try {
+                let data = null;
+                if (d.url) {
+                    data = await post({ url: d.url, key: d.key, overwrite });
+                } else {
+                    for (const via of viaCandidates(d)) {
+                        data = await post({ via, key: d.key, overwrite });
+                        applyDiscovered(data.discovered);
+                        if (data.found) break;
+                    }
+                }
+                if (!data || !data.found) throw new Error('この開催日のレース結果へのリンクが見つかりませんでした');
+                applyDiscovered(data.discovered);
+                totalSaved += data.saved;
+                d.imported = overwrite ? data.saved : (data.already + data.saved);
+                d.status = `${data.saved}レース取り込み` + (data.already ? `（${data.already}レースは取り込み済み）` : '')
+                    + (data.failed && data.failed.length ? `／${data.failed.length}レース失敗` : '');
+                d.ok = !(data.failed && data.failed.length);
+                d.checked = false;
+            } catch (e) {
+                d.status = e.message; d.ok = false;
+            }
+            render();
+        }
+        message(`完了しました（${totalSaved}レースを取り込みました）。`);
+        setBusy(false);
+    });
+})();
+</script>
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>登録馬の出走レースから取り込み</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        Horses・Sire・DamシートにJRAのURLが登録されている馬について、JRAの競走馬情報のページの「出走レース」から、
+        まだ取り込んでいないレースの結果を取り込みます（1頭ずつ順番に処理します）。<br>
+        「同じ日の全レースも取り込む」にすると、出走したレースと同じ日・同じ競馬場の全レースも取り込みます。
+    </p>
+    <div class="rh-options">
+        <div>対象：
+            <label><input type="checkbox" class="rh-sheet" value="Horses" checked> 競走馬（Horses）</label>
+            <label><input type="checkbox" class="rh-sheet" value="Sire"> 父馬（Sire）</label>
+            <label><input type="checkbox" class="rh-sheet" value="Dam"> 母馬（Dam）</label>
+        </div>
+        <div><label>馬名で絞り込む：<input type="text" id="rh-keyword" placeholder="空欄なら全頭" style="width:12em;"></label></div>
+        <div>
+            <label><input type="checkbox" id="rh-whole-day" checked> 同じ日の全レースも取り込む</label>
+            <label><input type="checkbox" id="rh-overwrite"> 取り込み済みのレースも取得し直す</label>
+            <label><input type="checkbox" id="rh-resume" checked> 前回の続きから（前回処理を終えた馬を飛ばす）</label>
+        </div>
+    </div>
+    <div style="margin-top:15px; display:flex; gap:10px;">
+        <button type="button" id="rh-start-btn" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">取り込み開始</button>
+        <button type="button" id="rh-stop-btn" class="rr-btn" style="background:#9e9e9e;" disabled>中止</button>
+    </div>
+    <div id="rh-message" style="margin-top:10px; font-size:0.9em; font-weight:bold;"></div>
+    <div id="rh-log" class="rh-log" style="display:none;"></div>
+</section>
+
+<style>
+    .rh-options { display:flex; flex-direction:column; gap:8px; font-size:0.9em; margin-top:10px; }
+    .rh-options label { margin-right:12px; white-space:nowrap; }
+    .rh-log { margin-top:10px; max-height:260px; overflow-y:auto; font-size:0.85em; line-height:1.6;
+              border:1px solid #ddd; border-radius:4px; padding:6px 10px; background:#fafafa; }
+    .rh-log .ng { color:#c62828; }
+    #rh-start-btn:disabled, #rh-stop-btn:disabled { opacity:0.5; cursor:default; }
+</style>
+
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    const DONE_KEY = 'keibaRaceImportDoneHorses';
+    let stopRequested = false;
+
+    function loadDone() {
+        try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]')); } catch (e) { return new Set(); }
+    }
+    function saveDone(set) {
+        try { localStorage.setItem(DONE_KEY, JSON.stringify([...set])); } catch (e) { /* 保存できなくても続ける */ }
+    }
+    function log(text, isError) {
+        const box = $('rh-log');
+        box.style.display = '';
+        const line = document.createElement('div');
+        line.textContent = text;
+        if (isError) line.className = 'ng';
+        box.appendChild(line);
+        while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    $('rh-stop-btn').addEventListener('click', () => {
+        stopRequested = true;
+        $('rh-message').textContent = '中止しています（処理中の馬が終わったら止まります）...';
+    });
+
+    $('rh-start-btn').addEventListener('click', async () => {
+        const sheets = [...document.querySelectorAll('.rh-sheet:checked')].map(cb => cb.value);
+        if (!sheets.length) { $('rh-message').textContent = '対象を選んでください。'; return; }
+        const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked, doneDays: new Set() };
+        stopRequested = false;
+        $('rh-start-btn').disabled = true; $('rh-stop-btn').disabled = false;
+        $('rh-log').innerHTML = '';
+        let done = $('rh-resume').checked ? loadDone() : new Set();
+        if (!$('rh-resume').checked) saveDone(done);
+        let total = { horses: 0, saved: 0, failed: 0 };
+        try {
+            $('rh-message').textContent = '対象の馬を読み込んでいます...';
+            const data = await RaceImport.post('/api/race_results/horse_targets',
+                                               { sheets: sheets, keyword: $('rh-keyword').value });
+            const targets = data.targets.filter(t => !done.has(t.url));
+            const skipped = data.targets.length - targets.length;
+            log(`対象：${data.targets.length}頭` + (skipped ? `（前回処理を終えた${skipped}頭を飛ばします）` : ''));
+            for (let i = 0; i < targets.length && !stopRequested; i++) {
+                const t = targets[i];
+                const head = `[${i + 1}/${targets.length}] ${t.name}`;
+                $('rh-message').textContent = `${head} を処理しています...`;
+                try {
+                    opts.log = text => { $('rh-message').textContent = `${head}：${text}`; };
+                    const res = await RaceImport.importHorse(t.url, opts);
+                    total.horses++; total.saved += res.saved; total.failed += res.failed;
+                    log(`${head}：出走${res.races}レース／取り込み${res.saved}レース`
+                        + (res.failed ? `／失敗${res.failed}レース` : ''), res.failed > 0);
+                    res.errors.forEach(msg => log(`　${msg}`, true));
+                    if (!res.failed) { done.add(t.url); saveDone(done); }
+                } catch (e) {
+                    log(`${head}：${e.message}`, true);
+                    if (RaceImport.isFatalError(e.message)) break;
+                }
+            }
+            const finished = !stopRequested;
+            $('rh-message').textContent = (finished ? '完了しました' : '中止しました')
+                + `（${total.horses}頭を処理、${total.saved}レースを取り込み`
+                + (total.failed ? `、${total.failed}レース失敗` : '') + '）。';
+            if (finished && !targets.some(t => !done.has(t.url))) saveDone(new Set());
+        } catch (e) {
+            $('rh-message').textContent = e.message;
+        } finally {
+            $('rh-start-btn').disabled = false; $('rh-stop-btn').disabled = true;
+        }
+    });
+})();
+</script>
 {% endblock %}

@@ -358,17 +358,102 @@
 
 {% if active_tab == 'races' %}
 <section id="races" class="entry-section active">
-    <div class="horse-status-container">
-        <div>現在のクラス： <span id="current-class" class="status-highlight">計算中...</span></div>
-        <div>合計収得賞金： <span id="total-prize">0</span> 万円</div>
+    {% macro race_summary(title, sm) %}
+        <div class="race-summary-box">
+            <div class="race-summary-title">{{ title }}</div>
+            <div>クラス：<span class="status-highlight">{{ sm['class'] }}</span></div>
+            <div>出走：{{ sm.starts }}回</div>
+            <div>本賞金：{{ "{:,}".format(sm.total_prize) }}万円</div>
+            <div>収得賞金：{{ "{:,}".format(sm.shutoku) }}万円</div>
+        </div>
+    {% endmacro %}
+    <div class="race-summary-container">
+        {{ race_summary('平地', race_summary_data.flat) }}
+        {% if race_summary_data.jump.starts %}{{ race_summary('障害', race_summary_data.jump) }}{% endif %}
     </div>
+    {% if race_summary_data.flat.kokyu %}
+    <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ "{:,}".format(race_summary_data.flat.kokyu.before) }}万円 → {{ "{:,}".format(race_summary_data.flat.kokyu.after) }}万円）</p>
+    {% endif %}
+    <p class="race-summary-note">JRAのレース結果を取り込んだレースから計算しています（取り込みは「データ更新」の「レース結果 インポート」から）。</p>
+    {% set jra_url = horse[13] if horse|length > 13 and horse[13] and 'jra.go.jp' in horse[13] else '' %}
+    {% if jra_url %}
+    <div class="race-import-box">
+        <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}">JRAの出走レースを取り込む</button>
+        <label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label>
+        <span id="race-import-status" class="race-import-status"></span>
+    </div>
+    {% endif %}
     <hr>
     <div class="race-list-container">
         <div class="race-list-header">
-            <h2>出走レース一覧</h2>
+            <h2>出走履歴</h2>
+        </div>
+        <div class="race-result-scroll">
+        <table class="race-list-table race-result-table">
+            <thead>
+                <tr>
+                    <th>日付</th>
+                    <th>開催</th>
+                    <th>レース名</th>
+                    <th>条件</th>
+                    <th>コース</th>
+                    <th>馬場</th>
+                    <th>頭数</th>
+                    <th>枠</th>
+                    <th>馬番</th>
+                    <th>人気</th>
+                    <th>着順</th>
+                    <th>騎手</th>
+                    <th>斤量</th>
+                    <th>タイム</th>
+                    <th>着差</th>
+                    <th>通過</th>
+                    <th>上り</th>
+                    <th>馬体重</th>
+                    <th>本賞金</th>
+                    <th>収得賞金</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in race_results %}
+                <tr>
+                    <td class="nowrap">{{ r.date_label }}</td>
+                    <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
+                    <td class="nowrap">{{ r.name }}{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
+                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category }} {{ r['class'] }}</td>
+                    <td class="nowrap">{{ r.surface }}{{ r.distance }}</td>
+                    <td>{{ r.going }}</td>
+                    <td>{{ r.runners }}</td>
+                    <td>{{ r.waku }}</td>
+                    <td>{{ r.horse_num }}</td>
+                    <td>{{ r['pop'] }}</td>
+                    <td class="race-place{% if r.place == '1' %} place-1{% endif %}">{{ r.place }}</td>
+                    <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
+                    <td>{{ r.weight }}</td>
+                    <td>{{ r.time }}</td>
+                    <td>{{ r.margin }}</td>
+                    <td class="nowrap">{{ r.corners }}</td>
+                    <td>{{ r.last }}</td>
+                    <td class="nowrap">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
+                    <td class="num">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
+                    <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="20" class="no-data-text">出走履歴がありません。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="race-list-container mt-20">
+        <div class="race-list-header">
+            <h2>出走予定</h2>
             <button id="toggle-entry-form-btn" class="btn-entry-toggle">レースに登録する</button>
         </div>
-        
+
         <table class="race-list-table">
             <thead>
                 <tr>
@@ -379,7 +464,6 @@
                     <th>条件</th>
                     <th>コース</th>
                     <th>ステータス</th>
-                    <th>着順</th>
                 </tr>
             </thead>
             <tbody>
@@ -392,11 +476,10 @@
                     <td>{{ r.condition }}</td>
                     <td>{{ r.course }}</td>
                     <td>{{ r.status }}</td>
-                    <td>{{ r.rank }}</td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="8" class="no-data-text">出走履歴がありません。</td>
+                    <td colspan="7" class="no-data-text">出走予定はありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -539,6 +622,7 @@
     <a href="/">一覧に戻る</a>
 </div>
 
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
 <script>
 // 血統データ（インブリード判定・兄弟馬/近親馬検索で使用）
 // ※ pedigree はサーバー側(Jinja)の辞書のため、JSからはこのJSON経由で参照する
@@ -647,35 +731,40 @@ function closeCandidateModal() {
     document.getElementById('candidateModal').style.display = 'none';
 }
 
+// --- 出走レース：JRAの競走馬情報のページの「出走レース」から、まだ取り込んでいないレースを取り込む ---
 document.addEventListener('DOMContentLoaded', function() {
-    let totalPrize = 0;
-    const rows = document.querySelectorAll('.race-history-row');
-    const hasRaced = rows.length > 0;
-
-    rows.forEach(row => {
-        const raceName = row.querySelector('.r-name').textContent.trim();
-        const condition = row.querySelector('.r-condition').textContent.trim();
-        const rankRaw = row.querySelector('.r-rank').textContent.trim();
-        
-        const rankMatch = rankRaw.match(/\d+/);
-        const rank = rankMatch ? parseInt(rankMatch[0]) : null;
-
-        if (rank !== null) {
-            const added = calculateAddedPrize(rank, condition, raceName);
-            if (added > 0) {
-                row.querySelector('.r-added-prize').textContent = '+' + added;
-                totalPrize += added;
+    const btn = document.getElementById('race-import-btn');
+    if (!btn || !window.RaceImport) return;
+    const status = document.getElementById('race-import-status');
+    btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        status.style.color = '';
+        status.textContent = 'JRAの競走馬情報を読み込んでいます...';
+        try {
+            const res = await RaceImport.importHorse(btn.dataset.url, {
+                wholeDay: document.getElementById('race-import-whole-day').checked,
+                log: text => { status.textContent = text; }
+            });
+            if (!res.todo) {
+                status.textContent = `出走${res.races}レースはすべて取り込み済みです。`;
+                btn.disabled = false;
+                return;
             }
+            status.textContent = `${res.saved}レースを取り込みました` + (res.failed ? `（${res.failed}レースは取得に失敗）` : '') + '。'
+                + (res.errors.length ? res.errors[0] : '');
+            if (res.saved) {
+                status.textContent += '表示を更新しています...';
+                location.reload();
+                return;
+            }
+            status.style.color = '#c62828';
+            btn.disabled = false;
+        } catch (e) {
+            status.style.color = '#c62828';
+            status.textContent = e.message;
+            btn.disabled = false;
         }
     });
-
-    const horseBirthYear = {{ horse[3].year }};
-    const currentYear = {{ current_year }};
-    const currentMonth = new Date().getMonth() + 1;
-    const horseAge = currentYear - horseBirthYear;
-
-    document.getElementById('total-prize').textContent = totalPrize;
-    document.getElementById('current-class').textContent = judgeClass(totalPrize, hasRaced, horseAge, currentMonth);
 });
 
 // --- 兄弟馬・近親馬：URL未登録の馬があれば、そこにフォーカスして気づきやすくする ---
@@ -686,41 +775,6 @@ document.addEventListener("DOMContentLoaded", function() {
         urlBtn.focus();
     }
 });
-
-function calculateAddedPrize(rank, condition, raceName) {
-    if (condition.includes('重賞') && (condition.includes('2歳') || raceName.includes('2歳'))) {
-        if (!raceName.includes('G1') && !raceName.includes('G2')) {
-            if (rank === 1) return 1600;
-            if (rank === 2) return 600;
-        }
-    }
-    if (rank !== 1) return 0;
-    if (condition.includes('オープン')) {
-        const isListed = raceName.includes('L') || raceName.includes('リステッド');
-        if (condition.includes('2歳')) return isListed ? 800 : 600;
-        if (condition.includes('3歳')) return isListed ? 1200 : 1000;
-        return isListed ? 1400 : 1200;
-    }
-    if (condition.includes('3勝') || condition.includes('1600万')) return 900;
-    if (condition.includes('2勝') || condition.includes('1000万')) return 600;
-    if (condition.includes('1勝') || condition.includes('500万')) return 500;
-    if (condition.includes('未勝利') || condition.includes('新馬')) return 400;
-    return 0;
-}
-
-function judgeClass(prize, hasRaced, age, month) {
-    if (prize === 0) return hasRaced ? "未勝利" : "新馬";
-    
-    if (age === 2 || (age === 3 && month <= 5)) {
-        if (prize <= 500) return "1勝クラス";
-        return "オープン";
-    } else {
-        if (prize <= 500) return "1勝クラス";
-        if (prize <= 1000) return "2勝クラス";
-        if (prize <= 1600) return "3勝クラス";
-        return "オープン";
-    }
-}
 
 document.addEventListener("DOMContentLoaded", function() {
     let nodes = {};
@@ -865,6 +919,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // 5. 画面に結果を出力
     let resultDiv = document.getElementById('inbreed-results');
+    if (!resultDiv) return;   // 出走レースのタブには表示欄が無い
     if (inbreedsResult.length > 0) {
         let inbreedsHTML = [];
         inbreedsResult.forEach(inbreed => {
