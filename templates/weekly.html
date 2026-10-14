@@ -53,6 +53,7 @@
     <p style="margin: 0; color: #555;">
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
+    {% with target_source='weekly', target_count=unregistered_count, target_label='未登録の馬をJRAから登録', target_date=date_for_input %}{% include "_auto_register.html" %}{% endwith %}
     <details class="import-status-details" open>
         <summary>JRAのページの更新状況</summary>
         {% include "_import_status.html" %}

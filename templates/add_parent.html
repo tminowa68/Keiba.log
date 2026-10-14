@@ -421,6 +421,11 @@ async function fetchFromJra() {
         if (!res.ok || data.error) {
             statusEl.textContent = data.error || '取得に失敗しました。';
             statusEl.style.color = 'red';
+            if (data.kaku) {
+                // 地方・海外所属の馬はJRAのタブでは登録できないため、入力したURLを消す
+                alert(data.error);
+                clearFetchInput(urlInput);
+            }
             return;
         }
 

@@ -272,6 +272,7 @@ def parse_race_result_page(html_or_soup, url=''):
             'waku': int(wm.group(1)) if wm else '',
             'num': _text(td('num')),
             'name': _text(horse_a) if horse_a else _text(td('horse')),
+            'icons': [img.get('alt', '') for img in td('horse').select('span.horse_icon img')] if td('horse') else [],
             'horse_url': horse_a.get('href', '') if horse_a else '',
             'sex': ('せん' if am and am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
             'age': int(am.group(2)) if am else '',
