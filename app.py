@@ -534,6 +534,11 @@ def fetch_jra_horse_info(url):
     if kaku:
         result['kaku'] = kaku
 
+    # 「産駒一覧」のボタン（産駒がいる馬＝繁殖馬になっている馬だけ表示される）
+    #  <div class="opt2"> … <a onclick="return doAction('/JRADB/accessU.html', 'pj01snk…');">産駒一覧</a>
+    result['has_offspring'] = any('産駒一覧' in a.get_text() and 'pj01snk' in (a.get('onclick') or '')
+                                  for a in soup.find_all('a'))
+
     # 父・母・母の父のリンク（JRAに競走馬として登録されている馬だけリンクがある）
     for key, label in (('sire_url', '父'), ('dam_url', '母'), ('dam_sire_url', '母の父')):
         link = _dd_link_url(soup, label)
@@ -2477,6 +2482,20 @@ class AutoRegistrar:
             return f"{name}：スキップ（地方または海外所属の馬）"
         if info.get('name') and not _same_name(info['name'], name) and not _same_name(info.get('name_en'), name):
             return f"{name}：スキップ（リンク先の馬名が「{info.get('name')}」で一致しません）"
+        if not rows and info.get('gender') == '牝' and info.get('has_offspring'):
+            # 産駒がいる牝馬（繁殖牝馬）は、競走馬（Horses）ではなく母馬（Dam）として登録する
+            row = [''] * len(PARENT_COLUMNS)
+            if is_english_name(name):
+                row[P_NAME_EN] = name
+            else:
+                row[P_NAME] = name
+            for col, val in self.parent_values(info).items():
+                row[col] = val
+            row[P_JRA_URL] = url
+            self.new_rows['Dam'].append(row)
+            self.record_cancel(name, info)
+            parents = self.register_parents(info, date_year(row[P_BIRTH]), 1)
+            return f"{name}：母馬として登録（産駒あり）" + (f"（血統：{'、'.join(parents)}）" if parents else '')
         values = self.horse_values(info)
         if rows:
             row = rows[0]
