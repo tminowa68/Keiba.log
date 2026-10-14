@@ -80,10 +80,17 @@ HORSE_COLUMNS = ["馬名", "英馬名", "性別", "生年月日", "父", "母", 
 (H_NAME, H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE, H_STATUS,
  H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS,
  H_CLASS, H_LAST_RACE, H_SHUTOKU) = range(len(HORSE_COLUMNS))
-# Sire・Damシートの列
-PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL"]
+# Sire・Damシートの列（競走馬登録〜収得賞金は、Horsesシートから移した馬の値を引き継ぐ列）
+PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL",
+                  "競走馬登録", "登録時状態", "クラス", "最新レース", "収得賞金"]
 (P_NAME, P_NAME_EN, P_BIRTH, P_SIRE, P_DAM, P_OWNER, P_REGION, P_DETAIL, P_BREEDER,
- P_JRA_URL, P_NAR_URL) = range(len(PARENT_COLUMNS))
+ P_JRA_URL, P_NAR_URL, P_REGISTRATION, P_REG_STATUS, P_CLASS, P_LAST_RACE, P_SHUTOKU) = range(len(PARENT_COLUMNS))
+# Horsesシートの馬をSire・Damシートに移すときの列の対応（性別・拠点・厩舎・状態は移さない）
+HORSE_TO_PARENT_COLS = [(H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BIRTH), (H_SIRE, P_SIRE),
+                        (H_DAM, P_DAM), (H_OWNER, P_OWNER), (H_REGION, P_REGION), (H_DETAIL, P_DETAIL),
+                        (H_BREEDER, P_BREEDER), (H_JRA_URL, P_JRA_URL), (H_NAR_URL, P_NAR_URL),
+                        (H_REGISTRATION, P_REGISTRATION), (H_REG_STATUS, P_REG_STATUS), (H_CLASS, P_CLASS),
+                        (H_LAST_RACE, P_LAST_RACE), (H_SHUTOKU, P_SHUTOKU)]
 
 def col_letter(idx):
     """0始まりの列番号を列記号（A, B, …）にする"""
@@ -1742,7 +1749,7 @@ def runner_row_to_result(r):
         'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': int(prize) if prize.isdigit() else 0,
-        'horse_name': c('馬名'), 'horse_id': c('馬ID'),
+        'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'),
     }
 
 def collect_race_results(horses):
@@ -1808,6 +1815,97 @@ def last_race_label(results):
     name = r['name'] or f"{r['category']}{r['class']}"
     return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
 
+# --- レースの間の転厩（成績の調教師が変わっている場合） ---
+def _trainer_key(name):
+    """調教師名の比較用（空白と拠点「美浦・」を除く）"""
+    name = str(name or '').split('・', 1)[-1]
+    return re.sub(r'[\s　]', '', name)
+
+def trainer_label(name, stables):
+    """転厩の記録・表示用の「拠点・調教師名」。美浦・栗東シートに無い調教師は拠点を空にして調教師名だけにする"""
+    key = _trainer_key(name)
+    for s in stables or []:
+        s_name = s['display_name'].split('・', 1)[1] if '・' in s['display_name'] else s['display_name']
+        if _trainer_key(s_name) == key:
+            return f"{s['area']}・{s_name}"
+    return str(name or '').strip()
+
+def thursday_of_race_week(d):
+    """レースの週の木曜日（土日・祝日の月曜日のレースは、その前の木曜日）"""
+    return d - timedelta(days=(d.weekday() - 3) % 7)
+
+def race_transfers(results):
+    """出走成績（新しい順）から、レースの間で調教師が変わったところを返す（古い順）。
+    [{'before': 前のレース, 'after': 転厩後のレース, 'old': 調教師, 'new': 調教師}]"""
+    chrono = sorted([r for r in results if r.get('trainer')],
+                    key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
+    transfers = []
+    for before, after in zip(chrono, chrono[1:]):
+        if _trainer_key(before['trainer']) != _trainer_key(after['trainer']):
+            transfers.append({'before': before, 'after': after, 'old': before['trainer'], 'new': after['trainer']})
+    return transfers
+
+def record_race_transfers(sh, horse_transfers, stables):
+    """レースの間の転厩をChangesシートに記録する。horse_transfers：{馬名: race_transfers の結果}。
+    転厩日は転厩後のレースの週の木曜日。同じ転厩が記録済みで、その日付が転厩後のレースより後なら木曜日に直す
+    （前のレースと転厩後のレースの間の日付なら直さない）"""
+    if not any(horse_transfers.values()):
+        return
+    ws = get_or_create_worksheet(sh, "Changes", ["年月日", "馬名", "項目", "旧", "新"])
+    data = with_sheets_retry(ws.get_all_values)
+    existing = {}
+    for i, r in enumerate(data[1:], start=2):
+        if len(r) > 4 and r[2] == '転厩':
+            existing.setdefault(r[1], []).append((i, r))
+    new_rows, updates = [], []
+    for name, transfers in horse_transfers.items():
+        used = set()
+        for t in transfers:
+            before_date, after_date = t['before']['date'], t['after']['date']
+            thursday = thursday_of_race_week(after_date)
+            same = sorted([(parse_full_date(r[0]), i, r) for i, r in existing.get(name, [])
+                           if i not in used and _trainer_key(r[3]) == _trainer_key(t['old'])
+                           and _trainer_key(r[4]) == _trainer_key(t['new']) and parse_full_date(r[0])],
+                          key=lambda x: x[0])
+            match = next((x for x in same if x[0] > before_date), None)
+            if match:
+                d, i, r = match
+                used.add(i)
+                if d > after_date:
+                    # 記録されている転厩日が転厩後のレースより後なら、転厩後のレースの週の木曜日に戻す
+                    updates.append({'range': f"A{i}", 'values': [[thursday.strftime('%Y%m%d')]]})
+                continue
+            new_rows.append([thursday.strftime('%Y%m%d'), name, '転厩',
+                             trainer_label(t['old'], stables), trainer_label(t['new'], stables)])
+    if updates:
+        with_sheets_retry(ws.batch_update, updates)
+    if new_rows:
+        with_sheets_retry(ws.append_rows, new_rows)
+
+def fill_trainer_area(sh, area, trainer_name):
+    """調教師を美浦・栗東シートに登録したときに、拠点が空になっている転厩の記録（Changes）と
+    Horsesシートの拠点を埋める"""
+    key = _trainer_key(trainer_name)
+    label = f"{area}・{trainer_name}"
+    try:
+        ws = sh.worksheet("Changes")
+        updates = []
+        for i, r in enumerate(ws.get_all_values()[1:], start=2):
+            if len(r) > 4 and r[2] == '転厩':
+                for col, letter in ((3, 'D'), (4, 'E')):
+                    if r[col] and '・' not in r[col] and _trainer_key(r[col]) == key:
+                        updates.append({'range': f"{letter}{i}", 'values': [[label]]})
+        if updates:
+            ws.batch_update(updates)
+    except gspread.WorksheetNotFound:
+        pass
+    ws_h = sh.worksheet("Horses")
+    updates = [{'range': f"{col_letter(H_AREA)}{i}", 'values': [[area]]}
+               for i, r in enumerate(ws_h.get_all_values()[1:], start=2)
+               if len(r) > H_STABLE and _trainer_key(r[H_STABLE]) == key and not (r[H_AREA] or '').strip()]
+    if updates:
+        ws_h.batch_update(updates)
+
 def update_horse_class_columns(match=None, offset=0, limit=None):
     """Horsesシートのクラス・最新レースの列を、取り込んだレース結果から計算し直す。
     match：対象を絞る関数（Horsesの行を受け取り True なら対象）。offset・limit：対象のうち何頭目から何頭か。
@@ -1831,6 +1929,12 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
                        'horse_id': RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else ''),
                        'birth_year': date_year(r[H_BIRTH]) if len(r) > H_BIRTH else None})
     results = collect_race_results(horses)
+    # レースの間で調教師が変わっていれば、転厩としてChangesシートに記録する
+    try:
+        record_race_transfers(gc.open(horse_data), {h['name']: race_transfers(results.get(h['key'], []))
+                                                    for h in horses}, get_stables_list())
+    except Exception as e:
+        print(f"転厩の記録に失敗しました: {e}")
     updates = []
     for h in horses:
         res = results.get(h['key'], [])
@@ -2489,12 +2593,8 @@ class AutoRegistrar:
             moved = rows[0] if rows else None
             row = [''] * len(PARENT_COLUMNS)
             if moved is not None:
-                moved = list(moved) + [''] * len(HORSE_COLUMNS)
-                for h_col, p_col in ((H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BIRTH), (H_SIRE, P_SIRE),
-                                     (H_DAM, P_DAM), (H_OWNER, P_OWNER), (H_REGION, P_REGION),
-                                     (H_DETAIL, P_DETAIL), (H_BREEDER, P_BREEDER), (H_NAR_URL, P_NAR_URL)):
-                    row[p_col] = str(moved[h_col] or '').strip()
-                self.deleted_horses.add(id(rows[0]))
+                merge_horse_into_parent(row, moved)
+                self.deleted_horses.add(id(moved))
             elif is_english_name(name):
                 row[P_NAME_EN] = name
             else:
@@ -2511,8 +2611,7 @@ class AutoRegistrar:
                 for col in range(len(PARENT_COLUMNS)):
                     if not str(target[col]).strip() and row[col]:
                         target[col] = row[col]
-                if target in self.rows['Dam']:
-                    self.updated['Dam'][self.rows['Dam'].index(target)] = target
+                self.mark_parent_updated('Dam', target)
             else:
                 self.new_rows['Dam'].append(row)
             self.record_cancel(name, info)
@@ -2522,7 +2621,7 @@ class AutoRegistrar:
         values = self.horse_values(info)
         if rows:
             row = rows[0]
-            idx = self.rows['Horses'].index(row) if row in self.rows['Horses'] else None
+            idx = next((i for i, r in enumerate(self.rows['Horses']) if r is row), None)
             row.extend([''] * (len(HORSE_COLUMNS) - len(row)))
             row[H_JRA_URL] = url
             for col, val in values.items():
@@ -2550,6 +2649,22 @@ class AutoRegistrar:
         return message + (f"（血統：{'、'.join(parents)}）" if parents else '')
 
     # --- 親（Sire・Dam） ---
+    def absorb_horses(self, row):
+        """Horsesシートに同じ馬（馬名・生年月日・父・母が一致）がいれば、その値を引き継いでHorsesシートから消す"""
+        moved = False
+        for name in {str(row[P_NAME]).strip(), str(row[P_NAME_EN]).strip()} - {''}:
+            for h_row in self.find_rows('Horses', name):
+                if horse_matches_parent(h_row, row[P_BIRTH], row[P_SIRE], row[P_DAM]):
+                    merge_horse_into_parent(row, h_row)
+                    self.deleted_horses.add(id(h_row))
+                    moved = True
+        return moved
+
+    def mark_parent_updated(self, t, row):
+        if any(r is row for r in self.rows[t]):
+            idx = next(i for i, r in enumerate(self.rows[t]) if r is row)
+            self.updated[t][idx] = row
+
     def fill_parent_url(self, t, row, name, url, known):
         """Sire・DamシートでURLが無い馬に、URLと空欄の項目を埋める"""
         known = dict(known or {}, gender='牡' if t == 'Sire' else '牝')
@@ -2565,8 +2680,8 @@ class AutoRegistrar:
             if not str(row[col]).strip():
                 row[col] = val
         row[P_JRA_URL] = url
-        if row in self.rows[t]:
-            self.updated[t][self.rows[t].index(row)] = row
+        self.absorb_horses(row)
+        self.mark_parent_updated(t, row)
         self.record_cancel(name, info)
         parents = self.register_parents(info, date_year(row[P_BIRTH]), 1)
         return f"{name}：{'父馬' if t == 'Sire' else '母馬'}のURLを登録" + (f"（血統：{'、'.join(parents)}）" if parents else '')
@@ -2626,8 +2741,8 @@ class AutoRegistrar:
                     row[col] = val
             if not str(row[P_JRA_URL]).strip():
                 row[P_JRA_URL] = url
-            if row in self.rows[t]:
-                self.updated[t][self.rows[t].index(row)] = row
+            self.absorb_horses(row)
+            self.mark_parent_updated(t, row)
             done = [f"{name}を更新"]
         else:
             row = [''] * len(PARENT_COLUMNS)
@@ -2638,6 +2753,7 @@ class AutoRegistrar:
             for col, val in values.items():
                 row[col] = val
             row[P_JRA_URL] = url
+            self.absorb_horses(row)
             self.new_rows[t].append(row)
             done = [f"{name}を登録"]
         self.record_cancel(name, info)
@@ -2681,6 +2797,8 @@ class AutoRegistrar:
             self.updated['Horses'], self.new_rows['Horses'] = {}, []
         for t, ws in self.ws.items():
             columns = HORSE_COLUMNS if t == 'Horses' else PARENT_COLUMNS
+            if t != 'Horses' and (self.updated[t] or self.new_rows[t]):
+                ensure_parent_header(ws, self.header[t])
             if self.updated[t]:
                 ensure_columns(ws, len(columns))
                 last = col_letter(len(columns) - 1)
@@ -3776,6 +3894,11 @@ def weekly():
                 for r in sh.worksheet(p_type).get_all_values()[1:]:
                     info = {'type': p_type, 'gender': gender, 'birth_year': date_year(cell(r, P_BIRTH)),
                             'has_url': bool(cell(r, P_JRA_URL) or cell(r, P_NAR_URL))}
+                    # Horsesシートから移した馬も、競走馬登録日の週の登録馬に表示する
+                    reg_date = parse_full_date(cell(r, P_REGISTRATION))
+                    if in_week(reg_date) and display_name_of_row(r):
+                        registered.append({'date': reg_date, 'name': display_name_of_row(r), 'sire': cell(r, P_SIRE),
+                                           'dam': cell(r, P_DAM), 'status': cell(r, P_REG_STATUS)})
                     # 和名・英馬名のどちらで記録されていても見つかるようにする
                     for name in (cell(r, P_NAME), cell(r, P_NAME_EN)):
                         if name and name not in parent_info:
@@ -3974,6 +4097,10 @@ def add_stable():
         ])
 
         sort_and_resize_table(sheet, sort_col_index=1, key=stable_kana_key)
+        try:
+            fill_trainer_area(sh, area, name)
+        except Exception as e:
+            print(f"転厩の記録・Horsesシートの拠点の更新に失敗しました: {e}")
         flash(f"{area}・{name}厩舎を登録しました。", 'success')
     except Exception as e:
         flash(f"厩舎の追加に失敗しました: {e}")
@@ -4024,6 +4151,42 @@ def split_horse_urls(jra_url, nar_url=''):
     if is_nar_url(jra_url):
         nar_url, jra_url = nar_url or jra_url, ''
     return jra_url, nar_url
+
+def ensure_parent_header(ws, header=None):
+    """Sire・Damシートに、競走馬登録〜収得賞金の列（見出し）が無ければ追加する"""
+    header = list(header if header is not None else ws.row_values(1))
+    if len(header) >= len(PARENT_COLUMNS) and all(header[i] for i in range(P_REGISTRATION, len(PARENT_COLUMNS))):
+        return
+    ensure_columns(ws, len(PARENT_COLUMNS))
+    ws.update(range_name=f"{col_letter(P_REGISTRATION)}1:{col_letter(len(PARENT_COLUMNS) - 1)}1",
+              values=[PARENT_COLUMNS[P_REGISTRATION:]])
+
+def horse_matches_parent(h_row, birth, sire, dam):
+    """Horsesシートの馬が、Sire・Damシートに登録する馬と同じ馬か（生年月日・父・母で照合する）。
+    生年月日は両方に値がある場合に限り照合でき、父・母は値がある方だけ照合する（表記が和名と英字で違えば照合しない）"""
+    cell = lambda i: str(h_row[i]).strip() if len(h_row) > i and h_row[i] else ''
+    h_birth = re.sub(r'\D', '', format_date8(*split_date(cell(H_BIRTH))) if split_date(cell(H_BIRTH)) else '')
+    p_birth = re.sub(r'\D', '', format_date8(*split_date(birth)) if split_date(birth) else str(birth or ''))
+    if not h_birth or not p_birth:
+        return False
+    if len(h_birth) >= 8 and len(p_birth) >= 8:
+        if h_birth[:8] != p_birth[:8]:
+            return False
+    elif h_birth[:4] != p_birth[:4]:
+        return False
+    for h_val, p_val in ((cell(H_SIRE), str(sire or '').strip()), (cell(H_DAM), str(dam or '').strip())):
+        if h_val and p_val and is_english_name(h_val) == is_english_name(p_val) and not _same_name(h_val, p_val):
+            return False
+    return True
+
+def merge_horse_into_parent(p_row, h_row):
+    """Horsesシートの行の値を、Sire・Damシートの行の空欄に引き継ぐ（性別・拠点・厩舎・状態は引き継がない）"""
+    p_row.extend([''] * (len(PARENT_COLUMNS) - len(p_row)))
+    for h_col, p_col in HORSE_TO_PARENT_COLS:
+        h_val = str(h_row[h_col]).strip() if len(h_row) > h_col and h_row[h_col] else ''
+        if h_val and not str(p_row[p_col] or '').strip():
+            p_row[p_col] = h_val
+    return p_row
 
 def jra_url_kaku_error(url):
     """JRAのURLの馬が地方・海外所属ならエラーの文を返す（ページを取得できない場合は止めない）"""
@@ -4567,13 +4730,36 @@ def add_parent():
             new_row[P_BREEDER] = request.form.get('breeder')
             new_row[P_JRA_URL] = jra_url
             new_row[P_NAR_URL] = nar_url
+            if found_idx:
+                # 画面に無い列（競走馬登録〜収得賞金）は既存の値を残す
+                for col in range(P_REGISTRATION, len(PARENT_COLUMNS)):
+                    new_row[col] = old[col]
 
-            ensure_columns(ws, len(PARENT_COLUMNS))
+            # Horsesシートに同じ馬（馬名・生年月日・父・母が一致）がいれば、Sire・Damシートに移す
+            moved_rows = []
+            try:
+                ws_horses = sh.worksheet("Horses")
+                horse_rows = ws_horses.get_all_values()
+                for i, h_row in enumerate(horse_rows[1:], start=2):
+                    if any(row_matches_name(h_row, n) for n in (name_ja, name_en) if n) and \
+                            horse_matches_parent(h_row, new_row[P_BIRTH], new_row[P_SIRE], new_row[P_DAM]):
+                        merge_horse_into_parent(new_row, h_row)
+                        moved_rows.append(i)
+            except gspread.WorksheetNotFound:
+                ws_horses = None
+
+            ensure_parent_header(ws, data[0] if data else None)
             if found_idx:
                 ws.update(range_name=f'A{found_idx}:{col_letter(len(PARENT_COLUMNS) - 1)}{found_idx}', values=[new_row])
             else:
                 ws.append_row(new_row)
             sort_and_resize_table(ws, sort_col_index=0)
+            for i in sorted(moved_rows, reverse=True):
+                ws_horses.delete_rows(i)
+            if moved_rows:
+                flash(f"『{p_name}』をHorsesシートから{'Sire' if p_type == 'Sire' else 'Dam'}シートに移しました。")
+                if origin and row_matches_name([origin], p_name):
+                    origin = ''   # 移した馬の競走馬ページは無くなるため、トップに戻る
             record_cancel_date_from_url(sh, p_name, jra_url)
         except Exception as e:
             flash(f"エラーが発生しました: {e}")
@@ -5046,6 +5232,10 @@ def horse_detail(name, active_tab):
         try:
             horse_id = RR.horse_id_from_url(horse[H_JRA_URL] if len(horse) > H_JRA_URL else '')
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
+            # レースの間で調教師が変わっていれば、そのレースの間に「転厩：○○→○○」を表示する
+            stables = get_stables_list()
+            for t in race_transfers(race_results):
+                t['after']['transfer'] = f"{trainer_label(t['old'], stables)}→{trainer_label(t['new'], stables)}"
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
 

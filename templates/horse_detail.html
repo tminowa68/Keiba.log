@@ -439,6 +439,11 @@
                     <td class="num">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
                     <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
                 </tr>
+                {% if r.transfer %}
+                <tr class="transfer-row">
+                    <td colspan="20">転厩：{{ r.transfer }}</td>
+                </tr>
+                {% endif %}
                 {% else %}
                 <tr>
                     <td colspan="20" class="no-data-text">出走履歴がありません。</td>
