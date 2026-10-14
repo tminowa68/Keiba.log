@@ -1749,7 +1749,7 @@ def runner_row_to_result(r):
         'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': int(prize) if prize.isdigit() else 0,
-        'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'),
+        'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'),
     }
 
 def collect_race_results(horses):
@@ -1830,57 +1830,113 @@ def trainer_label(name, stables):
             return f"{s['area']}・{s_name}"
     return str(name or '').strip()
 
+def build_race_history(race_results, changes_history):
+    """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
+    記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う"""
+    items = []
+    for r in race_results:
+        items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0), dict(r, kind='race')))
+    for c in changes_history:
+        kind = str(c.get('項目', '')).strip()
+        d = parse_full_date(str(c.get('年月日', '')))
+        if kind not in ('転厩', '去勢') or not d:
+            continue
+        text = f"{kind}：{c.get('旧', '')}→{c.get('新', '')}"
+        items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d,
+                                  'date_label': format_date_jp(d, weekday=True), 'text': text}))
+    items.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in items]
+
 def thursday_of_race_week(d):
     """レースの週の木曜日（土日・祝日の月曜日のレースは、その前の木曜日）"""
     return d - timedelta(days=(d.weekday() - 3) % 7)
 
-def race_transfers(results):
-    """出走成績（新しい順）から、レースの間で調教師が変わったところを返す（古い順）。
-    [{'before': 前のレース, 'after': 転厩後のレース, 'old': 調教師, 'new': 調教師}]"""
-    chrono = sorted([r for r in results if r.get('trainer')],
-                    key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
-    transfers = []
+def race_changes(results):
+    """出走成績（新しい順）から、レースの間で調教師が変わったところ（転厩）と、牡→せんになったところ（去勢）を
+    古い順に返す。[{'type': '転厩'／'去勢', 'before': 前のレース, 'after': 変わった後のレース, 'old', 'new'}]"""
+    chrono = sorted(results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
+    changes = []
     for before, after in zip(chrono, chrono[1:]):
-        if _trainer_key(before['trainer']) != _trainer_key(after['trainer']):
-            transfers.append({'before': before, 'after': after, 'old': before['trainer'], 'new': after['trainer']})
-    return transfers
+        if before.get('trainer') and after.get('trainer') and \
+                _trainer_key(before['trainer']) != _trainer_key(after['trainer']):
+            changes.append({'type': '転厩', 'before': before, 'after': after,
+                            'old': before['trainer'], 'new': after['trainer']})
+        if before.get('sex') == '牡' and after.get('sex') == 'せん':
+            changes.append({'type': '去勢', 'before': before, 'after': after, 'old': '牡', 'new': 'せん'})
+    return changes
 
-def record_race_transfers(sh, horse_transfers, stables):
-    """レースの間の転厩をChangesシートに記録する。horse_transfers：{馬名: race_transfers の結果}。
-    転厩日は転厩後のレースの週の木曜日。同じ転厩が記録済みで、その日付が転厩後のレースより後なら木曜日に直す
-    （前のレースと転厩後のレースの間の日付なら直さない）"""
-    if not any(horse_transfers.values()):
-        return
+def _same_change(change, row):
+    """Changesシートの行が、同じ転厩（旧・新の調教師が同じ）・去勢の記録か"""
+    if row[2] != change['type']:
+        return False
+    if change['type'] == '転厩':
+        return _trainer_key(row[3]) == _trainer_key(change['old']) and _trainer_key(row[4]) == _trainer_key(change['new'])
+    return True
+
+def record_race_changes(sh, horse_changes, stables):
+    """レースの間の転厩・去勢をChangesシートに記録する。horse_changes：{馬名: race_changes の結果}。
+    日付は変わった後のレースの週の木曜日。同じ記録があり、その日付が変わった後のレースより後なら木曜日に直す
+    （前のレースと変わった後のレースの間の日付なら直さない）。
+    記録後の各馬の転厩・去勢の記録 {馬名: [(日付, 項目, 旧, 新), …]} を返す"""
     ws = get_or_create_worksheet(sh, "Changes", ["年月日", "馬名", "項目", "旧", "新"])
     data = with_sheets_retry(ws.get_all_values)
     existing = {}
     for i, r in enumerate(data[1:], start=2):
-        if len(r) > 4 and r[2] == '転厩':
-            existing.setdefault(r[1], []).append((i, r))
+        r = list(r) + [''] * 5
+        if r[1] in horse_changes and r[2] in ('転厩', '去勢'):
+            existing.setdefault(r[1], []).append([i, r])
     new_rows, updates = [], []
-    for name, transfers in horse_transfers.items():
+    for name, changes in horse_changes.items():
         used = set()
-        for t in transfers:
-            before_date, after_date = t['before']['date'], t['after']['date']
+        for ch in changes:
+            before_date, after_date = ch['before']['date'], ch['after']['date']
             thursday = thursday_of_race_week(after_date)
             same = sorted([(parse_full_date(r[0]), i, r) for i, r in existing.get(name, [])
-                           if i not in used and _trainer_key(r[3]) == _trainer_key(t['old'])
-                           and _trainer_key(r[4]) == _trainer_key(t['new']) and parse_full_date(r[0])],
+                           if i not in used and _same_change(ch, r) and parse_full_date(r[0])],
                           key=lambda x: x[0])
             match = next((x for x in same if x[0] > before_date), None)
             if match:
                 d, i, r = match
                 used.add(i)
                 if d > after_date:
-                    # 記録されている転厩日が転厩後のレースより後なら、転厩後のレースの週の木曜日に戻す
-                    updates.append({'range': f"A{i}", 'values': [[thursday.strftime('%Y%m%d')]]})
+                    # 記録されている日付が変わった後のレースより後なら、そのレースの週の木曜日に戻す
+                    r[0] = thursday.strftime('%Y%m%d')
+                    updates.append({'range': f"A{i}", 'values': [[r[0]]]})
                 continue
-            new_rows.append([thursday.strftime('%Y%m%d'), name, '転厩',
-                             trainer_label(t['old'], stables), trainer_label(t['new'], stables)])
+            if ch['type'] == '転厩':
+                row = [thursday.strftime('%Y%m%d'), name, '転厩',
+                       trainer_label(ch['old'], stables), trainer_label(ch['new'], stables)]
+            else:
+                row = [thursday.strftime('%Y%m%d'), name, '去勢', '牡', 'せん']
+            new_rows.append(row)
+            existing.setdefault(name, []).append([None, row + ['']])
     if updates:
         with_sheets_retry(ws.batch_update, updates)
     if new_rows:
         with_sheets_retry(ws.append_rows, new_rows)
+    return {name: [(parse_full_date(r[0]), r[2], r[3], r[4]) for _, r in rows if parse_full_date(r[0])]
+            for name, rows in existing.items()}
+
+def latest_horse_state(results, change_rows, stables):
+    """最新の性別・拠点・厩舎を、最新のレース（の調教師・性別）と転厩・去勢の記録の新しい方から求める。
+    分からない項目は None。(性別, 拠点, 厩舎) を返す"""
+    sex = area = stable = None
+    latest = results[0] if results else None
+    events = sorted([c for c in (change_rows or [])], key=lambda c: c[0])
+    last_transfer = next((c for c in reversed(events) if c[1] == '転厩'), None)
+    if last_transfer and (not latest or last_transfer[0] > latest['date']):
+        label = last_transfer[3]
+    elif latest and latest.get('trainer'):
+        label = trainer_label(latest['trainer'], stables)
+    else:
+        label = ''
+    if label:
+        area, stable = label.split('・', 1) if '・' in label else ('', label)
+    if any(c[1] == '去勢' for c in events) or any(r.get('sex') == 'せん' for r in results):
+        sex = 'せん'
+    elif latest and latest.get('sex'):
+        sex = latest['sex']
+    return sex, area, stable
 
 def fill_trainer_area(sh, area, trainer_name):
     """調教師を美浦・栗東シートに登録したときに、拠点が空になっている転厩の記録（Changes）と
@@ -1929,16 +1985,31 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
                        'horse_id': RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else ''),
                        'birth_year': date_year(r[H_BIRTH]) if len(r) > H_BIRTH else None})
     results = collect_race_results(horses)
-    # レースの間で調教師が変わっていれば、転厩としてChangesシートに記録する
+    # レースの間で調教師・性別が変わっていれば、転厩・去勢としてChangesシートに記録する
+    stables = get_stables_list()
     try:
-        record_race_transfers(gc.open(horse_data), {h['name']: race_transfers(results.get(h['key'], []))
-                                                    for h in horses}, get_stables_list())
+        change_rows = record_race_changes(gc.open(horse_data), {h['name']: race_changes(results.get(h['key'], []))
+                                                               for h in horses}, stables)
     except Exception as e:
-        print(f"転厩の記録に失敗しました: {e}")
+        print(f"転厩・去勢の記録に失敗しました: {e}")
+        change_rows = None
     updates = []
     for h in horses:
         res = results.get(h['key'], [])
         r = rows[h['key']]
+        if change_rows is not None:
+            # 性別・拠点・厩舎を最新のもの（最新のレースか、それより後の転厩・去勢の記録）にする
+            sex, area, stable = latest_horse_state(res, change_rows.get(h['name'], []), stables)
+            cur = lambda c: str(r[c]).strip() if len(r) > c else ''
+            row_no = h['key'] + 2
+            if sex and sex != cur(H_GENDER) and cur(H_GENDER) != 'せん':
+                updates.append({'range': f"{col_letter(H_GENDER)}{row_no}", 'values': [[sex]]})
+            if stable and (area, stable) != (cur(H_AREA), cur(H_STABLE)):
+                if _trainer_key(stable) == _trainer_key(cur(H_STABLE)) and not area:
+                    area = cur(H_AREA)   # 同じ厩舎で、拠点が分からない場合は今の拠点を残す
+                if (area, stable) != (cur(H_AREA), cur(H_STABLE)):
+                    updates.append({'range': f"{col_letter(H_AREA)}{row_no}:{col_letter(H_STABLE)}{row_no}",
+                                    'values': [[area, stable]]})
         if res:
             new_class, shutoku = class_and_shutoku(RR.summarize_results(res, birth_year=h['birth_year']), res)
             shutoku = str(shutoku)
@@ -5232,17 +5303,15 @@ def horse_detail(name, active_tab):
         try:
             horse_id = RR.horse_id_from_url(horse[H_JRA_URL] if len(horse) > H_JRA_URL else '')
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
-            # レースの間で調教師が変わっていれば、そのレースの間に「転厩：○○→○○」を表示する
-            stables = get_stables_list()
-            for t in race_transfers(race_results):
-                t['after']['transfer'] = f"{trainer_label(t['old'], stables)}→{trainer_label(t['new'], stables)}"
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
+    race_history = build_race_history(race_results, changes_history)
 
     return render_template('horse_detail.html', 
                            horse=horse, 
                            horse_races=horse_races,
                            race_results=race_results,
+                           race_history=race_history,
                            race_summary_data=race_summary_data,
                            family_table1=family_table1,
                            family_table2=family_table2,
