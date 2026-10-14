@@ -246,4 +246,117 @@
     });
 })();
 </script>
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>登録馬の出走レースから取り込み</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        Horses・Sire・DamシートにJRAのURLが登録されている馬について、JRAの競走馬情報のページの「出走レース」から、
+        まだ取り込んでいないレースの結果を取り込みます（1頭ずつ順番に処理します）。<br>
+        「同じ日の全レースも取り込む」にすると、出走したレースと同じ日・同じ競馬場の全レースも取り込みます。
+    </p>
+    <div class="rh-options">
+        <div>対象：
+            <label><input type="checkbox" class="rh-sheet" value="Horses" checked> 競走馬（Horses）</label>
+            <label><input type="checkbox" class="rh-sheet" value="Sire"> 父馬（Sire）</label>
+            <label><input type="checkbox" class="rh-sheet" value="Dam"> 母馬（Dam）</label>
+        </div>
+        <div><label>馬名で絞り込む：<input type="text" id="rh-keyword" placeholder="空欄なら全頭" style="width:12em;"></label></div>
+        <div>
+            <label><input type="checkbox" id="rh-whole-day" checked> 同じ日の全レースも取り込む</label>
+            <label><input type="checkbox" id="rh-overwrite"> 取り込み済みのレースも取得し直す</label>
+            <label><input type="checkbox" id="rh-resume" checked> 前回の続きから（前回処理を終えた馬を飛ばす）</label>
+        </div>
+    </div>
+    <div style="margin-top:15px; display:flex; gap:10px;">
+        <button type="button" id="rh-start-btn" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">取り込み開始</button>
+        <button type="button" id="rh-stop-btn" class="rr-btn" style="background:#9e9e9e;" disabled>中止</button>
+    </div>
+    <div id="rh-message" style="margin-top:10px; font-size:0.9em; font-weight:bold;"></div>
+    <div id="rh-log" class="rh-log" style="display:none;"></div>
+</section>
+
+<style>
+    .rh-options { display:flex; flex-direction:column; gap:8px; font-size:0.9em; margin-top:10px; }
+    .rh-options label { margin-right:12px; white-space:nowrap; }
+    .rh-log { margin-top:10px; max-height:260px; overflow-y:auto; font-size:0.85em; line-height:1.6;
+              border:1px solid #ddd; border-radius:4px; padding:6px 10px; background:#fafafa; }
+    .rh-log .ng { color:#c62828; }
+    #rh-start-btn:disabled, #rh-stop-btn:disabled { opacity:0.5; cursor:default; }
+</style>
+
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    const DONE_KEY = 'keibaRaceImportDoneHorses';
+    let stopRequested = false;
+
+    function loadDone() {
+        try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]')); } catch (e) { return new Set(); }
+    }
+    function saveDone(set) {
+        try { localStorage.setItem(DONE_KEY, JSON.stringify([...set])); } catch (e) { /* 保存できなくても続ける */ }
+    }
+    function log(text, isError) {
+        const box = $('rh-log');
+        box.style.display = '';
+        const line = document.createElement('div');
+        line.textContent = text;
+        if (isError) line.className = 'ng';
+        box.appendChild(line);
+        while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    $('rh-stop-btn').addEventListener('click', () => {
+        stopRequested = true;
+        $('rh-message').textContent = '中止しています（処理中の馬が終わったら止まります）...';
+    });
+
+    $('rh-start-btn').addEventListener('click', async () => {
+        const sheets = [...document.querySelectorAll('.rh-sheet:checked')].map(cb => cb.value);
+        if (!sheets.length) { $('rh-message').textContent = '対象を選んでください。'; return; }
+        const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked, doneDays: new Set() };
+        stopRequested = false;
+        $('rh-start-btn').disabled = true; $('rh-stop-btn').disabled = false;
+        $('rh-log').innerHTML = '';
+        let done = $('rh-resume').checked ? loadDone() : new Set();
+        if (!$('rh-resume').checked) saveDone(done);
+        let total = { horses: 0, saved: 0, failed: 0 };
+        try {
+            $('rh-message').textContent = '対象の馬を読み込んでいます...';
+            const data = await RaceImport.post('/api/race_results/horse_targets',
+                                               { sheets: sheets, keyword: $('rh-keyword').value });
+            const targets = data.targets.filter(t => !done.has(t.url));
+            const skipped = data.targets.length - targets.length;
+            log(`対象：${data.targets.length}頭` + (skipped ? `（前回処理を終えた${skipped}頭を飛ばします）` : ''));
+            for (let i = 0; i < targets.length && !stopRequested; i++) {
+                const t = targets[i];
+                const head = `[${i + 1}/${targets.length}] ${t.name}`;
+                $('rh-message').textContent = `${head} を処理しています...`;
+                try {
+                    opts.log = text => { $('rh-message').textContent = `${head}：${text}`; };
+                    const res = await RaceImport.importHorse(t.url, opts);
+                    total.horses++; total.saved += res.saved; total.failed += res.failed;
+                    log(`${head}：出走${res.races}レース／取り込み${res.saved}レース`
+                        + (res.failed ? `／失敗${res.failed}レース` : ''), res.failed > 0);
+                    res.errors.forEach(msg => log(`　${msg}`, true));
+                    if (!res.failed) { done.add(t.url); saveDone(done); }
+                } catch (e) {
+                    log(`${head}：${e.message}`, true);
+                    if (RaceImport.isFatalError(e.message)) break;
+                }
+            }
+            const finished = !stopRequested;
+            $('rh-message').textContent = (finished ? '完了しました' : '中止しました')
+                + `（${total.horses}頭を処理、${total.saved}レースを取り込み`
+                + (total.failed ? `、${total.failed}レース失敗` : '') + '）。';
+            if (finished && !targets.some(t => !done.has(t.url))) saveDone(new Set());
+        } catch (e) {
+            $('rh-message').textContent = e.message;
+        } finally {
+            $('rh-start-btn').disabled = false; $('rh-stop-btn').disabled = true;
+        }
+    });
+})();
+</script>
 {% endblock %}

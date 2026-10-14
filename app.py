@@ -1729,6 +1729,40 @@ def _result_sheet(book, title, columns):
         ws.update(range_name='A1', values=[columns])
     return ws
 
+_result_sheets_cache = {}   # 年 → (レースシート, 成績シート)
+_imported_ids_cache = {}    # 年 → (読み込んだ時刻, 取り込み済みのレースIDの集合)
+IMPORTED_IDS_TTL = 600
+
+def result_sheets(year, create=False):
+    """年ごとのファイルのレースシート・成績シートを返す（ファイルが無く作らない場合は None）。
+    続けて取り込む時にシートを開き直さない（Google SheetsのAPIの回数を減らす）よう覚えておく"""
+    year = int(year)
+    if year in _result_sheets_cache:
+        return _result_sheets_cache[year]
+    book = get_result_book(year, create=create)
+    if not book:
+        return None
+    sheets = (_result_sheet(book, RACE_SHEET, RACE_SHEET_COLUMNS),
+              _result_sheet(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS))
+    _result_sheets_cache[year] = sheets
+    return sheets
+
+def forget_result_sheets(year):
+    _result_sheets_cache.pop(int(year), None)
+    _imported_ids_cache.pop(int(year), None)
+    _result_book_keys.pop(int(year), None)
+
+def with_sheets_retry(func, *args, **kwargs):
+    """Google SheetsのAPIの回数制限（429）にかかった場合は、少し待ってやり直す"""
+    for attempt in range(4):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status != 429 or attempt == 3:
+                raise
+            time.sleep(15 * (attempt + 1))
+
 def race_sheet_row(race):
     prizes = list(race.get('prizes') or []) + [''] * 5
     return [race['race_id'], race['date'].strftime('%Y%m%d'), race['venue'], race['kai'], race['nichi'], race['num'],
@@ -1753,23 +1787,30 @@ def save_race_results(parsed_list, overwrite=False):
     for parsed in parsed_list:
         by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
     for year, items in sorted(by_year.items()):
-        book = get_result_book(year, create=True)
-        ws_race = _result_sheet(book, RACE_SHEET, RACE_SHEET_COLUMNS)
-        ws_runner = _result_sheet(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS)
-        existing = set(ws_race.col_values(1)[1:])
-        race_rows, runner_rows, replace_ids = [], [], set()
+        try:
+            ws_race, ws_runner = result_sheets(year, create=True)
+            existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
+        except Exception:
+            # シートが消された場合などに備えて、覚えているシートを忘れてから開き直す
+            forget_result_sheets(year)
+            ws_race, ws_runner = result_sheets(year, create=True)
+            existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
+        race_rows, runner_rows, replace_ids, this_time = [], [], set(), set()
         for parsed in items:
             race = parsed['race']
             label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R"
             if not race['race_id']:
                 skipped.append(f"{label}（レースIDを読み取れません）")
                 continue
+            if race['race_id'] in this_time:
+                continue   # 同じレースが2回指定された場合
             if race['race_id'] in existing and not overwrite:
                 skipped.append(f"{label}（取り込み済み）")
                 continue
             if race['race_id'] in existing:
                 replace_ids.add(race['race_id'])
             existing.add(race['race_id'])
+            this_time.add(race['race_id'])
             race_rows.append(race_sheet_row(race))
             runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
             saved.append(label)
@@ -1789,9 +1830,12 @@ def save_race_results(parsed_list, overwrite=False):
                     ws.delete_rows(start, end)
         # すべて文字列のまま書き込む（数字の列も文字列にしておくと、成績シートのクエリで型が混ざらない）
         if race_rows:
-            ws_race.append_rows([[str(v) for v in row] for row in race_rows], value_input_option='RAW')
+            with_sheets_retry(ws_race.append_rows, [[str(v) for v in row] for row in race_rows],
+                              value_input_option='RAW')
         if runner_rows:
-            ws_runner.append_rows([[str(v) for v in row] for row in runner_rows], value_input_option='RAW')
+            with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in runner_rows],
+                              value_input_option='RAW')
+        _imported_ids_cache[year] = (time.time(), existing)
     return saved, skipped
 
 def fetch_jra_html(url, cname=None):
@@ -1882,18 +1926,25 @@ def get_horse_race_results(horse_name, horse_id='', birth_year=None):
         unique.setdefault(r['race_id'] or (r['date'], r['venue'], r['num']), r)
     results = sorted(unique.values(), key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0),
                      reverse=True)
-    summary = RR.summarize_results(results)
+    summary = RR.summarize_results(results, birth_year=birth_year)
     return results, summary
 
 def imported_race_ids(year):
-    """その年のレースシートに取り込み済みのレースIDの集合"""
-    book = get_result_book(year)
-    if not book:
-        return set()
+    """その年のレースシートに取り込み済みのレースIDの集合（しばらくの間は覚えておいた結果を返す）"""
+    year = int(year)
+    cached = _imported_ids_cache.get(year)
+    if cached and time.time() - cached[0] < IMPORTED_IDS_TTL:
+        return cached[1]
     try:
-        return set(book.worksheet(RACE_SHEET).col_values(1)[1:])
-    except gspread.WorksheetNotFound:
-        return set()
+        sheets = result_sheets(year)
+        ids = set(with_sheets_retry(sheets[0].col_values, 1)[1:]) if sheets else set()
+    except Exception:
+        forget_result_sheets(year)
+        sheets = result_sheets(year)
+        ids = set(with_sheets_retry(sheets[0].col_values, 1)[1:]) if sheets else set()
+    if sheets:
+        _imported_ids_cache[year] = (time.time(), ids)
+    return ids
 
 JRA_RESULT_MENU_ACTION = "https://www.jra.go.jp/JRADB/accessS.html"
 JRA_RESULT_MENU_CNAME = "pw01skl00999999/B3"   # 競馬メニューの「レース結果」（開催選択のページ）
@@ -1989,6 +2040,75 @@ def import_result_day(url='', via='', key='', overwrite=False):
     return {'found': True, 'key': key, 'label': RR.day_label(first['race']['race_id']), 'races': len(day_urls),
             'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
             'discovered': discovered}
+
+def race_link_info(url):
+    """レース結果のURLから、表示用の情報と取り込み済みかどうかを返す"""
+    rid = RR.race_id_from_cname(url)
+    info = RR.parse_race_id(rid)
+    if not info:
+        return None
+    d = info['date']
+    return {'url': url, 'race_id': rid, 'day_key': RR.day_key(rid), 'date': d.isoformat(),
+            'label': f"{d.year}年{d.month}月{d.day}日 {info['venue']}{info['num']}R",
+            'imported': rid in imported_race_ids(d.year)}
+
+@app.route('/api/race_results/horse_targets', methods=['POST'])
+@login_required
+def api_race_results_horse_targets():
+    """JRAのURLが登録されている馬の一覧（Horses・Sire・Damシートから、指定されたシートのみ）"""
+    data = request.get_json(silent=True) or {}
+    wanted = set(data.get('sheets') or ['Horses'])
+    keyword = str(data.get('keyword') or '').strip()
+    sh = gc.open(horse_data)
+    targets, seen = [], set()
+    for title, name_col, en_col, url_col in (('Horses', H_NAME, H_NAME_EN, H_JRA_URL),
+                                             ('Sire', P_NAME, P_NAME_EN, P_JRA_URL),
+                                             ('Dam', P_NAME, P_NAME_EN, P_JRA_URL)):
+        if title not in wanted:
+            continue
+        try:
+            rows = sh.worksheet(title).get_all_values()[1:]
+        except gspread.WorksheetNotFound:
+            continue
+        for r in rows:
+            url = r[url_col].strip() if len(r) > url_col else ''
+            if not url or 'jra.go.jp' not in url or url in seen:
+                continue
+            name = display_name_of_row(r) if title == 'Horses' else (
+                (r[name_col] if len(r) > name_col else '') or (r[en_col] if len(r) > en_col else ''))
+            if keyword and keyword not in name and keyword not in (r[en_col] if len(r) > en_col else ''):
+                continue
+            seen.add(url)
+            targets.append({'name': name, 'sheet': title, 'url': url})
+    return jsonify({'targets': targets})
+
+@app.route('/api/race_results/horse_races', methods=['POST'])
+@login_required
+def api_race_results_horse_races():
+    """JRAの競走馬情報のページの「出走レース」から、各レースのレース結果のURLと取り込み済みかどうかを返す"""
+    data = request.get_json(silent=True) or {}
+    try:
+        urls = RR.parse_horse_race_urls(fetch_jra_html(str(data.get('url') or '')))
+        races = [info for info in (race_link_info(u) for u in urls) if info]
+    except Exception as e:
+        return jsonify({'error': f'競走馬のページを読み取れませんでした: {e}'}), 400
+    return jsonify({'races': races})
+
+@app.route('/api/race_results/import_races', methods=['POST'])
+@login_required
+def api_race_results_import_races():
+    """指定したレースだけの結果を取得して保存する（同じ日の他のレースは取り込まない）"""
+    data = request.get_json(silent=True) or {}
+    urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:20]
+    overwrite = bool(data.get('overwrite'))
+    try:
+        if not overwrite:
+            urls = [u for u in urls if not (race_link_info(u) or {}).get('imported')]
+        parsed, failed = fetch_race_results(urls)
+        saved, skipped = save_race_results(parsed, overwrite=overwrite)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'saved': len(saved), 'skipped': skipped, 'failed': failed})
 
 @app.route('/api/race_results/scan', methods=['POST'])
 @login_required

@@ -371,7 +371,18 @@
         {{ race_summary('平地', race_summary_data.flat) }}
         {% if race_summary_data.jump.starts %}{{ race_summary('障害', race_summary_data.jump) }}{% endif %}
     </div>
+    {% if race_summary_data.flat.kokyu %}
+    <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ "{:,}".format(race_summary_data.flat.kokyu.before) }}万円 → {{ "{:,}".format(race_summary_data.flat.kokyu.after) }}万円）</p>
+    {% endif %}
     <p class="race-summary-note">JRAのレース結果を取り込んだレースから計算しています（取り込みは「データ更新」の「レース結果 インポート」から）。</p>
+    {% set jra_url = horse[13] if horse|length > 13 and horse[13] and 'jra.go.jp' in horse[13] else '' %}
+    {% if jra_url %}
+    <div class="race-import-box">
+        <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}">JRAの出走レースを取り込む</button>
+        <label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label>
+        <span id="race-import-status" class="race-import-status"></span>
+    </div>
+    {% endif %}
     <hr>
     <div class="race-list-container">
         <div class="race-list-header">
@@ -611,6 +622,7 @@
     <a href="/">一覧に戻る</a>
 </div>
 
+<script src="{{ url_for('static', filename='race_import.js') }}"></script>
 <script>
 // 血統データ（インブリード判定・兄弟馬/近親馬検索で使用）
 // ※ pedigree はサーバー側(Jinja)の辞書のため、JSからはこのJSON経由で参照する
@@ -718,6 +730,42 @@ function selectCorrectParent(parentName, damName, birthYear) {
 function closeCandidateModal() {
     document.getElementById('candidateModal').style.display = 'none';
 }
+
+// --- 出走レース：JRAの競走馬情報のページの「出走レース」から、まだ取り込んでいないレースを取り込む ---
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('race-import-btn');
+    if (!btn || !window.RaceImport) return;
+    const status = document.getElementById('race-import-status');
+    btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        status.style.color = '';
+        status.textContent = 'JRAの競走馬情報を読み込んでいます...';
+        try {
+            const res = await RaceImport.importHorse(btn.dataset.url, {
+                wholeDay: document.getElementById('race-import-whole-day').checked,
+                log: text => { status.textContent = text; }
+            });
+            if (!res.todo) {
+                status.textContent = `出走${res.races}レースはすべて取り込み済みです。`;
+                btn.disabled = false;
+                return;
+            }
+            status.textContent = `${res.saved}レースを取り込みました` + (res.failed ? `（${res.failed}レースは取得に失敗）` : '') + '。'
+                + (res.errors.length ? res.errors[0] : '');
+            if (res.saved) {
+                status.textContent += '表示を更新しています...';
+                location.reload();
+                return;
+            }
+            status.style.color = '#c62828';
+            btn.disabled = false;
+        } catch (e) {
+            status.style.color = '#c62828';
+            status.textContent = e.message;
+            btn.disabled = false;
+        }
+    });
+});
 
 // --- 兄弟馬・近親馬：URL未登録の馬があれば、そこにフォーカスして気づきやすくする ---
 document.addEventListener("DOMContentLoaded", function() {

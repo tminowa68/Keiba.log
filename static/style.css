@@ -2131,3 +2131,18 @@ form .select-stables {
 .fetch-status-line:empty {
     display: none;
 }
+.race-import-box {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+.race-import-box button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.race-import-status {
+    color: #555;
+}

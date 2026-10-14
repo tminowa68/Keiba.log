@@ -11,7 +11,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
 import re
 from datetime import date
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 JRA_RESULT_URL = "https://www.jra.go.jp/JRADB/accessS.html?CNAME="
 
@@ -31,7 +31,7 @@ def _text(el):
 
 
 def _soup(html_or_soup):
-    if isinstance(html_or_soup, BeautifulSoup):
+    if isinstance(html_or_soup, (BeautifulSoup, Tag)):
         return html_or_soup
     return BeautifulSoup(html_or_soup or '', 'html.parser')
 
@@ -115,6 +115,20 @@ def parse_race_list_page(html_or_soup):
         m = re.search(r'CNAME=(pw01sde\d+/[0-9A-Fa-f]{2})', a['href'])
         if m:
             url = JRA_RESULT_URL + m.group(1)
+            if url not in urls:
+                urls.append(url)
+    return urls
+
+
+def parse_horse_race_urls(html_or_soup):
+    """JRAの競走馬情報のページの「出走レース」の表から、各レースのレース結果のURLを返す（新しい順）"""
+    soup = _soup(html_or_soup)
+    urls = []
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '出走レース' not in _text(caption):
+            continue
+        for url in parse_race_list_page(table):
             if url not in urls:
                 urls.append(url)
     return urls
@@ -353,21 +367,45 @@ def class_from_shutoku(amount, has_started, jump=False):
     return 'オープン'
 
 
-def summarize_results(results):
+# 降級制度：2014年以前生まれの馬は、4歳の夏季競馬の開始時点で平地収得賞金を1/2にしていた（2019年夏季競馬から廃止。
+# 2015年生まれ以降は対象外。1/2になった収得賞金は廃止後も元に戻らない）
+KOKYU_LAST_BIRTH_YEAR = 2014
+
+
+def summer_racing_start(year):
+    """夏季競馬の開始日（日本ダービーの翌週、6月の最初の土曜日）"""
+    d = date(year, 6, 1)
+    return date(year, 6, 1 + (5 - d.weekday()) % 7)
+
+
+def summarize_results(results, birth_year=None, today=None):
     """出走成績（日付順でなくてよい）から、本賞金の合計・収得賞金・クラスを平地／障害別に求める。
-    results の各要素：{'date': date, 'jump': bool, 'category', 'class', 'grade', 'name', 'rule', 'place', 'prize'}"""
+    results の各要素：{'date': date, 'jump': bool, 'category', 'class', 'grade', 'name', 'rule', 'place', 'prize'}
+    birth_year を指定すると、2014年以前生まれの馬は4歳夏季の降級（平地収得賞金を1/2）を反映する"""
+    today = today or date.today()
+    kokyu_date = None
+    if birth_year and int(birth_year) <= KOKYU_LAST_BIRTH_YEAR:
+        kokyu_date = summer_racing_start(int(birth_year) + 4)
     summary = {}
     for kind, jump in (('flat', False), ('jump', True)):
-        rows = [r for r in results if bool(r.get('jump')) == jump]
+        rows = sorted([r for r in results if bool(r.get('jump')) == jump],
+                      key=lambda r: (r.get('date') or date.min, str(r.get('num', '')).zfill(2)))
         started = [r for r in rows if r.get('place') not in ('取消', '除外', '')]
         total_prize = sum(int(r.get('prize') or 0) for r in rows)
         shutoku = 0
+        kokyu = None
         for r in rows:
+            if not jump and kokyu_date and not kokyu and r.get('date') and r['date'] >= kokyu_date:
+                kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
+                shutoku //= 2
             place = int(r['place']) if str(r.get('place', '')).isdigit() else None
             r['shutoku'] = shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
                                           r.get('grade', ''), r.get('name', ''), r.get('rule', ''),
                                           place, int(r.get('prize') or 0))
             shutoku += r['shutoku']
+        if not jump and kokyu_date and not kokyu and today >= kokyu_date and shutoku:
+            kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
+            shutoku //= 2
         summary[kind] = {'starts': len(started), 'total_prize': total_prize, 'shutoku': shutoku,
-                         'class': class_from_shutoku(shutoku, bool(started), jump)}
+                         'class': class_from_shutoku(shutoku, bool(started), jump), 'kokyu': kokyu}
     return summary
