@@ -2401,6 +2401,7 @@ class AutoRegistrar:
         self.rows = {t: [list(r) for r in d[1:]] for t, d in self.data.items()}
         self.new_rows = {t: [] for t in self.ws}
         self.updated = {t: {} for t in self.ws}   # 行番号（0始まり）→ 行
+        self.deleted_horses = set()   # Damシートに移すHorsesシートの行（id）
         self.cancel_rows = []
         self.stables = None
         self.info_cache = {}
@@ -2416,7 +2417,7 @@ class AutoRegistrar:
         return self.rows[t] + self.new_rows[t]
 
     def find_rows(self, t, name):
-        return [r for r in self.all_rows(t) if row_matches_name(r, name)]
+        return [r for r in self.all_rows(t) if row_matches_name(r, name) and id(r) not in self.deleted_horses]
 
     def in_any_sheet(self, name):
         return any(self.find_rows(t, name) for t in ('Horses', 'Sire', 'Dam'))
@@ -2482,20 +2483,42 @@ class AutoRegistrar:
             return f"{name}：スキップ（地方または海外所属の馬）"
         if info.get('name') and not _same_name(info['name'], name) and not _same_name(info.get('name_en'), name):
             return f"{name}：スキップ（リンク先の馬名が「{info.get('name')}」で一致しません）"
-        if not rows and info.get('gender') == '牝' and info.get('has_offspring'):
-            # 産駒がいる牝馬（繁殖牝馬）は、競走馬（Horses）ではなく母馬（Dam）として登録する
+        if info.get('gender') == '牝' and info.get('has_offspring'):
+            # 産駒がいる牝馬（繁殖牝馬）は、競走馬（Horses）ではなく母馬（Dam）として登録する。
+            # Horsesシートにある馬（URLが無い馬）は、Horsesシートから消してDamシートに移す
+            moved = rows[0] if rows else None
             row = [''] * len(PARENT_COLUMNS)
-            if is_english_name(name):
+            if moved is not None:
+                moved = list(moved) + [''] * len(HORSE_COLUMNS)
+                for h_col, p_col in ((H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BIRTH), (H_SIRE, P_SIRE),
+                                     (H_DAM, P_DAM), (H_OWNER, P_OWNER), (H_REGION, P_REGION),
+                                     (H_DETAIL, P_DETAIL), (H_BREEDER, P_BREEDER), (H_NAR_URL, P_NAR_URL)):
+                    row[p_col] = str(moved[h_col] or '').strip()
+                self.deleted_horses.add(id(rows[0]))
+            elif is_english_name(name):
                 row[P_NAME_EN] = name
             else:
                 row[P_NAME] = name
             for col, val in self.parent_values(info).items():
-                row[col] = val
+                if not row[col]:
+                    row[col] = val
             row[P_JRA_URL] = url
-            self.new_rows['Dam'].append(row)
+            existing = self.find_rows('Dam', name)
+            if existing:
+                # Damシートに同じ馬がいれば、空欄の項目だけ埋める
+                target = existing[0]
+                target.extend([''] * (len(PARENT_COLUMNS) - len(target)))
+                for col in range(len(PARENT_COLUMNS)):
+                    if not str(target[col]).strip() and row[col]:
+                        target[col] = row[col]
+                if target in self.rows['Dam']:
+                    self.updated['Dam'][self.rows['Dam'].index(target)] = target
+            else:
+                self.new_rows['Dam'].append(row)
             self.record_cancel(name, info)
             parents = self.register_parents(info, date_year(row[P_BIRTH]), 1)
-            return f"{name}：母馬として登録（産駒あり）" + (f"（血統：{'、'.join(parents)}）" if parents else '')
+            label = "Horsesシートから母馬（Dam）に移動（産駒あり）" if moved is not None else "母馬として登録（産駒あり）"
+            return f"{name}：{label}" + (f"（血統：{'、'.join(parents)}）" if parents else '')
         values = self.horse_values(info)
         if rows:
             row = rows[0]
@@ -2644,6 +2667,18 @@ class AutoRegistrar:
     # --- まとめて書き込む ---
     def save(self):
         added_horses = []
+        updated_horses = {display_name_of_row(r) for r in self.updated['Horses'].values()}
+        if self.deleted_horses:
+            # Damシートに移した馬をHorsesシートから消すため、Horsesシートは全体を書き直す
+            ws = self.ws['Horses']
+            header = self.header['Horses'] + [''] * max(0, len(HORSE_COLUMNS) - len(self.header['Horses']))
+            rows = [r for r in self.rows['Horses'] if id(r) not in self.deleted_horses] + self.new_rows['Horses']
+            rows.sort(key=lambda r: display_name_of_row(r))
+            ensure_columns(ws, len(header))
+            ws.clear()
+            with_sheets_retry(ws.update, range_name='A1', values=[header] + rows)
+            added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
+            self.updated['Horses'], self.new_rows['Horses'] = {}, []
         for t, ws in self.ws.items():
             columns = HORSE_COLUMNS if t == 'Horses' else PARENT_COLUMNS
             if self.updated[t]:
@@ -2666,7 +2701,7 @@ class AutoRegistrar:
             if rows:
                 ws_cancel.append_rows(rows)
         # 登録した馬・URLを登録した馬のクラス・最新レースを計算する
-        names = set(added_horses) | {display_name_of_row(r) for r in self.updated['Horses'].values()}
+        names = set(added_horses) | updated_horses
         if names:
             try:
                 update_horse_class_columns(lambda r: display_name_of_row(r) in names)
