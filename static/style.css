@@ -766,7 +766,7 @@ form .select-stables {
     font-weight: bold;
 }
 .relatives-cell {
-    padding: 8px 10px;
+    padding: 3px 5px;
     text-align: center;
     overflow-wrap: anywhere;
 }
@@ -1806,6 +1806,10 @@ form .select-stables {
 
 /* モバイル端末向けのスタイル */
 @media screen and (max-width: 768px) {
+    /* スマホでは左右の余白を狭くする */
+    .container {
+        padding: 0 5px;
+    }
     input, select, textarea, button {
         font-size: 16px;
     }

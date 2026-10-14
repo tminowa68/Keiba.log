@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}プロフィール編集 - keiba.log{% endblock %}
 {% block content %}
+<script src="{{ url_for('static', filename='name_check.js') }}"></script>
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
     {% with messages = get_flashed_messages() %}
         {% if messages %}
@@ -428,6 +429,17 @@ async function fetchFromJra() {
         if (!res.ok || data.error) {
             statusEl.textContent = data.error || '取得に失敗しました。';
             statusEl.style.color = 'red';
+            return;
+        }
+
+        // 取得した馬の馬名が、編集中の馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [
+            (document.querySelector('[name="name"]') || {}).value,
+            (document.querySelector('[name="name_en"]') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(urlInput);
             return;
         }
 

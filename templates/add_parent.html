@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}血統登録 - keiba.log{% endblock %}
 {% block content %}
+<script src="{{ url_for('static', filename='name_check.js') }}"></script>
 <h2>血統の登録</h2>
 <section>
     {% with messages = get_flashed_messages() %}
@@ -158,6 +159,19 @@
         <a href="{{ url_for('horse_detail', name=origin, active_tab='profile') if origin else '/' }}" class="btn-cancel">キャンセル</a>
     </div>
 </form>
+
+    <!-- 変更内容確認モーダル（edit_horseと同じ） -->
+    <div id="confirm_overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+        <div style="background:#fff; padding:24px; border-radius:8px; max-width:520px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.2);">
+            <h3 style="margin-top:0;">以下の項目が変更されています</h3>
+            <p style="color:#666; font-size:0.9em;">この内容で登録してよろしいですか？</p>
+            <div id="confirm_changes_list"></div>
+            <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" id="confirm_cancel_btn" style="padding:8px 16px; background:#ccc; border:none; border-radius:4px; cursor:pointer;">キャンセル</button>
+                <button type="button" id="confirm_submit_btn" style="padding:8px 16px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">この内容で登録する</button>
+            </div>
+        </div>
+    </div>
 </section>
 
 <script>
@@ -410,6 +424,16 @@ async function fetchFromJra() {
             return;
         }
 
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(urlInput);
+            return;
+        }
+
         applyFetchedHorseData(data);
 
         statusEl.textContent = '情報を取得しました。内容を確認してください。';
@@ -459,6 +483,16 @@ async function fetchFromNar() {
             statusEl.style.color = 'red';
             return;
         }
+
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(document.getElementById('nar_url_input'));
+            return;
+        }
         applyFetchedHorseData(data);
         if (data.birthplace && !findBirthplaceMatch(data.birthplace, fetchedBirthPeriod(data))) {
             statusEl.textContent = `情報を取得しました。産地「${data.birthplace}」は手で選んでください。`;
@@ -506,6 +540,16 @@ async function fetchFromOther() {
             return;
         }
 
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(urlInput);
+            return;
+        }
+
         // 父・母・英馬名（日本産の馬は生年月日・馬主名・産地・生産牧場も）を入力する
         applyFetchedHorseData(data);
         if (data.jbis_url && !url) { urlInput.value = data.jbis_url; autoResizeTextarea(urlInput); }
@@ -541,6 +585,16 @@ async function applyEquibaseText() {
         if (!res.ok || data.error) {
             statusEl.textContent = data.error || '読み取りに失敗しました。';
             statusEl.style.color = 'red';
+            return;
+        }
+
+        // 取得した馬の馬名が、登録する馬名と合っているか確認する
+        const nameMismatch = checkFetchedHorseName(data, [document.querySelector('input[name="p_name"]').value,
+            (document.getElementById('other_name_input') || {}).value]);
+        if (nameMismatch) {
+            statusEl.textContent = nameMismatch;
+            statusEl.style.color = 'red';
+            clearFetchInput(document.getElementById('equibase_text_input'));
             return;
         }
 
@@ -1048,6 +1102,91 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+});
+
+// --- 変更内容の確認（edit_horseと同じ）：元々入っていた値が変わっていたら、登録前に確認画面を出す ---
+function getParentFormSnapshot() {
+    const form = document.querySelector('form[action="/add_parent"]');
+    const val = (sel) => ((form.querySelector(sel) || {}).value || '').toString().trim();
+    const y = val('[name="year"]'), m = val('[name="month"]'), d = val('[name="day"]');
+    return {
+        jra_url: val('[name="jra_url"]'),
+        nar_url: val('[name="nar_url"]'),
+        other_name: val('#other_name_input'),
+        sire: val('[name="sire"]'),
+        dam: val('[name="dam"]'),
+        birth: y ? y + '年' + (m ? m + '月' + (d ? d + '日' : '') : '') : '',
+        owner: val('[name="owner"]'),
+        birthplace_region: val('[name="birthplace_region"]'),
+        birthplace_detail: val('[name="birthplace_detail"]'),
+        breeder: val('[name="breeder"]'),
+    };
+}
+
+function buildParentConfirmChanges(initial, current) {
+    const otherLabel = (document.getElementById('other_name_input') || {}).name === 'name_ja' ? '馬名（和名）' : '英馬名';
+    const labels = [
+        ['jra_url', 'JRAのURL'], ['nar_url', 'NARのURL'], ['other_name', otherLabel], ['sire', '父'], ['dam', '母'],
+        ['birth', '生年月日'], ['owner', '馬主名'], ['birthplace_region', '産地'], ['birthplace_detail', '産地（詳細）'],
+        ['breeder', '生産牧場'],
+    ];
+    // 元々値が入っていて、かつ変化した項目だけ（空白から入力しただけの項目は対象外）
+    return labels.filter(([k]) => initial[k] && initial[k] !== current[k])
+                 .map(([k, label]) => ({ label: label, oldVal: initial[k], newVal: current[k] }));
+}
+
+function showParentConfirmModal(changes) {
+    const list = document.getElementById('confirm_changes_list');
+    list.innerHTML = '';
+    changes.forEach(function (c) {
+        const row = document.createElement('div');
+        row.style.cssText = 'margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #eee;';
+        const labelEl = document.createElement('strong');
+        labelEl.textContent = c.label;
+        const values = document.createElement('div');
+        values.style.marginTop = '4px';
+        const oldEl = document.createElement('span');
+        oldEl.style.cssText = 'color:#999; text-decoration:line-through;';
+        oldEl.textContent = c.oldVal;
+        const arrow = document.createElement('span');
+        arrow.style.margin = '0 8px';
+        arrow.textContent = '→';
+        const newEl = document.createElement('span');
+        newEl.style.cssText = 'color:#2196F3; font-weight:bold;';
+        newEl.textContent = c.newVal || '（空欄）';
+        values.append(oldEl, arrow, newEl);
+        row.append(labelEl, values);
+        list.appendChild(row);
+    });
+    document.getElementById('confirm_overlay').style.display = 'flex';
+}
+
+window.addEventListener('DOMContentLoaded', function () {
+    const parentForm = document.querySelector('form[action="/add_parent"]');
+    let initialParentValues = null;
+    // 産地・月の選択肢の初期化が終わってから元の値を記録する
+    setTimeout(function () { initialParentValues = getParentFormSnapshot(); }, 0);
+
+    parentForm.addEventListener('submit', function (e) {
+        // 「同名の馬を登録する」は別の馬として新規に追加するため確認しない
+        const forceNew = document.getElementById('force_new_checkbox');
+        if (!initialParentValues || (forceNew && forceNew.checked)) return;
+        const changes = buildParentConfirmChanges(initialParentValues, getParentFormSnapshot());
+        if (changes.length === 0) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        showParentConfirmModal(changes);
+    });
+    document.getElementById('confirm_cancel_btn').addEventListener('click', function () {
+        document.getElementById('confirm_overlay').style.display = 'none';
+    });
+    document.getElementById('confirm_submit_btn').addEventListener('click', function () {
+        document.getElementById('confirm_overlay').style.display = 'none';
+        const pName = document.querySelector('input[name="p_name"]').value;
+        if (pName) sessionStorage.setItem('scrollToParent', pName);
+        // form.submit() は submit イベントを発火させないため、確認画面が再表示されることはない
+        parentForm.submit();
+    });
 });
 
 // 登録完了後に horse_detail で該当セルへスクロールするため馬名を保存

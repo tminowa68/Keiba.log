@@ -1625,6 +1625,10 @@ def parse_nar_horse_page(soup):
         return None
 
     result = {}
+    # 馬名：<h4 class="odd_title">ミスエンピリカル</h4>（取得した馬が画面の馬名と合っているかの確認に使う）
+    name_el = soup.find('h4', class_='odd_title')
+    if clean(name_el):
+        result['name'] = clean(name_el)
     sire_td = soup.find('td', class_='fathername')
     if clean(sire_td):
         result['sire'] = clean(sire_td)
