@@ -45,7 +45,21 @@
         登録済みの馬で転厩・馬主変更・去勢があった場合は、Horsesシートを更新してChangesシートに記録します。
     </p>
 
-    <form method="POST" action="/import_trainer_horses" enctype="multipart/form-data" style="margin-top:20px;">
+    <div class="tp-box">
+        <p style="margin:0 0 8px; font-size:0.9em;">
+            <strong>JRAのサイトから取り込む</strong>：全調教師の「管理馬一覧」をJRAのサイトから順番に取得して取り込みます（ファイルの保存・アップロードは不要です）。
+        </p>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+            <button type="button" id="tp-start-btn" class="rr-btn">JRAから管理馬一覧を取り込む</button>
+            <button type="button" id="tp-stop-btn" class="rr-btn" style="background:#9e9e9e;" disabled>中止</button>
+            <label style="font-size:0.9em;"><input type="checkbox" id="tp-resume" checked> 前回の続きから（今日取り込み済みの調教師を飛ばす）</label>
+        </div>
+        <div id="tp-message" style="margin-top:8px; font-size:0.9em; font-weight:bold;"></div>
+        <div id="tp-log" class="rh-log" style="display:none;"></div>
+    </div>
+    <p style="margin:15px 0 0; font-size:0.9em;"><strong>ファイルから取り込む</strong>：</p>
+
+    <form method="POST" action="/import_trainer_horses" enctype="multipart/form-data" style="margin-top:8px;">
         <div style="margin-bottom:15px;">
             <label>ファイル：</label><br>
             <input type="file" name="trainer_file" accept=".mhtml,.mht,.html,.htm" required style="margin-top:5px;">
@@ -515,4 +529,70 @@
     });
 })();
 </script>
+
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    const today = new Date();
+    const DONE_KEY = 'keibaTrainerPagesDone_' + today.getFullYear() + (today.getMonth() + 1) + today.getDate();
+    let stopRequested = false;
+    const loadDone = () => { try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]')); } catch (e) { return new Set(); } };
+    const saveDone = set => { try { localStorage.setItem(DONE_KEY, JSON.stringify([...set])); } catch (e) { /* 保存できなくても続ける */ } };
+    function log(text, isError) {
+        const box = $('tp-log');
+        box.style.display = '';
+        const line = document.createElement('div');
+        line.textContent = text;
+        if (isError) line.className = 'ng';
+        box.appendChild(line);
+        while (box.childNodes.length > 400) box.removeChild(box.firstChild);
+        box.scrollTop = box.scrollHeight;
+    }
+    $('tp-stop-btn').addEventListener('click', () => {
+        stopRequested = true;
+        $('tp-message').textContent = '中止しています（処理中の調教師が終わったら止まります）...';
+    });
+    $('tp-start-btn').addEventListener('click', async () => {
+        stopRequested = false;
+        $('tp-start-btn').disabled = true; $('tp-stop-btn').disabled = false;
+        $('tp-log').innerHTML = '';
+        const done = $('tp-resume').checked ? loadDone() : new Set();
+        let imported = 0, failed = 0;
+        try {
+            $('tp-message').textContent = 'JRAから調教師の一覧を取得しています...';
+            const data = await RaceImport.post('/api/trainer_pages/list', {});
+            const targets = data.trainers.filter(t => !done.has(t.cname));
+            log(`調教師：${data.trainers.length}人` + (data.trainers.length > targets.length ? `（今日取り込み済みの${data.trainers.length - targets.length}人を飛ばします）` : ''));
+            for (let i = 0; i < targets.length && !stopRequested; i++) {
+                const t = targets[i];
+                const head = `[${i + 1}/${targets.length}] ${t.area ? t.area + '・' : ''}${t.name}`;
+                $('tp-message').textContent = `${head} の管理馬一覧を取り込んでいます...`;
+                try {
+                    const res = await RaceImport.post('/api/trainer_pages/import', { action: t.action, cname: t.cname });
+                    if (res.ok || res.skipped) {
+                        imported += res.ok ? 1 : 0;
+                        done.add(t.cname); saveDone(done);
+                    } else {
+                        failed++;
+                    }
+                    (res.messages || []).forEach((m, k) => log(k === 0 ? `${head}：${m}` : `　${m}`, !res.ok && !res.skipped));
+                } catch (e) {
+                    failed++;
+                    log(`${head}：${e.message}`, true);
+                    if (RaceImport.isFatalError(e.message)) break;
+                }
+            }
+            $('tp-message').textContent = (stopRequested ? '中止しました' : '完了しました') + `（${imported}人の管理馬一覧を取り込み`
+                + (failed ? `、${failed}人は失敗` : '') + '）。';
+        } catch (e) {
+            $('tp-message').textContent = e.message;
+        } finally {
+            $('tp-start-btn').disabled = false; $('tp-stop-btn').disabled = true;
+        }
+    });
+})();
+</script>
+<style>
+    .tp-box { margin-top:12px; padding:10px 12px; border:1px solid #ddd; border-radius:6px; background:#fafafa; }
+</style>
 {% endblock %}
