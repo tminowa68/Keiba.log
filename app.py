@@ -965,7 +965,9 @@ def parse_equibase_text(text):
         Owner: Sally Thomas
         Breeder: Howard M. Bender & Sondra Bender
     """
-    lines = [l.strip() for l in (text or '').splitlines() if l.strip()]
+    # 馬名（産地）の後ろに付く「Denotes OBS Graduate」（OBSのセール出身馬の印）は取り除く
+    text = re.sub(r'Denotes\s+OBS\s+Graduate', ' ', text or '', flags=re.I)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
     # equibaseの馬は海外産なので、産地は「海外」にする
     result = {'birthplace_region': '海外'}
 
