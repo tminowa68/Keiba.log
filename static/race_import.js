@@ -35,16 +35,29 @@
         opts = opts || {};
         const log = opts.log || function() {};
         const result = { registered: 0, skipped: 0, failed: 0, messages: [] };
-        for (let i = 0; i < (items || []).length; i += 4) {
-            const chunk = items.slice(i, i + 4);
-            log(`未登録の馬を登録しています（${Math.min(i + chunk.length, items.length)}／${items.length}頭）：${chunk.map(x => x.name).join('、')}`);
+        const queue = (items || []).map(x => ({ item: x, single: false }));
+        const total = queue.length;
+        let done = 0;
+        while (queue.length) {
+            // 1回に4頭ずつ（サーバーの処理時間の上限で失敗した馬は1頭ずつ）送る
+            let size = 1;
+            while (!queue[0].single && size < 4 && size < queue.length && !queue[size].single) size++;
+            const chunk = queue.splice(0, size);
+            const names = chunk.map(q => q.item.name);
+            log(`未登録の馬を登録しています（${done + 1}〜${Math.min(done + chunk.length, total)}／${total}頭）：${names.join('、')}`);
             let res;
             try {
-                res = await post('/api/auto_register', { items: chunk });
+                res = await post('/api/auto_register', { items: chunk.map(q => q.item) });
             } catch (e) {
                 if (isFatalError(e.message)) throw e;
+                if (/HTTP 5\d\d/.test(e.message) && chunk.length > 1) {
+                    // サーバーの処理時間の上限にかかった場合は、1頭ずつ送り直す
+                    queue.unshift(...chunk.map(q => ({ item: q.item, single: true })));
+                    continue;
+                }
                 result.failed += chunk.length;
-                result.messages.push({ text: `${chunk.map(x => x.name).join('、')}：${e.message}`, error: true });
+                done += chunk.length;
+                result.messages.push({ text: `${names.join('、')}：${e.message}`, error: true });
                 continue;
             }
             (res.results || []).forEach(r => {
@@ -53,8 +66,21 @@
                 else result.skipped++;
                 result.messages.push({ text: r.message, error: /失敗/.test(r.message) });
             });
+            done += (res.results || []).length;
+            // 時間の都合で処理しきれなかった馬は、もう一度送る
+            queue.unshift(...(res.remaining || []).map(x => ({ item: x, single: false })));
         }
+        if (result.registered && !opts.deferSort) await finishRegistration();
         return result;
+    }
+
+    // 自動登録で末尾に追加した行を、Horses・Sire・Damシートの馬名順に並べ替える（一連の登録の最後に1回）
+    async function finishRegistration() {
+        try {
+            await post('/api/auto_register/finish', {});
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     // 1頭分：JRAの競走馬情報のページの「出走レース」から、取り込まれていないレースを取り込む
@@ -109,7 +135,7 @@
         }
         // 出走馬のうち未登録の馬を登録する
         if (opts.register && result.unregistered.length) {
-            const reg = await registerHorses(result.unregistered, { log: log });
+            const reg = await registerHorses(result.unregistered, { log: log, deferSort: opts.deferSort });
             result.registered = reg.registered;
             result.registerFailed = reg.failed;
             result.registerMessages = reg.messages;
@@ -122,5 +148,6 @@
         return /作成できませんでした|ログイン/.test(message || '');
     }
 
-    window.RaceImport = { post: post, importHorse: importHorse, registerHorses: registerHorses, isFatalError: isFatalError };
+    window.RaceImport = { post: post, importHorse: importHorse, registerHorses: registerHorses,
+                         finishRegistration: finishRegistration, isFatalError: isFatalError };
 })();

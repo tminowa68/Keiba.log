@@ -2679,8 +2679,20 @@ def parse_jra_search_results(html):
         raise ValueError('競走馬検索の結果のページを読み取れませんでした。')
     return results
 
+_jra_search_cache = {}   # 馬名 → (検索した時刻, 結果)。外国の種牡馬など、何度も検索される馬名のため
+JRA_SEARCH_CACHE_TTL = 6 * 3600
+
 def search_jra_horses(name):
-    """JRAの競走馬検索で馬名を検索する（競馬メニューの「競走馬検索」に馬名を入力して「検索」を押すのと同じ）"""
+    """JRAの競走馬検索で馬名を検索する（競馬メニューの「競走馬検索」に馬名を入力して「検索」を押すのと同じ）。
+    同じ馬名の検索結果（該当データなしも含む）はしばらく覚えておく"""
+    cached = _jra_search_cache.get(name)
+    if cached and time.time() - cached[0] < JRA_SEARCH_CACHE_TTL:
+        return cached[1]
+    results = _search_jra_horses(name)
+    _jra_search_cache[name] = (time.time(), results)
+    return results
+
+def _search_jra_horses(name):
     form = load_jra_search_form()
     fields = dict(form['fields'])
     fields['iv_h_name'] = name
@@ -2727,7 +2739,8 @@ class AutoRegistrar:
     親（父・母・母の父）も、未登録・情報不足ならリンク先（リンクが無ければ競走馬検索）から登録する"""
     MAX_PARENT_DEPTH = 4
 
-    def __init__(self):
+    def __init__(self, deadline=None):
+        self.deadline = deadline   # この時刻を過ぎたら、親の登録はしない（サーバーの処理時間の上限に備える）
         self.sh = gc.open(horse_data)
         self.ws = {t: self.sh.worksheet(t) for t in ('Horses', 'Sire', 'Dam')}
         self.data = {t: [list(r) for r in horse_sheet_values(t)] for t in self.ws}
@@ -2994,6 +3007,8 @@ class AutoRegistrar:
     def register_parents(self, info, birth_year, depth=0):
         """父・母（母がJRAに無くても母の父にリンクがあれば母の父）を登録する"""
         done = []
+        if self.deadline and time.time() > self.deadline:
+            return done
         for t, name_key, url_key in (('Sire', 'sire', 'sire_url'), ('Dam', 'dam', 'dam_url'),
                                      ('Sire', 'dam_sire', 'dam_sire_url')):
             name = (info.get(name_key) or '').strip()
@@ -3012,33 +3027,34 @@ class AutoRegistrar:
 
     # --- まとめて書き込む ---
     def save(self):
-        """変更をまとめて書き込む。行を追加・削除したシートは、読み込んだ内容から並べ替えて全体を書き直す
-        （書き込んだ後に読み込み直さないことで、Google SheetsのAPIの読み込み回数を減らす）"""
+        """変更をまとめて書き込む：変更した行の更新 → 移した行の削除 → 新しい行の追加の順（行番号がずれないように）。
+        シート全体の並べ替えは時間がかかるため、一連の登録が終わった後にまとめて行う（sort_registry_sheets）"""
         added_horses = [display_name_of_row(r) for r in self.new_rows['Horses']]
         updated_horses = {display_name_of_row(r) for r in self.updated['Horses'].values()}
         for t, ws in self.ws.items():
             columns = HORSE_COLUMNS if t == 'Horses' else PARENT_COLUMNS
             deleted = self.deleted_horses if t == 'Horses' else set()
-            if self.new_rows[t] or any(id(r) in deleted for r in self.rows[t]):
-                header = list(self.header[t]) + [''] * max(0, len(columns) - len(self.header[t]))
-                for i, name in enumerate(columns):
-                    if not header[i]:
-                        header[i] = name
-                rows = [r for r in self.rows[t] if id(r) not in deleted] + self.new_rows[t]
-                rows = sorted([r for r in rows if display_name_of_row(r)], key=display_name_of_row)
-                ensure_columns(ws, len(header))
-                with_sheets_retry(ws.clear)
-                with_sheets_retry(ws.update, range_name='A1', values=[header] + rows)
-                remember_sheet_values(t, [list(header)] + [list(r) for r in rows])
-            elif self.updated[t]:
-                if t != 'Horses':
-                    ensure_parent_header(ws, self.header[t])
-                ensure_columns(ws, len(columns))
+            if not (self.updated[t] or self.new_rows[t] or any(id(r) in deleted for r in self.rows[t])):
+                continue
+            ensure_columns(ws, len(columns))
+            if t != 'Horses':
+                ensure_parent_header(ws, self.header[t])
+            elif len(self.header[t]) < len(columns) or not all(self.header[t][i] for i in (H_CLASS, H_LAST_RACE, H_SHUTOKU)):
+                with_sheets_retry(ws.update, range_name=f"{col_letter(H_CLASS)}1:{col_letter(H_SHUTOKU)}1",
+                                  values=[[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE], HORSE_COLUMNS[H_SHUTOKU]]])
+            updates = {idx: row for idx, row in self.updated[t].items() if id(row) not in deleted}
+            if updates:
                 last = col_letter(len(columns) - 1)
                 with_sheets_retry(ws.batch_update, [
                     {'range': f"A{idx + 2}:{last}{idx + 2}", 'values': [list(row)[:len(columns)]]}
-                    for idx, row in self.updated[t].items()])
-                remember_sheet_values(t, [list(self.header[t])] + [list(r) for r in self.rows[t]])
+                    for idx, row in updates.items()])
+            for idx in sorted((i for i, r in enumerate(self.rows[t]) if id(r) in deleted), reverse=True):
+                with_sheets_retry(ws.delete_rows, idx + 2)
+            if self.new_rows[t]:
+                with_sheets_retry(ws.append_rows, [list(r)[:len(columns)] for r in self.new_rows[t]],
+                                  value_input_option='RAW')
+            kept = [r for r in self.rows[t] if id(r) not in deleted] + self.new_rows[t]
+            remember_sheet_values(t, [list(self.header[t])] + [list(r) for r in kept])
         if self.cancel_rows:
             ws_cancel = get_or_create_worksheet(self.sh, "抹消", ["年月日", "馬名"])
             existing = {r[1] for r in ws_cancel.get_all_values()[1:] if len(r) > 1}
@@ -3077,12 +3093,18 @@ def api_auto_register():
     """未登録の馬（またはURLが無い馬）をJRAの競走馬情報から登録する。items：[{'name', 'url', 'known'}]（1回に5頭まで）"""
     data = request.get_json(silent=True) or {}
     items = (data.get('items') or [])[:5]
+    started = time.time()
+    remaining = []
     try:
-        reg = AutoRegistrar()
+        # サーバーの1回の処理時間の上限（30秒）にかからないよう、15秒を過ぎたら残りの馬は画面の側で送り直してもらう
+        reg = AutoRegistrar(deadline=started + 15)
         results = []
         for item in items:
             name = str(item.get('name') or '').strip()
             if not name:
+                continue
+            if results and time.time() - started > 12:
+                remaining.append(item)
                 continue
             try:
                 url = str(item.get('url') or '')
@@ -3098,7 +3120,26 @@ def api_auto_register():
         reg.save()
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-    return jsonify({'results': results})
+    return jsonify({'results': results, 'remaining': remaining})
+
+def sort_registry_sheets():
+    """Horses・Sire・Damシートを馬名順に並べ替える（自動登録では行を末尾に追加しているため）"""
+    sh = gc.open(horse_data)
+    for t in ('Horses', 'Sire', 'Dam'):
+        try:
+            sort_and_resize_table(sh.worksheet(t), sort_col_index=0)
+        except gspread.WorksheetNotFound:
+            pass
+
+@app.route('/api/auto_register/finish', methods=['POST'])
+@login_required
+def api_auto_register_finish():
+    """一連の自動登録の後に、Horses・Sire・Damシートを馬名順に並べ替える"""
+    try:
+        sort_registry_sheets()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'ok': True})
 
 @app.route('/api/auto_register/targets')
 @login_required
