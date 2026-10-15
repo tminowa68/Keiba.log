@@ -2,13 +2,19 @@
 // （別の馬のURLやデータを入力してしまった場合に、違う馬の情報が入力されないようにする）
 
 // 表記ゆれ（空白・記号・全角半角・大文字小文字）をそろえて比較する
-// 馬名の後ろのⅡ・Ⅲ・2・3など（同名馬を区別するもの。JBISは「ルパンⅡ」、登録は「ルパン2」など）は取り除いて比較する
+//  ・和名：Ⅱ・Ⅲなどのローマ数字は 2・3 に変換し、数字まで比較する（JBISの「ルパンⅡ」と登録の「ルパン2」は同じ）
+//  ・英字の馬名：後ろの II・III など（equibaseで同名馬を区別するもの）は取り除いて比較する
+const ROMAN_NUMERAL_DIGITS = { 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5', 'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8',
+                               'Ⅸ': '9', 'Ⅹ': '10', 'Ⅺ': '11', 'Ⅻ': '12' };
 function normalizeHorseNameForCheck(name) {
-    return (name || '').toString()
-        .replace(/[\u2160-\u216F]+\s*$/, '')        // Ⅰ〜Ⅿ（ローマ数字の記号）
-        .replace(/\s+(I{1,3}|IV|V|VI{1,3}|IX|X)\s*$/, '') // 「 II」「 III」のような英字のローマ数字
-        .normalize('NFKC')
-        .replace(/(\D)\d{1,2}\s*$/, '$1')            // 「ルパン2」「ルパン２」のような後ろの数字
+    let text = (name || '').toString();
+    if (isEnglishHorseName(text)) {
+        text = text.replace(/[\u2160-\u216F]+\s*$/, '')        // Ⅰ〜Ⅿ（ローマ数字の記号）
+                   .replace(/\s+(I{1,3}|IV|V|VI{1,3}|IX|X)\s*$/, ''); // 「 II」「 III」のような英字のローマ数字
+    } else {
+        text = text.replace(/[\u2160-\u216B]/g, c => ROMAN_NUMERAL_DIGITS[c] || c);
+    }
+    return text.normalize('NFKC')
         .replace(/[\s・.\-'’`()（）\[\]［］「」□○◇]/g, '').toLowerCase();
 }
 
