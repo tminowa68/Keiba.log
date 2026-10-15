@@ -214,7 +214,7 @@
         if (!targets.length) { message('取り込む開催日を選んでください。', true); return; }
         const overwrite = $('rr-overwrite').checked;
         setBusy(true);
-        let totalSaved = 0;
+        let totalSaved = 0, totalRegistered = 0;
         // リンクがある開催日を先に処理する（その結果からリンクが無い開催日のリンクが見つかる）
         targets.sort((a, b) => (a.url ? 0 : 1) - (b.url ? 0 : 1));
         for (let n = 0; n < targets.length; n++) {
@@ -241,7 +241,8 @@
                 if ($('rr-register').checked && (data.unregistered || []).length) {
                     d.status = `${data.saved}レース取り込み／未登録の出走馬を登録中...`; render();
                     const reg = await RaceImport.registerHorses(data.unregistered,
-                        { log: text => message(`${d.label}：${text}`) });
+                        { log: text => message(`${d.label}：${text}`), deferSort: true });
+                    totalRegistered += reg.registered;
                     regText = `／${reg.registered}頭を登録` + (reg.skipped ? `（${reg.skipped}頭はスキップ）` : '')
                         + (reg.failed ? `／${reg.failed}頭は登録に失敗` : '');
                 }
@@ -255,7 +256,11 @@
             }
             render();
         }
-        message(`完了しました（${totalSaved}レースを取り込みました）。`);
+        if (totalRegistered) {
+            message('登録した馬をHorses・Sire・Damシートの馬名順に並べ替えています...');
+            await RaceImport.finishRegistration();
+        }
+        message(`完了しました（${totalSaved}レースを取り込みました` + (totalRegistered ? `、${totalRegistered}頭を登録しました` : '') + '）。');
         setBusy(false);
     });
 })();
@@ -334,6 +339,7 @@
         if (!sheets.length) { $('rh-message').textContent = '対象を選んでください。'; return; }
         const opts = { wholeDay: $('rh-whole-day').checked, overwrite: $('rh-overwrite').checked,
                        register: $('rh-register').checked, recheck: $('rh-recheck').checked && $('rh-register').checked,
+                       deferSort: true,
                        doneDays: new Set() };
         stopRequested = false;
         $('rh-start-btn').disabled = true; $('rh-stop-btn').disabled = false;
@@ -360,6 +366,7 @@
                         + (res.failed ? `／失敗${res.failed}レース` : ''), res.failed > 0);
                     res.errors.forEach(msg => log(`　${msg}`, true));
                     if (res.registered) log(`　未登録の出走馬を${res.registered}頭登録しました`);
+                    total.registered = (total.registered || 0) + (res.registered || 0);
                     (res.registerMessages || []).filter(m => m.error).forEach(m => log(`　${m.text}`, true));
                     // 取り込み・登録に失敗した馬は、次回の「前回の続きから」でも処理し直す
                     if (!res.failed && !res.registerFailed) { done.add(t.url); saveDone(done); }
@@ -367,6 +374,10 @@
                     log(`${head}：${e.message}`, true);
                     if (RaceImport.isFatalError(e.message)) break;
                 }
+            }
+            if (total.registered) {
+                $('rh-message').textContent = '登録した馬をHorses・Sire・Damシートの馬名順に並べ替えています...';
+                await RaceImport.finishRegistration();
             }
             const finished = !stopRequested;
             $('rh-message').textContent = (finished ? '完了しました' : '中止しました')
