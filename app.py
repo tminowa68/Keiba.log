@@ -4138,10 +4138,10 @@ def weekly():
                 pass
 
         # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
-        # 「仮」の記録（レースの結果から推定した日付）は日付を表示しない
+        # 「仮」の記録（レースの結果から推定した日付）は表示しない
         for r in sh.worksheet("Changes").get_all_values()[1:]:
             d = parse_full_date(cell(r, C_DATE))
-            if in_week(d) and cell(r, C_TYPE) != '抹消':
+            if in_week(d) and cell(r, C_TYPE) != '抹消' and cell(r, C_TENTATIVE) != '仮':
                 changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
                                 'new': cell(r, C_NEW), 'tentative': cell(r, C_TENTATIVE) == '仮'})
 
