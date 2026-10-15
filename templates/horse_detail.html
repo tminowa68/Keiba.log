@@ -362,7 +362,7 @@
         <div class="race-summary-box">
             <div class="race-summary-title">{{ title }}</div>
             <div>クラス：<span class="status-highlight">{{ sm['class'] }}</span></div>
-            <div>出走：{{ sm.starts }}回</div>
+            <div>出走：{{ sm.starts }}戦（{{ sm.record|join('-') }}）</div>
             <div>本賞金：{{ "{:,}".format(sm.total_prize) }}万円</div>
             <div>収得賞金：{{ "{:,}".format(sm.shutoku) }}万円</div>
         </div>
@@ -393,6 +393,7 @@
         <table class="race-list-table race-result-table">
             <thead>
                 <tr>
+                    <th>年</th>
                     <th>日付</th>
                     <th>開催</th>
                     <th>レース名</th>
@@ -407,7 +408,6 @@
                     <th>騎手</th>
                     <th>斤量</th>
                     <th>タイム</th>
-                    <th>着差</th>
                     <th>通過</th>
                     <th>上り</th>
                     <th>馬体重</th>
@@ -417,32 +417,36 @@
             </thead>
             <tbody>
                 {% for r in race_history %}
+                {% set year_start = ' year-start' if r.year_rowspan else '' %}
                 {% if r.kind == 'change' %}
-                <tr class="transfer-row">
+                <tr class="transfer-row{{ year_start }}">
+                    {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td colspan="19">{{ r.text }}</td>
+                    <td colspan="18">{{ r.text }}</td>
                 </tr>
                 {% else %}
-                <tr>
+                {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
+                {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
+                <tr class="{{ year_start }}">
+                    {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
-                    <td class="nowrap">{{ r.name }}{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
-                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category }} {{ r['class'] }}</td>
-                    <td class="nowrap">{{ r.surface }}{{ r.distance }}</td>
+                    <td class="nowrap">{{ r.name|short_race_name }}{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
+                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category }} {{ r['class']|replace('オープン', 'OP') }}</td>
+                    <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
                     <td>{{ r.going }}</td>
                     <td>{{ r.runners }}</td>
-                    <td>{{ r.waku }}</td>
+                    <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
-                    <td>{{ r['pop'] }}</td>
-                    <td class="race-place{% if r.place == '1' %} place-1{% endif %}">{{ r.place }}</td>
+                    <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
+                    <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
                     <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
                     <td>{{ r.weight }}</td>
                     <td>{{ r.time }}</td>
-                    <td>{{ r.margin }}</td>
                     <td class="nowrap">{{ r.corners }}</td>
                     <td>{{ r.last }}</td>
                     <td class="nowrap">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
-                    <td class="num">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
+                    <td class="num">{{ "+{:,}".format(r.prize) if r.prize else '' }}</td>
                     <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
                 </tr>
                 {% endif %}

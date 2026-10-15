@@ -1954,9 +1954,10 @@ def trainer_label(name, stables):
             return f"{s['area']}・{s_name}"
     return str(name or '').strip()
 
-def build_race_history(race_results, changes_history):
+def build_race_history(race_results, changes_history, birth_year=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
-    記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う"""
+    記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
+    日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
     items = []
     for r in race_results:
         items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0), dict(r, kind='race')))
@@ -1971,7 +1972,34 @@ def build_race_history(race_results, changes_history):
         items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
                                   'date_label': '' if tentative else format_date_jp(d, weekday=True), 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
-    return [item for _, item in items]
+    history = [item for _, item in items]
+    for item in history:
+        if item['kind'] == 'race':
+            item['date_label'] = format_month_day(item['date'])
+        elif not item.get('tentative'):
+            item['date_label'] = format_month_day(item['date'])
+    i = 0
+    while i < len(history):
+        year = history[i]['date'].year
+        j = i
+        while j < len(history) and history[j]['date'].year == year:
+            j += 1
+        history[i]['year_rowspan'] = j - i
+        history[i]['year'] = year
+        history[i]['age'] = year - birth_year if birth_year else None
+        i = j
+    return history
+
+RACE_NAME_ABBREVIATIONS = (('ステークス', 'Ｓ'), ('カップ', 'Ｃ'), ('トロフィー', 'Ｔ'))
+
+def short_race_name(name):
+    """レース名の「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
+    name = str(name or '')
+    for long, short in RACE_NAME_ABBREVIATIONS:
+        name = name.replace(long, short)
+    return name
+
+app.jinja_env.filters['short_race_name'] = short_race_name
 
 def thursday_of_race_week(d):
     """レースの週の木曜日（土日・祝日の月曜日のレースは、その前の木曜日）"""
@@ -5560,7 +5588,7 @@ def horse_detail(name, active_tab):
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
-    race_history = build_race_history(race_results, changes_history)
+    race_history = build_race_history(race_results, changes_history, base_birth_year)
 
     return render_template('horse_detail.html', 
                            horse=horse, 

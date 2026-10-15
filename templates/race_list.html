@@ -72,7 +72,7 @@
                         </td>
                         <td class="col-details">
                             {% if race.name %}
-                                <span class="race-name">{{ race.name }}</span>
+                                <span class="race-name">{{ race.name|short_race_name }}</span>
                                 {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}
                                 <div class="race-condition">{{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</div>
                             {% else %}

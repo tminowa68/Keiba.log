@@ -430,7 +430,10 @@ def summarize_results(results, birth_year=None, today=None):
         if not jump and kokyu_date and not kokyu and today >= kokyu_date and shutoku:
             kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
             shutoku //= 2
-        summary[kind] = {'starts': len(started), 'total_prize': total_prize, 'shutoku': shutoku,
+        places = [str(r.get('place', '')) for r in started]
+        record = [places.count('1'), places.count('2'), places.count('3')]
+        record.append(len(started) - sum(record))   # 4着以下（競走中止・失格なども含む）
+        summary[kind] = {'starts': len(started), 'record': record, 'total_prize': total_prize, 'shutoku': shutoku,
                          'class': class_from_shutoku(shutoku, bool(started), jump, birth_year, today),
                          'kokyu': kokyu}
     return summary
