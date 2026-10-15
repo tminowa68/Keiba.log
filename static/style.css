@@ -2204,3 +2204,10 @@ td.col-last-race {
     font-weight: bold;
     font-size: 0.95em;
 }
+/* 変更履歴：旧と新の間の矢印 */
+.history-table .history-arrow {
+    width: 1.5em;
+    padding-left: 0;
+    padding-right: 0;
+    text-align: center;
+}

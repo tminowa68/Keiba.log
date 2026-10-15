@@ -189,6 +189,14 @@ HORSE_TO_PARENT_COLS = [(H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BI
                         (H_REGISTRATION, P_REGISTRATION), (H_REG_STATUS, P_REG_STATUS), (H_CLASS, P_CLASS),
                         (H_LAST_RACE, P_LAST_RACE), (H_SHUTOKU, P_SHUTOKU)]
 
+# Changesシートの列。「仮」はレースの結果から推定した日付（レースの前の木曜日）の記録に「仮」と入れる
+CHANGES_COLUMNS = ["年月日", "仮", "馬名", "項目", "旧", "新"]
+C_DATE, C_TENTATIVE, C_NAME, C_TYPE, C_OLD, C_NEW = range(len(CHANGES_COLUMNS))
+
+def changes_row(date_str, name, change_type, old='', new='', tentative=False):
+    """Changesシートの1行を作る"""
+    return [date_str, '仮' if tentative else '', name, change_type, old, new]
+
 def col_letter(idx):
     """0始まりの列番号を列記号（A, B, …）にする"""
     return chr(ord('A') + idx)
@@ -294,7 +302,7 @@ try:
     sh.worksheet("Changes")
 except gspread.WorksheetNotFound:
     ws_changes = sh.add_worksheet(title="Changes", rows=100, cols=10)
-    ws_changes.append_row(["年月日", "馬名", "項目", "旧", "新"])
+    ws_changes.append_row(CHANGES_COLUMNS)
 
 try:
     sh.worksheet("Entry")
@@ -1956,8 +1964,10 @@ def build_race_history(race_results, changes_history):
         if kind not in ('転厩', '去勢') or not d:
             continue
         text = f"{kind}：{c.get('旧', '')}→{c.get('新', '')}"
-        items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d,
-                                  'date_label': format_date_jp(d, weekday=True), 'text': text}))
+        # 「仮」の記録（レースの結果から推定した日付）は日付を表示しない
+        tentative = str(c.get('仮', '')).strip() == '仮'
+        items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
+                                  'date_label': '' if tentative else format_date_jp(d, weekday=True), 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
     return [item for _, item in items]
 
@@ -1981,10 +1991,11 @@ def race_changes(results):
 
 def _same_change(change, row):
     """Changesシートの行が、同じ転厩（旧・新の調教師が同じ）・去勢の記録か"""
-    if row[2] != change['type']:
+    if row[C_TYPE] != change['type']:
         return False
     if change['type'] == '転厩':
-        return _trainer_key(row[3]) == _trainer_key(change['old']) and _trainer_key(row[4]) == _trainer_key(change['new'])
+        return _trainer_key(row[C_OLD]) == _trainer_key(change['old']) and \
+            _trainer_key(row[C_NEW]) == _trainer_key(change['new'])
     return True
 
 def record_race_changes(sh, horse_changes, stables):
@@ -1992,45 +2003,47 @@ def record_race_changes(sh, horse_changes, stables):
     日付は変わった後のレースの週の木曜日。同じ記録があり、その日付が変わった後のレースより後なら木曜日に直す
     （前のレースと変わった後のレースの間の日付なら直さない）。
     記録後の各馬の転厩・去勢の記録 {馬名: [(日付, 項目, 旧, 新), …]} を返す"""
-    ws = get_or_create_worksheet(sh, "Changes", ["年月日", "馬名", "項目", "旧", "新"])
+    migrate_changes_sheet()   # 「仮」の列がまだ無ければ先に追加する
+    ws = get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS)
     data = horse_sheet_values("Changes")
     existing = {}
     for i, r in enumerate(data[1:], start=2):
-        r = list(r) + [''] * 5
-        if r[1] in horse_changes and r[2] in ('転厩', '去勢'):
-            existing.setdefault(r[1], []).append([i, r])
+        r = list(r) + [''] * len(CHANGES_COLUMNS)
+        if r[C_NAME] in horse_changes and r[C_TYPE] in ('転厩', '去勢'):
+            existing.setdefault(r[C_NAME], []).append([i, r])
     new_rows, updates = [], []
     for name, changes in horse_changes.items():
         used = set()
         for ch in changes:
             before_date, after_date = ch['before']['date'], ch['after']['date']
             thursday = thursday_of_race_week(after_date)
-            same = sorted([(parse_full_date(r[0]), i, r) for i, r in existing.get(name, [])
-                           if i not in used and _same_change(ch, r) and parse_full_date(r[0])],
+            same = sorted([(parse_full_date(r[C_DATE]), i, r) for i, r in existing.get(name, [])
+                           if i not in used and _same_change(ch, r) and parse_full_date(r[C_DATE])],
                           key=lambda x: x[0])
             match = next((x for x in same if x[0] > before_date), None)
             if match:
                 d, i, r = match
                 used.add(i)
-                if d > after_date:
-                    # 記録されている日付が変わった後のレースより後なら、そのレースの週の木曜日に戻す
-                    r[0] = thursday.strftime('%Y%m%d')
-                    updates.append({'range': f"A{i}", 'values': [[r[0]]]})
+                if d > after_date and i is not None:
+                    # 記録されている日付が変わった後のレースより後なら、そのレースの週の木曜日に戻す（日付は「仮」）
+                    r[C_DATE], r[C_TENTATIVE] = thursday.strftime('%Y%m%d'), '仮'
+                    updates.append({'range': f"A{i}:B{i}", 'values': [[r[C_DATE], '仮']]})
                 continue
             if ch['type'] == '転厩':
-                row = [thursday.strftime('%Y%m%d'), name, '転厩',
-                       trainer_label(ch['old'], stables), trainer_label(ch['new'], stables)]
+                row = changes_row(thursday.strftime('%Y%m%d'), name, '転厩', trainer_label(ch['old'], stables),
+                                  trainer_label(ch['new'], stables), tentative=True)
             else:
-                row = [thursday.strftime('%Y%m%d'), name, '去勢', '牡', 'せん']
+                row = changes_row(thursday.strftime('%Y%m%d'), name, '去勢', '牡', 'せん', tentative=True)
             new_rows.append(row)
-            existing.setdefault(name, []).append([None, row + ['']])
+            existing.setdefault(name, []).append([None, row])
     if updates:
         with_sheets_retry(ws.batch_update, updates)
     if new_rows:
         with_sheets_retry(ws.append_rows, new_rows)
     if updates or new_rows:
         remember_sheet_values("Changes")
-    return {name: [(parse_full_date(r[0]), r[2], r[3], r[4]) for _, r in rows if parse_full_date(r[0])]
+    return {name: [(parse_full_date(r[C_DATE]), r[C_TYPE], r[C_OLD], r[C_NEW]) for _, r in rows
+                   if parse_full_date(r[C_DATE])]
             for name, rows in existing.items()}
 
 def latest_horse_state(results, change_rows, stables):
@@ -2063,10 +2076,10 @@ def fill_trainer_area(sh, area, trainer_name):
         ws = sh.worksheet("Changes")
         updates = []
         for i, r in enumerate(ws.get_all_values()[1:], start=2):
-            if len(r) > 4 and r[2] == '転厩':
-                for col, letter in ((3, 'D'), (4, 'E')):
+            if len(r) > C_NEW and r[C_TYPE] == '転厩':
+                for col in (C_OLD, C_NEW):
                     if r[col] and '・' not in r[col] and _trainer_key(r[col]) == key:
-                        updates.append({'range': f"{letter}{i}", 'values': [[label]]})
+                        updates.append({'range': f"{col_letter(col)}{i}", 'values': [[label]]})
         if updates:
             ws.batch_update(updates)
     except gspread.WorksheetNotFound:
@@ -3121,7 +3134,7 @@ def api_auto_register_targets():
             name = (name or '').strip()
             if name and name not in registered and name not in parents and name not in found:
                 found[name] = known or {}
-        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', 0, 1), ('放牧入厩', 0, 1), ('放牧入厩', 2, 1)):
+        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', C_DATE, C_NAME), ('放牧入厩', 0, 1), ('放牧入厩', 2, 1)):
             try:
                 for r in sh.worksheet(title).get_all_values()[1:]:
                     d = parse_full_date(r[date_col] if len(r) > date_col else '')
@@ -3822,20 +3835,20 @@ def import_trainer_horses():
                 current_full = f"{row[H_AREA]}・{row[H_STABLE]}" if row[H_AREA] else row[H_STABLE]
                 new_full = f"{new_stable[0]}・{new_stable[1]}"
                 row[H_AREA], row[H_STABLE] = new_stable
-                changes_rows.append([today_str, name, '転厩', current_full, new_full])
+                changes_rows.append(changes_row(today_str, name, '転厩', current_full, new_full))
                 change_msgs.append(f"{name}：転厩 {current_full}→{new_full}")
 
             # 馬主変更（馬主名が空欄の場合は下の空欄補完で埋める）
             new_owner = info.get('owner') if info else None
             if new_owner and not _blank(row[H_OWNER]) and row[H_OWNER] != new_owner:
-                changes_rows.append([today_str, name, '馬主変更', row[H_OWNER], new_owner])
+                changes_rows.append(changes_row(today_str, name, '馬主変更', row[H_OWNER], new_owner))
                 change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{new_owner}")
                 row[H_OWNER] = new_owner
 
             # 去勢
             if info and row[H_GENDER] == '牡' and info.get('gender') == 'せん':
                 row[H_GENDER] = 'せん'
-                changes_rows.append([today_str, name, '去勢', '牡', 'せん'])
+                changes_rows.append(changes_row(today_str, name, '去勢', '牡', 'せん'))
                 change_msgs.append(f"{name}：去勢")
 
             # 空欄の項目だけ埋める（URLはリンク先を取得できなくても埋める）
@@ -4125,10 +4138,12 @@ def weekly():
                 pass
 
         # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
+        # 「仮」の記録（レースの結果から推定した日付）は表示しない
         for r in sh.worksheet("Changes").get_all_values()[1:]:
-            d = parse_full_date(cell(r, 0))
-            if in_week(d) and cell(r, 2) != '抹消':
-                changes.append({'date': d, 'name': cell(r, 1), 'type': cell(r, 2), 'old': cell(r, 3), 'new': cell(r, 4)})
+            d = parse_full_date(cell(r, C_DATE))
+            if in_week(d) and cell(r, C_TYPE) != '抹消' and cell(r, C_TENTATIVE) != '仮':
+                changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
+                                'new': cell(r, C_NEW), 'tentative': cell(r, C_TENTATIVE) == '仮'})
 
         cancelled_keys = set()
         try:
@@ -4173,7 +4188,8 @@ def weekly():
             birth_year = (info or parent or {}).get('birth_year')
             item['age'] = f"{item['date'].year - birth_year}歳" if birth_year else ''
             # 年は見出しの週でわかるため、日付は月日と曜日だけ表示する
-            item['date_label'] = f"{item['date'].month}月{item['date'].day}日({JP_WEEKDAYS[item['date'].weekday()]})"
+            item['date_label'] = '' if item.get('tentative') else \
+                f"{item['date'].month}月{item['date'].day}日({JP_WEEKDAYS[item['date'].weekday()]})"
         items.sort(key=lambda x: (x['date'], x['name']))
 
     if stable_filter:
@@ -4507,6 +4523,55 @@ def name_columns_ready():
     except Exception:
         return True  # シートを確認できない場合は各画面のエラー表示に任せる
     return _name_columns_ready
+
+# 既存の記録のうち、日付が確定している（「仮」を付けない）もの。それ以外の既存の記録には「仮」を付ける
+def _confirmed_existing_change(date8, name, change_type, old, new):
+    if date8 == '20261013':
+        return True
+    if change_type != '転厩':
+        return False
+    return ((date8 == '20260521' and '萩原' in old and '大竹' in new)
+            or (date8 == '20251220' and name in ('スティンガーグラス', 'モンローウォーク'))
+            or (date8 == '20260630' and '田村' in old and '中舘' in new)
+            or (date8 == '20260721' and ('大竹' in old or '古賀' in new))
+            or (date8 == '20260828' and name == 'エコロアルバ'))
+
+_changes_columns_ready = False
+
+def migrate_changes_sheet():
+    """Changesシートの年月日と馬名の間に「仮」の列を追加する（1回だけ。実行前にシートを複製して残す）"""
+    global _changes_columns_ready
+    if _changes_columns_ready:
+        return
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("Changes")
+    except Exception:
+        return
+    data = ws.get_all_values()
+    if data and len(data[0]) > 1 and data[0][1] == '仮':
+        _changes_columns_ready = True
+        return
+    sh.duplicate_sheet(ws.id, new_sheet_name=f"Changes_移行前_{datetime.now().strftime('%Y%m%d%H%M')}")
+    rows = [CHANGES_COLUMNS]
+    for r in data[1:]:
+        r = list(r) + [''] * 5
+        d = parse_full_date(r[0])
+        date8 = d.strftime('%Y%m%d') if d else str(r[0]).strip()
+        confirmed = _confirmed_existing_change(date8, r[1].strip(), r[2].strip(), r[3], r[4])
+        rows.append([r[0], '' if confirmed else '仮'] + list(r[1:5]) + [c for c in r[5:] if c])
+    ensure_columns(ws, len(CHANGES_COLUMNS))
+    ws.clear()
+    ws.update(range_name='A1', values=rows)
+    _changes_columns_ready = True
+
+@app.before_request
+def require_changes_columns():
+    if request.endpoint not in (None, 'static') and not _changes_columns_ready:
+        try:
+            migrate_changes_sheet()
+        except Exception as e:
+            print(f"Changesシートの列の追加に失敗しました: {e}")
 
 @app.before_request
 def require_name_columns():
@@ -4851,13 +4916,13 @@ def update_single_horse(row_index):
         # ③ 去勢判定
         if current_gender == '牡' and info.get('gender') == 'せん':
             ws_horses.update(f'{col_letter(H_GENDER)}{row_index}', [['せん']])
-            ws_changes.append_row([today_str, horse_name, '去勢'])
+            ws_changes.append_row(changes_row(today_str, horse_name, '去勢'))
 
         # ④-1 馬主名変更
         new_owner = info.get('owner')
         if new_owner and new_owner != current_owner:
             ws_horses.update(f'{col_letter(H_OWNER)}{row_index}', [[new_owner]])
-            ws_changes.append_row([today_str, horse_name, '馬主変更', current_owner, new_owner])
+            ws_changes.append_row(changes_row(today_str, horse_name, '馬主変更', current_owner, new_owner))
 
         # ④-2 調教師名（厩舎）変更
         trainer_raw = info.get('trainer_raw')
@@ -4872,7 +4937,7 @@ def update_single_horse(row_index):
                     new_full = f"{new_area}・{new_stable}" if new_area else new_stable
                     ws_horses.update(f'{col_letter(H_AREA)}{row_index}:{col_letter(H_STABLE)}{row_index}',
                                      [[new_area, new_stable]])
-                    ws_changes.append_row([today_str, horse_name, '転厩', current_full, new_full])
+                    ws_changes.append_row(changes_row(today_str, horse_name, '転厩', current_full, new_full))
 
         return jsonify({"status": "success", "horse_name": horse_name})
 
@@ -5133,7 +5198,7 @@ def update_horse():
                 ws.update(f'A{i+1}:{col_letter(H_NAR_URL)}{i+1}', update_values)
                 # 馬名を変更した場合はChangesシートに記録する
                 if old_name and new_name and new_name != old_name:
-                    sh.worksheet("Changes").append_row([today8(), new_name, '馬名変更', old_name, new_name])
+                    sh.worksheet("Changes").append_row(changes_row(today8(), new_name, '馬名変更', old_name, new_name))
                 # 競走馬登録（P列）：入力欄がある場合のみ更新（無い場合は既存の値を保持）
                 if has_reg_fields:
                     reg_col = col_letter(H_REGISTRATION)
@@ -5196,7 +5261,7 @@ def save_change():
                 ws_horses.update(f'{col_letter(H_OWNER)}{target_idx}', [[new_val]])
             
             ws_changes = sh.worksheet("Changes")
-            ws_changes.append_row([date_str, horse_name, change_type, old_val, new_val])
+            ws_changes.append_row(changes_row(date_str, horse_name, change_type, old_val, new_val))
             
             # ソート処理 (年月日昇順、空欄は最後、その後馬名昇順)
             data = ws_changes.get_all_values()
@@ -5205,8 +5270,8 @@ def save_change():
                 rows = data[1:]
                 
                 def get_sort_key(r):
-                    d = str(r[0]).strip() if len(r) > 0 else ""
-                    name = str(r[1]).strip() if len(r) > 1 else ""
+                    d = str(r[C_DATE]).strip() if len(r) > C_DATE else ""
+                    name = str(r[C_NAME]).strip() if len(r) > C_NAME else ""
                     parts = split_date(d) if d else None
                     if not parts:
                         d_sort = "99999999"
@@ -5311,7 +5376,7 @@ def transfer_stable(name):
             ws_changes = sh.worksheet("Changes")
             old_full = f"{old_area}・{old_stable}" if old_area else old_stable
             new_full = f"{new_area}・{new_stable_name}"
-            ws_changes.append_row([date_str, horse_name, "転厩", old_full, new_full])
+            ws_changes.append_row(changes_row(date_str, horse_name, "転厩", old_full, new_full))
             
             flash(f"『{horse_name}』の転厩処理が完了しました。")
         else:

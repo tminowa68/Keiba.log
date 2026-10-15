@@ -525,15 +525,18 @@
                     <th>年月日</th>
                     <th>項目</th>
                     <th>旧</th>
+                    <th class="history-arrow"></th>
                     <th>新</th>
                 </tr>
             </thead>
             <tbody>
                 {% for change in changes_history %}
                 <tr>
-                    <td>{{ change.get('年月日', '')|jpdate }}</td>
+                    {# 「仮」の記録（レースの結果から推定した日付）は日付を表示しない #}
+                    <td>{{ '' if change.get('仮', '')|string|trim == '仮' else change.get('年月日', '')|jpdate }}</td>
                     <td>{{ change.get('項目', '') }}</td>
                     <td>{{ change.get('旧', '') }}</td>
+                    <td class="history-arrow">→</td>
                     <td>{{ change.get('新', '') }}</td>
                 </tr>
                 {% endfor %}
