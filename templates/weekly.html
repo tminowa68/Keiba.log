@@ -56,12 +56,14 @@
     {% with target_source='weekly', target_count=unregistered_count, target_label='未登録の馬をJRAから登録', target_date=date_for_input %}{% include "_auto_register.html" %}{% endwith %}
 </section>
 
+{# 日付・馬名・性別・馬齢（data-col は並び順で選んだ列の背景色を変えるための目印） #}
 {% macro horse_cells(h) %}
-            <td>{{ h.date_label }}</td>
-            <td>{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td class="num nowrap" data-col="date">{{ h.date_label }}</td>
+            <td class="bl" data-col="name">{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td class="col-gender {{ 'female-text' if h.gender == '牝' }}">{{ h.gender }}</td>
-            <td class="col-age">{{ h.age }}</td>
+            <td class="col-age" data-col="age">{{ h.age }}</td>
 {%- endmacro %}
+{% macro horse_ths(date_label) %}<th rowspan="2" data-col="date">{{ date_label }}</th><th rowspan="2" class="bl" data-col="name">馬名</th><th rowspan="2">性別</th><th rowspan="2" data-col="age">馬齢</th>{% endmacro %}
 
 {# 並べ替え用の値（日付・馬名・馬齢・最新レース・総本賞金・近親馬の総本賞金） #}
 {% macro row_attrs(h) -%}
@@ -93,19 +95,28 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 
 {% set other_sorts = [('race', '最新レース'), ('prize', '総本賞金')] %}
 
-{# 最新レース・主な実績：年または日付｜レース名（race_detailへのリンクと格）｜着順 #}
-{% macro race3(text, year_only=False) %}{% set p = text|race_parts(year_only) %}
-            <td class="nowrap">{{ p.when }}</td>
-            <td class="nowrap">{{ p.title_html }}</td>
-            <td class="num">{{ p.place }}</td>
-{%- endmacro %}
-{% macro race3_th(label, when_label) %}<th colspan="3">{{ label }}</th>{% endmacro %}
-{% macro race3_th2(when_label) %}<th>{{ when_label }}</th><th>レース名</th><th>着順</th>{% endmacro %}
+{# 着順：〇着（1〜3着は出走履歴と同じ背景色） #}
+{% macro place_cell(place, col, extra='') %}<td class="num nowrap {{ {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'}.get(place, '') }} {{ extra }}" data-col="{{ col }}">{{ place ~ '着' if place.isdigit() else place }}</td>{% endmacro %}
 
-{% macro race_cells(h) %}
-{{ race3(h.last_race) }}
-            <td class="num nowrap">{{ "{:,}".format(h.total) if h.total else '' }}</td>
+{# 最新レース：日付｜開催｜レース名（race_detailへのリンクと格）｜着順（両端を太線で区切る） #}
+{% macro last_race_cells(h) %}{% set p = h.last_race|race_parts %}
+            <td class="num nowrap bl" data-col="race">{{ p.when }}</td>
+            <td class="nowrap" data-col="race">{{ p.venue_num }}</td>
+            <td class="nowrap" data-col="race">{{ p.title_html }}</td>
+            {{ place_cell(p.place, 'race', 'br') }}
+            <td class="num nowrap" data-col="prize">{{ "{:,}".format(h.total) if h.total else '' }}</td>
 {%- endmacro %}
+{% macro last_race_th() %}<th colspan="4" class="bl br" data-col="race">最新レース</th><th data-col="prize">総本賞金</th>{% endmacro %}
+{% macro last_race_th2() %}<th class="bl" data-col="race">日付</th><th data-col="race">開催</th><th data-col="race">レース名</th><th class="br" data-col="race">着順</th><th data-col="prize">（万円）</th>{% endmacro %}
+
+{# 主な実績：年｜レース名｜着順 #}
+{% macro best_cells(text, col='') %}{% set p = text|race_parts(True) %}
+            <td class="num nowrap" data-col="{{ col }}">{{ p.when }}</td>
+            <td class="nowrap" data-col="{{ col }}">{{ p.title_html }}</td>
+            {{ place_cell(p.place, col) }}
+{%- endmacro %}
+{% macro best_th(col='') %}<th colspan="3" data-col="{{ col }}">主な実績</th>{% endmacro %}
+{% macro best_th2(col='') %}<th data-col="{{ col }}">年</th><th data-col="{{ col }}">レース名</th><th data-col="{{ col }}">着順</th>{% endmacro %}
 
 {% macro stable_cell(h) %}
             <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.stable %}{{ h.stable }}{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
@@ -118,10 +129,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </div>
     {% if registered %}
     <div class="weekly-table-scroll">
-    <table id="tbl_registered">
+    <table id="tbl_registered" class="weekly-table">
         <thead>
-            <tr><th rowspan="2">登録日</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">父</th><th rowspan="2">母</th><th rowspan="2">厩舎</th><th rowspan="2">状態</th><th colspan="2">主な兄弟・近親馬</th>{{ race3_th('主な実績') }}</tr>
-            <tr><th>関係</th><th>馬名</th>{{ race3_th2('年') }}</tr>
+            <tr>{{ horse_ths('登録日') }}<th rowspan="2">父</th><th rowspan="2">母</th><th rowspan="2">厩舎</th><th rowspan="2" class="bl br">状態</th><th colspan="2" data-col="relprize">主な兄弟・近親馬</th>{{ best_th('relprize') }}</tr>
+            <tr><th data-col="relprize">関係</th><th data-col="relprize">馬名</th>{{ best_th2('relprize') }}</tr>
         </thead>
         <tbody>
         {% for h in registered %}
@@ -130,10 +141,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <td class="col-parent"><span class="text-10ch" title="{{ h.sire }}">{{ h.sire }}</span></td>
             <td class="col-parent"><span class="text-10ch" title="{{ h.dam }}">{{ h.dam }}</span></td>
 {{ stable_cell(h) }}
-            <td>{{ h.status }}</td>
-            <td class="nowrap">{{ h.rel_relation }}</td>
-            <td class="nowrap">{% if h.rel_linkable %}<a href="/horse/{{ h.rel_horse|urlencode }}">{{ h.rel_horse }}</a>{% else %}{{ h.rel_horse }}{% endif %}</td>
-{{ race3(h.rel_best, True) }}
+            <td class="bl br">{{ h.status }}</td>
+            <td class="nowrap" data-col="relprize">{{ h.rel_relation }}</td>
+            <td class="nowrap" data-col="relprize">{% if h.rel_linkable %}<a href="/horse/{{ h.rel_horse|urlencode }}">{{ h.rel_horse }}</a>{% else %}{{ h.rel_horse }}{% endif %}</td>
+{{ best_cells(h.rel_best, 'relprize') }}
         </tr>
         {% endfor %}
         </tbody>
@@ -151,18 +162,18 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </div>
     {% if cancelled %}
     <div class="weekly-table-scroll">
-    <table id="tbl_cancelled">
+    <table id="tbl_cancelled" class="weekly-table">
         <thead>
-            <tr><th rowspan="2">抹消日</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th>{{ race3_th('最新レース') }}<th>総本賞金</th>{{ race3_th('主な実績') }}</tr>
-            <tr>{{ race3_th2('日付') }}<th>（万円）</th>{{ race3_th2('年') }}</tr>
+            <tr>{{ horse_ths('抹消日') }}<th rowspan="2">厩舎</th>{{ last_race_th() }}{{ best_th() }}</tr>
+            <tr>{{ last_race_th2() }}{{ best_th2() }}</tr>
         </thead>
         <tbody>
         {% for h in cancelled %}
         <tr {{ row_attrs(h) }}>
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
-{{ race_cells(h) }}
-{{ race3(h.best, True) }}
+{{ last_race_cells(h) }}
+{{ best_cells(h.best) }}
         </tr>
         {% endfor %}
         </tbody>
@@ -180,10 +191,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </div>
     {% if pasture %}
     <div class="weekly-table-scroll">
-    <table id="tbl_pasture">
+    <table id="tbl_pasture" class="weekly-table">
         <thead>
-            <tr><th rowspan="2">日付</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th><th rowspan="2">区分</th>{{ race3_th('最新レース') }}<th>総本賞金</th></tr>
-            <tr>{{ race3_th2('日付') }}<th>（万円）</th></tr>
+            <tr>{{ horse_ths('日付') }}<th rowspan="2">厩舎</th><th rowspan="2">区分</th>{{ last_race_th() }}</tr>
+            <tr>{{ last_race_th2() }}</tr>
         </thead>
         <tbody>
         {% for h in pasture %}
@@ -191,7 +202,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
             <td>{{ h.type }}</td>
-{{ race_cells(h) }}
+{{ last_race_cells(h) }}
         </tr>
         {% endfor %}
         </tbody>
@@ -209,10 +220,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </div>
     {% if changes %}
     <div class="weekly-table-scroll">
-    <table id="tbl_changes">
+    <table id="tbl_changes" class="weekly-table">
         <thead>
-            <tr><th rowspan="2">日付</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th><th rowspan="2">項目</th><th rowspan="2">旧</th><th rowspan="2">新</th>{{ race3_th('最新レース') }}<th>総本賞金</th></tr>
-            <tr>{{ race3_th2('日付') }}<th>（万円）</th></tr>
+            <tr>{{ horse_ths('日付') }}<th rowspan="2">厩舎</th><th rowspan="2">項目</th><th rowspan="2">旧</th><th rowspan="2">新</th>{{ last_race_th() }}</tr>
+            <tr>{{ last_race_th2() }}</tr>
         </thead>
         <tbody>
         {% for h in changes %}
@@ -222,7 +233,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <td>{{ h.type }}</td>
             <td>{{ h.old }}</td>
             <td>{{ h.new }}</td>
-{{ race_cells(h) }}
+{{ last_race_cells(h) }}
         </tr>
         {% endfor %}
         </tbody>
@@ -271,6 +282,8 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             tr.style.display = (limit === 'all' || i < Number(limit)) ? '' : 'none';
             tbody.appendChild(tr);
         });
+        // 並び順で選んでいる列の背景色を変える
+        table.querySelectorAll('[data-col]').forEach(el => el.classList.toggle('sorted-col', el.dataset.col === key));
     }
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
         ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;

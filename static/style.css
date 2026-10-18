@@ -2327,3 +2327,27 @@ td.col-last-race {
 .weekly-empty a {
     margin-left: 8px;
 }
+/* 週間レポートの表：外枠と区切りの太線、右寄せ、着順の色、並び順で選んでいる列の背景色 */
+.weekly-table {
+    border: 3px solid #666;
+}
+.weekly-table th.bl,
+.weekly-table td.bl {
+    border-left: 3px solid #666;
+}
+.weekly-table th.br,
+.weekly-table td.br {
+    border-right: 3px solid #666;
+}
+.weekly-table td.num {
+    text-align: right;
+}
+.weekly-table td.rank-1 { background: #fff176; font-weight: bold; }
+.weekly-table td.rank-2 { background: #b3e5fc; font-weight: bold; }
+.weekly-table td.rank-3 { background: #e0a370; font-weight: bold; }
+.weekly-table td.sorted-col:not(.rank-1):not(.rank-2):not(.rank-3) {
+    background: #fff8e1;
+}
+.weekly-table th.sorted-col {
+    background: #2e7d32;
+}
