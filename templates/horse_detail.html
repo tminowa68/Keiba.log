@@ -431,7 +431,7 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="nowrap bl">{{ r.venue }}{{ r.num }}R</td>
-                    <td class="nowrap">{{ r.name|short_race_name }}{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
+                    <td class="nowrap"><a href="/race_detail?date={{ r.date.isoformat() }}&venue={{ r.venue|urlencode }}&num={{ r.num }}">{{ r.name|short_race_name }}</a>{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
                     <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category|replace('以上', '上') }} {{ r['class']|replace('オープン', 'OP') }}</td>
                     <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
                     <td class="{{ {'稍重': 'going-yaya', '重': 'going-omo', '不良': 'going-furyo'}.get(r.going, '') }}">{{ r.going }}</td>
@@ -484,7 +484,7 @@
                     <td>{{ r.date_label }}</td>
                     <td>{{ r.venue }}</td>
                     <td>{{ r.num }}R</td>
-                    <td>{{ r.name }}</td>
+                    <td><a href="/race_detail?date={{ r.date }}&venue={{ r.venue|urlencode }}&num={{ r.num }}">{{ r.name }}</a></td>
                     <td>{{ r.condition }}</td>
                     <td>{{ r.course }}</td>
                     <td>{{ r.status }}</td>
