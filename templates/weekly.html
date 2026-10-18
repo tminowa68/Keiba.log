@@ -108,7 +108,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 {%- endmacro %}
 
 {% macro stable_cell(h) %}
-            <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+            <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.stable %}{{ h.stable }}{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
 {%- endmacro %}
 
 <section>
