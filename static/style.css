@@ -2322,3 +2322,5 @@ td.col-last-race {
 .weekly-table-scroll td.nowrap {
     white-space: nowrap;
 }
+.grade-badge.grade-class { background: #78909c; }
+.grade-badge.grade-op { background: #6d4c41; }

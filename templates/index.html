@@ -99,7 +99,7 @@
                     <td class="col-class">{{ horse[17] if horse|length > 17 else '' }}</td>
                     <td class="col-sire"><span class="text-10ch" title="{{ horse[4] }}">{{ horse[4] }}</span></td>
                     <td>{{ horse[7] }}・{{ horse[8] }}</td>
-                    <td class="col-last-race">{{ (horse[18] if horse|length > 18 else '')|short_race }}</td>
+                    <td class="col-last-race">{{ (horse[18] if horse|length > 18 else '')|race_inline }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -124,7 +124,7 @@ const allHorsesData = [
         status: "{{ horse[9] if horse|length > 9 else '在厩' }}",
         url: "{{ (horse[13] or (horse[14] if horse|length > 14 else '')) if horse|length > 13 else '' }}",
         horseClass: {{ (horse[17] if horse|length > 17 else '')|tojson }},
-        lastRace: {{ ((horse[18] if horse|length > 18 else '')|short_race)|tojson }},
+        lastRace: {{ ((horse[18] if horse|length > 18 else '')|race_inline|string)|tojson }},
         hasAlert: {{ 'true' if has_alert else 'false' }}
     },
     {% endfor %}
@@ -524,7 +524,7 @@ function renderAgeTables() {
                             <td class="col-class">${escapeHtml(h.horseClass)}</td>
                             <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
                             <td>${h.stable}</td>
-                            <td class="col-last-race">${escapeHtml(h.lastRace)}</td>
+                            <td class="col-last-race">${h.lastRace}</td>
                         </tr>
                         `;
                     }).join('')}
@@ -582,7 +582,7 @@ function renderAgeTables() {
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
                                 <td class="col-class">${escapeHtml(h.horseClass)}</td>
                                 <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
-                                <td class="col-last-race">${escapeHtml(h.lastRace)}</td>
+                                <td class="col-last-race">${h.lastRace}</td>
                             </tr>
                             `;
                         }).join('')}

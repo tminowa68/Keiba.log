@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from urllib.parse import quote
 import race_results as RR
 
 # --- gspread関連のインポート ---
@@ -1956,51 +1957,132 @@ def current_horse_class(row, today=None):
         return RR.class_from_shutoku(int(amount), True, False, birth_year, today)
     return cls
 
-def last_race_label(results):
-    """Horsesシートに記録する最新レース（例：2026/10/4 東京5R メイクデビュー東京 1着）"""
-    if not results:
+def race_rank(name, grade, race_class):
+    """特別戦の格：グレード（G1〜G3）・L、オープンはOP、条件クラスは〇勝クラス（新馬・未勝利・条件戦は空）"""
+    if not name:
         return ''
-    r = results[0]
+    if grade:
+        return grade
+    if race_class == 'オープン':
+        return 'OP'
+    return race_class if re.fullmatch(r'\d勝クラス', race_class or '') else ''
+
+def race_label(r):
+    """Horsesシートに記録するレース（最新レース・主な実績）：
+    「2026/11/1 東京11R 天皇賞（秋）(G1) 1着」「2026/10/4 東京5R 2歳未勝利 1着」（特別戦はレース名の後に格を付ける）"""
     d = r['date']
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
-    name = r['name'] or f"{r['category']}{r['class']}"
+    if r['name']:
+        rank = race_rank(r['name'], r.get('grade'), r.get('class'))
+        name = r['name'] + (f"({rank})" if rank else '')
+    else:
+        name = ('障害' if r.get('jump') else '') + f"{r['category']}{r['class']}"
     return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
 
+def last_race_label(results):
+    """Horsesシートに記録する最新レース"""
+    return race_label(results[0]) if results else ''
+
 def best_race_label(results):
-    """Horsesシートに記録する主な実績：本賞金が最も高かったレースの年・レース名・着順（例：2026 天皇賞（秋） 1着）。
-    本賞金を得たレースが無ければ空欄（同じ金額なら新しいレース）"""
+    """Horsesシートに記録する主な実績：本賞金が最も高かったレースと着順（同じ金額なら新しいレース）。
+    本賞金を得たレースが無ければ空欄"""
     earned = [r for r in results if r.get('prize')]
     if not earned:
         return ''
-    r = max(earned, key=lambda r: (r['prize'], r['date']))
-    place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
-    name = strip_race_name_prefix(r['name']) or f"{r['category']}{r['class']}"
-    return f"{r['date'].year} {name} {place}"
+    return race_label(max(earned, key=lambda r: (r['prize'], r['date'])))
 
 def total_prize(results):
     return sum(r.get('prize') or 0 for r in results)
 
-_OLD_BEST_RE = re.compile(r'^(\d{4})/\d{1,2}/\d{1,2}\s+\S+?\d+R\s+(.+)\s+(\S+)$')
+_RACE_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s+(.+)\s+(\S+)$')
+_RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス)\)$')
+_CONDITION_RACE_RE = re.compile(r'^(障害)?\d歳(以上)?(.+)$')
 
-def best_race_display(text):
-    """主な実績の表示：年・レース名（冠を除き、ステークスなどは略す）・着順。以前の形式
-    （2026/11/1 東京11R 天皇賞（秋）(G1) 1着）で記録されたものも同じ形にする"""
+def race_title(name, grade='', race_class='', jump=False):
+    """レース名の表示（index・出走履歴・週間レポートで共通）：(表示名, 格)。
+    特別戦は冠を除いてステークスなどを略し、格（G1〜G3・L・OP・〇勝クラス）を付ける。
+    条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする"""
+    if name:
+        return short_race_name(name), race_rank(name, grade, race_class)
+    return ('障害' if jump else '') + (race_class or ''), ''
+
+def parse_race_label(text):
+    """Horsesシートに記録したレース（race_label の形式）を表示用に分ける。以前の形式（年・レース名・着順だけ、
+    格の無いもの）も読み取る。{'date', 'year', 'venue', 'num', 'title', 'rank', 'place'} を返す（読み取れなければ None）"""
     text = str(text or '').strip()
-    m = _OLD_BEST_RE.match(text)
+    if not text:
+        return None
+    m = _RACE_LABEL_RE.match(text)
     if m:
-        year, name, place = m.groups()
-        name = re.sub(r'\((?:(?:J・)?G\d|L)\)$', '', name).strip()
+        y, mo, d, venue, num, name, place = m.groups()
+        race_date = date(int(y), int(mo), int(d))
     else:
         parts = text.split(' ', 1)
         if len(parts) < 2 or not parts[0].isdigit():
-            return text
-        year, rest = parts
-        name, _, place = rest.rpartition(' ')
+            return None
+        name, _, place = parts[1].rpartition(' ')
         if not name:
-            return text
-    return f"{year} {short_race_name(name)} {place}"
+            return None
+        y, race_date, venue, num = parts[0], None, '', ''
+    rank = ''
+    m = _RANK_SUFFIX_RE.match(name)
+    if m:
+        name, rank = m.group(1), m.group(2)
+    cond = _CONDITION_RACE_RE.match(name)
+    if cond and not rank:
+        title = (cond.group(1) or '') + cond.group(3)
+    else:
+        title = short_race_name(name)
+    return {'date': race_date, 'year': int(y), 'venue': venue, 'num': num, 'title': title, 'rank': rank,
+            'place': place[:-1] if place.endswith('着') else place}
 
-app.jinja_env.filters['best_race'] = best_race_display
+def race_detail_url(race_date, venue, num):
+    return f"/race_detail?date={race_date.isoformat()}&venue={quote(venue)}&num={num}"
+
+def race_title_html(title, rank='', url=''):
+    """レース名（race_detailへのリンク）と格のバッジ"""
+    from markupsafe import Markup, escape
+    html = f'<a href="{escape(url)}">{escape(title)}</a>' if url else str(escape(title))
+    if rank:
+        key = rank.replace('J・', '').lower()
+        cls = f"grade-{key}" if re.fullmatch(r'g\d|l|op', key) else 'grade-class'
+        html += f' <span class="grade-badge {cls}">{escape(rank)}</span>'
+    return Markup(html)
+
+def race_parts(text, year_only=False):
+    """週間レポート・indexの表示用：{'when'（年、または日付。今年は月日だけ）, 'title_html', 'place', 'venue_num'}"""
+    p = parse_race_label(text)
+    if not p:
+        return {'when': '', 'title_html': str(text or ''), 'place': '', 'venue_num': ''}
+    if year_only or not p['date']:
+        when = str(p['year'])
+    elif p['date'].year == datetime.now().year:
+        when = f"{p['date'].month}/{p['date'].day}"
+    else:
+        when = f"{p['date'].year}/{p['date'].month}/{p['date'].day}"
+    url = race_detail_url(p['date'], p['venue'], p['num']) if p['date'] else ''
+    return {'when': when, 'title_html': race_title_html(p['title'], p['rank'], url), 'place': p['place'],
+            'venue_num': f"{p['venue']}{p['num']}R" if p['venue'] else ''}
+
+def race_inline_html(text):
+    """indexの最新レース：「10/4 東京5R 未勝利 1着」（レース名はrace_detailへのリンク）"""
+    from markupsafe import Markup, escape
+    if not text:
+        return Markup('')
+    p = race_parts(text)
+    if not p['venue_num']:
+        return Markup(escape(text))
+    place = f"{p['place']}着" if str(p['place']).isdigit() else p['place']
+    return Markup(f"{escape(p['when'])} {escape(p['venue_num'])} {p['title_html']} {escape(place)}")
+
+def history_race_title(r):
+    """出走履歴のレース名（race_detailへのリンクと格）"""
+    title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'))
+    return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']))
+
+app.jinja_env.filters['race_parts'] = race_parts
+app.jinja_env.filters['race_inline'] = race_inline_html
+app.jinja_env.filters['history_race_title'] = history_race_title
 
 # --- レースの間の転厩（成績の調教師が変わっている場合） ---
 def _trainer_key(name):
@@ -4462,7 +4544,9 @@ def weekly():
                 if not status:
                     status = resolve_registration_status('', date_year(cell(r, H_BIRTH)) or '',
                                                          reg_date.year, reg_date.month)
-                rel_done = cell(r, H_REL_TOTAL) != ''
+                # 主な近親馬を求め済みか（以前の形式の主な実績（日付の無いもの）は、リンクを付けられるよう求め直す）
+                rel_done = cell(r, H_REL_TOTAL) != '' and (not cell(r, H_REL_NAME)
+                                                           or bool(_RACE_LABEL_RE.match(cell(r, H_REL_BEST))))
                 registered.append({'date': reg_date, 'name': name,
                                    'sire': cell(r, H_SIRE), 'dam': cell(r, H_DAM), 'status': status,
                                    'row_no': row_no, 'row': r, 'rel_done': rel_done,
@@ -4553,7 +4637,7 @@ def weekly():
     # 主な実績・総本賞金をまだ計算していない（列が空の）馬は、レース結果から求めて表示する
     missing = {}
     for h in cancelled + pasture + changes:
-        if h['last_race'] and (not h['best'] or h['total'] is None) and h['name'] not in missing:
+        if h['last_race'] and (not _RACE_LABEL_RE.match(h['best']) or h['total'] is None) and h['name'] not in missing:
             src = horse_info.get(h['name']) or parent_info.get(h['name']) or {}
             missing[h['name']] = {'key': h['name'], 'name': h['name'], 'horse_id': src.get('horse_id', ''),
                                   'birth_year': src.get('birth_year')}
@@ -4562,7 +4646,8 @@ def weekly():
             found = collect_race_results(list(missing.values()))
             for h in cancelled + pasture + changes:
                 if h['name'] in found:
-                    h['best'] = h['best'] or best_race_label(found[h['name']])
+                    if not _RACE_LABEL_RE.match(h['best']):
+                        h['best'] = best_race_label(found[h['name']])
                     if h['total'] is None:
                         h['total'] = total_prize(found[h['name']])
         except Exception as e:
@@ -4591,6 +4676,12 @@ def weekly():
             with_sheets_retry(ws_h.batch_update, sheet_updates)
         except Exception as e:
             print(f"Horsesシートへの書き込みに失敗しました: {e}")
+
+    # 主な近親馬（「馬名（関係）」で記録）を関係と馬名に分ける
+    for h in registered:
+        m = re.match(r'^(.*)（(.+?)）$', h.get('rel_name') or '')
+        h['rel_horse'], h['rel_relation'] = (m.group(1), m.group(2)) if m else (h.get('rel_name') or '', '')
+        h['rel_linkable'] = h['rel_horse'] in horse_info
 
     if stable_filter:
         def _match(item):
