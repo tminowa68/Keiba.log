@@ -2,6 +2,50 @@
 {% block title %}レース詳細 - keiba.log{% endblock %}
 {% block content %}
 <div class="edit-container">
+    {# 番組表と同じ、週の移動・開催日・競馬場のボタンと、レース番号のボタン #}
+    <div class="race-detail-nav">
+        <div style="margin-bottom: 12px;">
+            <a href="/race_detail?date={{ prev_week }}&num={{ num }}&nav=1">← 前の週</a>
+            <a href="/race_detail?num={{ num }}&nav=1" style="margin-left: 10px;">今週</a>
+            <a href="/race_detail?date={{ next_week }}&num={{ num }}&nav=1" style="margin-left: 10px;">次の週 →</a>
+            <form method="GET" action="/race_detail" style="display: inline-block; margin-left: 15px;">
+                <input type="date" name="date" value="{{ date }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="hidden" name="venue" value="{{ venue }}">
+                <input type="hidden" name="num" value="{{ num }}">
+                <input type="hidden" name="nav" value="1">
+                <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
+            </form>
+        </div>
+        {% if display_dates %}
+        <div style="margin-bottom: 12px;">
+            <span class="race-week-label">{{ week_label }}</span>
+            {% for d in display_dates %}
+                <a class="date" href="/race_detail?date={{ d.value }}&venue={{ venue|urlencode }}&num={{ num }}"
+                    style="{% if date == d.value %} background-color: #007bff; color: white; {% else %} background-color: white; color: #007bff; {% endif %}">
+                    {{ d.label }}
+                </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% if available_venues %}
+        <div style="margin-bottom: 12px;">
+            {% for v in available_venues %}
+                <a href="/race_detail?date={{ date }}&venue={{ v|urlencode }}&num={{ num }}"
+                   style="display: inline-block; padding: 6px 16px; margin-right: 8px; text-decoration: none; border: 1px solid #28a745; border-radius: 4px; font-weight: bold;
+                   {% if venue == v %}background-color: #28a745; color: white;{% else %}background-color: white; color: #28a745;{% endif %}">
+                    {{ v }}
+                </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div class="race-num-buttons">
+            {% for n in race_nums %}
+                <a href="/race_detail?date={{ date }}&venue={{ venue|urlencode }}&num={{ n }}"
+                   class="race-num-btn{% if n == num %} active{% endif %}">{{ n }}R</a>
+            {% endfor %}
+        </div>
+    </div>
+
     {% if race %}
     <section class="race-header-card">
         <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}</h1>

@@ -2276,3 +2276,28 @@ td.col-last-race {
     color: inherit;
     text-align: center;
 }
+/* race_detail：レース番号のボタン */
+.race-detail-nav {
+    margin-bottom: 20px;
+}
+.race-num-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.race-detail-nav a.race-num-btn {
+    display: inline-block;
+    min-width: 40px;
+    padding: 5px 8px;
+    text-align: center;
+    text-decoration: none;
+    border: 1px solid #6c757d;
+    border-radius: 4px;
+    color: #495057;
+    background: #fff;
+    font-weight: bold;
+}
+.race-detail-nav a.race-num-btn.active {
+    background: #495057;
+    color: #fff;
+}

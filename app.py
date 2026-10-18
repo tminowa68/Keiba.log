@@ -1850,7 +1850,11 @@ def query_sheet_rows(book, sheet, columns, conds, keep):
     except Exception as e:
         # クエリが使えない場合はシートを全部読んで絞り込む
         print(f"{sheet}シートのクエリに失敗したため全件を読み込みます: {e}")
-        return [r for r in book.worksheet(sheet).get_all_values()[1:] if r and r[0] and keep(r)]
+        try:
+            ws = book.worksheet(sheet)
+        except gspread.WorksheetNotFound:
+            return []
+        return [r for r in ws.get_all_values()[1:] if r and r[0] and keep(r)]
 
 def query_runner_rows(book, horse_ids, horse_names):
     """成績シートから、馬IDまたは馬名が一致する行だけを取り出す"""
@@ -5865,41 +5869,37 @@ app.jinja_env.filters['mdate'] = lambda v, weekday=True: (
 @app.route('/races')
 def race_list():
     """番組表：開催週（火〜月）ごとに、開催日・競馬場を選んでその日の番組を表示する"""
-    today = datetime.now().date()
-    base = parse_full_date(request.args.get('date') or '') or today
+    nav = race_week_nav(parse_full_date(request.args.get('date') or '') or datetime.now().date(),
+                        request.args.get('venue', ''))
+    selected, venue = nav['selected'], nav['venue']
+    day_races = nav['program'].get(selected, {}).get(venue, {}) if selected else {}
+    first = next(iter(day_races.values()), None)
+    heading = f"{first['kai']}回{venue}{first['nichi']}日" if first else ''
+    return render_template('race_list.html', date=selected.isoformat() if selected else '',
+                           day_races=day_races, search_text=heading, **nav)
+
+def race_week_nav(base, venue):
+    """番組表・レース詳細の上の、週の移動・開催日・競馬場のボタン用。開催週（火〜月）の番組を読み、
+    表示する開催日（指定された日。無ければその日以降で最初の開催日、それも無ければ週の最後の開催日）と競馬場を決める"""
     week_start = racing_week_start(base)
     week_days = [week_start + timedelta(days=i) for i in range(7)]
     program = get_program_for_dates(week_days)
     race_days = sorted(program)
-
-    # 表示する開催日：指定された日（無ければ今日以降で最初の開催日、それも無ければ週の最後の開催日）
     if base in program:
         selected = base
     else:
         selected = next((d for d in race_days if d >= base), race_days[-1] if race_days else None)
-
     venues = list(program.get(selected, {}).keys()) if selected else []
-    venue = request.args.get('venue', '')
     if venue not in venues:
         venue = venues[0] if venues else ''
-    day_races = program.get(selected, {}).get(venue, {}) if selected else {}
-    first = next(iter(day_races.values()), None)
-    heading = f"{first['kai']}回{venue}{first['nichi']}日" if first else ''
-
-    return render_template('race_list.html',
-                           date=selected.isoformat() if selected else '',
-                           selected=selected,
-                           date_for_input=(selected or base).isoformat(),
-                           venue=venue,
-                           day_races=day_races,
-                           available_venues=venues,
-                           display_dates=[{'value': d.isoformat(), 'label': format_month_day(d)} for d in race_days],
-                           week_label=f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
-                           week_start=week_start.isoformat(),
-                           week_end=week_days[-1].isoformat(),
-                           prev_week=(week_start - timedelta(days=7)).isoformat(),
-                           next_week=(week_start + timedelta(days=7)).isoformat(),
-                           search_text=heading)
+    return {'program': program, 'selected': selected, 'venue': venue, 'available_venues': venues,
+            'date_for_input': (selected or base).isoformat(),
+            'display_dates': [{'value': d.isoformat(), 'label': format_month_day(d),
+                               'venues': list(program[d].keys())} for d in race_days],
+            'week_label': f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
+            'week_start': week_start.isoformat(), 'week_end': week_days[-1].isoformat(),
+            'prev_week': (week_start - timedelta(days=7)).isoformat(),
+            'next_week': (week_start + timedelta(days=7)).isoformat()}
 
 def horse_class_of(h, today=None):
     """Horsesシートに記録したクラス。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
@@ -6001,7 +6001,16 @@ def race_detail():
     venue = request.args.get('venue', '')
     num = request.args.get('num', default=1, type=int)
 
-    program_race = find_program_race(race_date, venue, num)
+    # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
+    # 指定された日・競馬場のまま表示する
+    nav = race_week_nav(race_date, venue)
+    if nav['selected'] and (race_date in nav['program'] or not request.args.get('venue')
+                            or request.args.get('nav')):
+        race_date, venue = nav['selected'], nav['venue']
+    day_program = nav['program'].get(race_date, {}).get(venue, {})
+    nav['race_nums'] = sorted(day_program) or list(range(1, 13))
+
+    program_race = day_program.get(num)
     try:
         result_race, runners = read_race_result(race_date, venue, num)
     except Exception as e:
@@ -6063,9 +6072,10 @@ def race_detail():
         available.sort(key=lambda x: x['name'])
 
     heading = f"{race['kai']}回{venue}{race['nichi']}日" if race and race.get('kai') else venue
+    nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
                            program_race=program_race, result_race=result_race, tabs=tabs,
-                           available_horses=available, heading=heading)
+                           available_horses=available, heading=heading, **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required
