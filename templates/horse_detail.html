@@ -395,34 +395,34 @@
                 <tr>
                     <th>年</th>
                     <th>日付</th>
-                    <th>開催</th>
+                    <th class="bl">開催</th>
                     <th>レース名</th>
                     <th>条件</th>
                     <th>コース</th>
                     <th>馬場</th>
-                    <th>頭数</th>
+                    <th class="bl">頭数</th>
                     <th>枠</th>
                     <th>馬番</th>
                     <th>人気</th>
                     <th>着順</th>
                     <th>騎手</th>
                     <th>斤量</th>
-                    <th>タイム</th>
+                    <th class="bl">タイム</th>
                     <th>通過</th>
                     <th>上り</th>
-                    <th>馬体重</th>
-                    <th>本賞金</th>
+                    <th class="bl">馬体重</th>
+                    <th class="bl">本賞金</th>
                     <th>収得賞金</th>
                 </tr>
             </thead>
             <tbody>
                 {% for r in race_history %}
                 {% set year_start = ' year-start' if r.year_rowspan else '' %}
-                {% if r.kind == 'change' %}
-                <tr class="transfer-row{{ year_start }}">
+                {% if r.kind in ('change', 'rest') %}
+                <tr class="{{ 'rest-row' if r.kind == 'rest' else 'transfer-row' }}{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td colspan="18">{{ r.text }}</td>
+                    <td class="bl" colspan="18">{{ r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -430,23 +430,23 @@
                 <tr class="{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
+                    <td class="nowrap bl">{{ r.venue }}{{ r.num }}R</td>
                     <td class="nowrap">{{ r.name|short_race_name }}{% if r.grade %} <span class="grade-badge grade-{{ r.grade|lower }}">{{ r.grade }}</span>{% endif %}</td>
-                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category }} {{ r['class']|replace('オープン', 'OP') }}</td>
+                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category|replace('以上', '上') }} {{ r['class']|replace('オープン', 'OP') }}</td>
                     <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
-                    <td>{{ r.going }}</td>
-                    <td>{{ r.runners }}</td>
+                    <td class="{{ {'稍重': 'going-yaya', '重': 'going-omo', '不良': 'going-furyo'}.get(r.going, '') }}">{{ r.going }}</td>
+                    <td class="bl">{{ r.runners }}</td>
                     <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
                     <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
                     <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
                     <td>{{ r.weight }}</td>
-                    <td>{{ r.time }}</td>
-                    <td class="nowrap">{{ r.corners }}</td>
+                    <td class="bl">{{ r.time }}</td>
+                    <td class="nowrap corners">{{ r.corners }}</td>
                     <td>{{ r.last }}</td>
-                    <td class="nowrap">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
-                    <td class="num">{{ "+{:,}".format(r.prize) if r.prize else '' }}</td>
+                    <td class="nowrap bl">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
+                    <td class="num bl">{{ "+{:,}".format(r.prize) if r.prize else '' }}</td>
                     <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
                 </tr>
                 {% endif %}

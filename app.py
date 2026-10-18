@@ -1954,6 +1954,15 @@ def trainer_label(name, stables):
             return f"{s['area']}・{s_name}"
     return str(name or '').strip()
 
+def rest_label(before, after):
+    """2つのレースの間隔が中10週以上なら「2ヶ月半」のような休養の期間を返す（中13週は3ヶ月、中15週は3ヶ月半。
+    1週に満たない日数は切り捨てる）。中10週未満なら空文字"""
+    interval_weeks = (after - before).days // 7 - 1   # 中○週
+    if interval_weeks < 10:
+        return ''
+    half_months = int((interval_weeks + 1) * 7 / 30.44 * 2)
+    return f"{half_months // 2}ヶ月" + ('半' if half_months % 2 else '')
+
 def build_race_history(race_results, changes_history, birth_year=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
@@ -1971,6 +1980,13 @@ def build_race_history(race_results, changes_history, birth_year=None):
         tentative = str(c.get('仮', '')).strip() == '仮'
         items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
                                   'date_label': '' if tentative else format_date_jp(d, weekday=True), 'text': text}))
+    # レースの間が中10週以上空いていれば「休養：2ヶ月半」の行を入れる
+    chrono = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
+    for before, after in zip(chrono, chrono[1:]):
+        label = rest_label(before['date'], after['date'])
+        if label:
+            items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
+                                                   'date_label': '', 'text': f"休養：{label}"}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -1992,9 +2008,14 @@ def build_race_history(race_results, changes_history, birth_year=None):
 
 RACE_NAME_ABBREVIATIONS = (('ステークス', 'Ｓ'), ('カップ', 'Ｃ'), ('トロフィー', 'Ｔ'))
 
+def strip_race_name_prefix(name):
+    """レース名に空白があれば、その前（「農林水産省賞典」「サンケイスポーツ賞」などの冠）を取り除く"""
+    parts = re.split(r'[\s　]+', str(name or '').strip())
+    return parts[-1] if parts else ''
+
 def short_race_name(name):
-    """レース名の「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
-    name = str(name or '')
+    """レース名の冠（空白より前）を取り除き、「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
+    name = strip_race_name_prefix(name)
     for long, short in RACE_NAME_ABBREVIATIONS:
         name = name.replace(long, short)
     return name
@@ -5718,6 +5739,10 @@ def format_month_day(d, weekday=True):
 def short_race_label(text):
     """最新レースの表示：今年のレースは年を省く（例：2026/10/4 東京5R … → 10/4 東京5R …）"""
     text = str(text or '').strip()
+    # 「年月日 開催 レース名 着順」のレース名に空白があれば、その前（冠）を取り除く
+    tokens = text.split(' ')
+    if len(tokens) > 4:
+        text = ' '.join(tokens[:2] + [tokens[-2], tokens[-1]])
     prefix = f"{datetime.now().year}/"
     return text[len(prefix):] if text.startswith(prefix) else text
 
