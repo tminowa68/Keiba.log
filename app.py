@@ -5740,7 +5740,7 @@ def short_race_label(text):
     """最新レースの表示：今年のレースは年を省く（例：2026/10/4 東京5R … → 10/4 東京5R …）"""
     text = str(text or '').strip()
     # 「年月日 開催 レース名 着順」のレース名に空白があれば、その前（冠）を取り除く
-    tokens = text.split(' ')
+    tokens = re.split(r'[\s　]+', text)
     if len(tokens) > 4:
         text = ' '.join(tokens[:2] + [tokens[-2], tokens[-1]])
     prefix = f"{datetime.now().year}/"
