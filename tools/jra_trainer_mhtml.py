@@ -13,7 +13,11 @@ JRAの調教師「管理馬一覧」ページを全厩舎分MHTMLで保存し、
   pip install playwright requests
   playwright install chromium
 
-使い方
+※ keiba.log の「データ更新」画面の「JRAから管理馬一覧を取り込む」ボタンでも、ファイルを保存せずに
+  同じ取り込みができます。このスクリプトは、管理馬一覧のページをファイルとして残したい場合に使います。
+
+使い方（このファイルは tools フォルダにあるため、リポジトリのフォルダで実行する場合は
+「py tools/jra_trainer_mhtml.py --upload-only」のようにフォルダ名を付ける）
   python jra_trainer_mhtml.py                 保存してアップロードする
   python jra_trainer_mhtml.py --no-upload     保存だけする
   python jra_trainer_mhtml.py --upload-only   今日のフォルダに保存済みのファイルをアップロードだけする

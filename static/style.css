@@ -2239,3 +2239,29 @@ td.col-last-race {
     color: inherit;
     text-align: center;
 }
+/* 出走履歴：区切りの太線・馬場の色・休養の行 */
+.race-result-table {
+    border: 3px solid #666;
+}
+.race-result-table th.bl,
+.race-result-table td.bl {
+    border-left: 3px solid #666;
+}
+.race-result-table td.corners {
+    text-align: right;
+}
+.race-result-table td.going-yaya { background: #d6d6d6; }
+.race-result-table td.going-omo { background: #8a8a8a; color: #fff; }
+.race-result-table td.going-furyo { background: #000; color: #fff; }
+.race-result-table tr.rest-row td {
+    text-align: left;
+    background: #eef4fb;
+    color: #34618f;
+    font-weight: bold;
+    font-size: 0.95em;
+}
+.race-result-table tr.rest-row td.year-cell {
+    background: #f7f7f7;
+    color: inherit;
+    text-align: center;
+}

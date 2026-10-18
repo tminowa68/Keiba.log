@@ -1954,6 +1954,16 @@ def trainer_label(name, stables):
             return f"{s['area']}・{s_name}"
     return str(name or '').strip()
 
+def rest_label(before, after):
+    """2つのレースの間隔が中10週以上なら「2ヶ月半」のような休養の期間を返す。中2週ごとに半月ずつ増やす
+    （中10・11週は2ヶ月半、中12・13週は3ヶ月、中14・15週は3ヶ月半。1週に満たない日数は切り捨てる）。
+    中10週未満なら空文字"""
+    interval_weeks = (after - before).days // 7 - 1   # 中○週
+    if interval_weeks < 10:
+        return ''
+    half_months = interval_weeks // 2
+    return f"{half_months // 2}ヶ月" + ('半' if half_months % 2 else '')
+
 def build_race_history(race_results, changes_history, birth_year=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
@@ -1971,6 +1981,13 @@ def build_race_history(race_results, changes_history, birth_year=None):
         tentative = str(c.get('仮', '')).strip() == '仮'
         items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
                                   'date_label': '' if tentative else format_date_jp(d, weekday=True), 'text': text}))
+    # レースの間が中10週以上空いていれば「休養：2ヶ月半」の行を入れる
+    chrono = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
+    for before, after in zip(chrono, chrono[1:]):
+        label = rest_label(before['date'], after['date'])
+        if label:
+            items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
+                                                   'date_label': '', 'text': f"休養：{label}"}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -1992,9 +2009,14 @@ def build_race_history(race_results, changes_history, birth_year=None):
 
 RACE_NAME_ABBREVIATIONS = (('ステークス', 'Ｓ'), ('カップ', 'Ｃ'), ('トロフィー', 'Ｔ'))
 
+def strip_race_name_prefix(name):
+    """レース名に空白があれば、その前（「農林水産省賞典」「サンケイスポーツ賞」などの冠）を取り除く"""
+    parts = re.split(r'[\s　]+', str(name or '').strip())
+    return parts[-1] if parts else ''
+
 def short_race_name(name):
-    """レース名の「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
-    name = str(name or '')
+    """レース名の冠（空白より前）を取り除き、「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
+    name = strip_race_name_prefix(name)
     for long, short in RACE_NAME_ABBREVIATIONS:
         name = name.replace(long, short)
     return name
@@ -3780,31 +3802,122 @@ def jra_info_to_columns(info, all_stables):
             values[H_REGION] = info['birthplace']
     return {k: v for k, v in values.items() if v}
 
+# --- 管理馬一覧をJRAのサイトから直接取得する（tools/jra_trainer_mhtml.py と同じ手順をサーバーで行う） ---
+JRA_TRAINER_INDEX_URL = "https://www.jra.go.jp/datafile/meikan/trainer.html"
+JRA_TRAINER_ROWS = ["あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行"]
+_DO_ACTION_RE = re.compile(r"doAction\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)")
+
+def _doaction_of(a):
+    """リンクの onclick="doAction('/JRADB/accessC.html', 'pw05…')" から (送り先のURL, cname) を取り出す"""
+    m = _DO_ACTION_RE.search((a.get('onclick') or '') if a is not None else '')
+    if not m:
+        return None, None
+    return requests.compat.urljoin('https://www.jra.go.jp/', m.group(1)), m.group(2)
+
+def _link_by_text(soup, text):
+    return next((a for a in soup.find_all('a', onclick=True) if a.get_text(strip=True) == text), None)
+
+def list_jra_trainers():
+    """JRAの「騎手・調教師データ」の調教師のプロフィール（あ行〜わ行）から、全調教師の一覧を返す。
+    [{'name', 'area', 'action', 'cname'}]"""
+    from concurrent.futures import ThreadPoolExecutor
+    index = BeautifulSoup(fetch_jra_html(JRA_TRAINER_INDEX_URL), 'html.parser')
+    rows = []
+    for label in JRA_TRAINER_ROWS:
+        action, cname = _doaction_of(_link_by_text(index, label))
+        if cname:
+            rows.append((label, action, cname))
+    if not rows:
+        raise ValueError('調教師の一覧のページ（あ行〜わ行）を読み取れませんでした。')
+
+    def _row(row):
+        label, action, cname = row
+        soup = BeautifulSoup(fetch_jra_html(action, cname=cname), 'html.parser')
+        found = []
+        for a in soup.find_all('a', onclick=re.compile('pw05cmk')):
+            name_el = a.select_one('span.txt')
+            if not name_el:
+                continue
+            area_el = a.select_one('span.icon span')
+            t_action, t_cname = _doaction_of(a)
+            found.append({'name': name_el.get_text(strip=True), 'area': area_el.get_text(strip=True) if area_el else '',
+                          'row': label, 'action': t_action, 'cname': t_cname})
+        return found
+
+    trainers, seen = [], set()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for found in pool.map(_row, rows):
+            for t in found:
+                if t['cname'] not in seen:
+                    seen.add(t['cname'])
+                    trainers.append(t)
+    return trainers
+
+def fetch_trainer_horses_html(action, cname):
+    """調教師のページを開き、「管理馬一覧」のページのHTMLを返す（管理馬一覧が無ければ None）"""
+    if not action or not cname or not any(action.startswith(f"https://www.{h}") for h in ('jra.go.jp',)):
+        raise ValueError('調教師のページの指定が正しくありません。')
+    trainer_page = BeautifulSoup(fetch_jra_html(action, cname=cname), 'html.parser')
+    h_action, h_cname = _doaction_of(_link_by_text(trainer_page, '管理馬一覧'))
+    if not h_cname:
+        return None
+    return fetch_jra_html(h_action, cname=h_cname)
+
+@app.route('/api/trainer_pages/list', methods=['POST'])
+@login_required
+def api_trainer_pages_list():
+    try:
+        return jsonify({'trainers': list_jra_trainers()})
+    except Exception as e:
+        return jsonify({'error': f'調教師の一覧を取得できませんでした: {e}'}), 400
+
+@app.route('/api/trainer_pages/import', methods=['POST'])
+@login_required
+def api_trainer_pages_import():
+    """1人の調教師の管理馬一覧をJRAのサイトから取得して取り込む（管理馬一覧インポートと同じ処理）"""
+    data = request.get_json(silent=True) or {}
+    try:
+        html = fetch_trainer_horses_html(str(data.get('action') or ''), str(data.get('cname') or ''))
+    except Exception as e:
+        return jsonify({'error': f'管理馬一覧を取得できませんでした: {e}'}), 400
+    if html is None:
+        return jsonify({'skipped': True, 'messages': ['管理馬一覧のリンクがありません']})
+    messages = import_trainer_page(html)
+    ok = bool(messages) and messages[0].startswith('管理馬一覧の取り込み完了')
+    return jsonify({'ok': ok, 'messages': messages})
+
 @app.route('/import_trainer_horses', methods=['POST'])
 @login_required
 def import_trainer_horses():
     """JRAの調教師「管理馬一覧」ページ（HTML／MHTML保存）をアップロードして、状態の更新と未登録馬の登録を行う"""
-    from concurrent.futures import ThreadPoolExecutor
-
     file = request.files.get('trainer_file')
     if not file or not file.filename:
         flash('ファイルが選択されていません。')
         return redirect('/import_horses')
-
     try:
         html_text = _extract_html_from_upload(file.read())
-        page_error = check_jra_page_kind(html_text, 'trainer')
-        if page_error:
-            flash(page_error)
-            return redirect('/import_horses')
-        trainer_name, as_of_date, parsed_horses = parse_jra_trainer_horses_page(html_text)
     except Exception as e:
         flash(f'ファイルの解析に失敗しました: {e}')
         return redirect('/import_horses')
+    for message in import_trainer_page(html_text):
+        flash(message)
+    return redirect('/import_horses')
+
+def import_trainer_page(html_text):
+    """管理馬一覧のページ（HTML）から、状態の更新と未登録馬の登録を行い、結果の文の一覧を返す
+    （ファイルのアップロード・JRAからの取得の両方で使う）"""
+    from concurrent.futures import ThreadPoolExecutor
+    messages = []
+    try:
+        page_error = check_jra_page_kind(html_text, 'trainer')
+        if page_error:
+            return [page_error]
+        trainer_name, as_of_date, parsed_horses = parse_jra_trainer_horses_page(html_text)
+    except Exception as e:
+        return [f'ページの解析に失敗しました: {e}']
 
     if not parsed_horses:
-        flash('管理馬が見つかりませんでした。ファイルの形式をご確認ください。')
-        return redirect('/import_horses')
+        return ['管理馬が見つかりませんでした。ページの形式をご確認ください。']
 
     def _blank(v):
         return v is None or str(v).strip() == ''
@@ -3955,24 +4068,24 @@ def import_trainer_horses():
             sh.worksheet("Changes").append_rows(changes_rows)
 
         record_import_date('import_trainer', as_of_date)
-        flash(f"管理馬一覧の取り込み完了（{trainer_name}・{format_date_jp(today_str)}現在・{len(parsed_horses)}頭）："
+        messages.append(f"管理馬一覧の取り込み完了（{trainer_name}・{format_date_jp(today_str)}現在・{len(parsed_horses)}頭）："
               f"新規 {len(added)}件／状態更新 {len(status_changed)}件／変更 {len(change_msgs)}件／空欄補完 {len(filled)}件")
         if added:
-            flash("新規登録：" + "、".join(added))
+            messages.append("新規登録：" + "、".join(added))
         if status_changed:
-            flash("状態更新：" + "、".join(status_changed))
+            messages.append("状態更新：" + "、".join(status_changed))
         if restored:
-            flash("抹消を解除（管理馬一覧に載っているため）：" + "、".join(restored))
+            messages.append("抹消を解除（管理馬一覧に載っているため）：" + "、".join(restored))
         if change_msgs:
-            flash("変更（Changesシートに記録）：" + "、".join(change_msgs))
+            messages.append("変更（Changesシートに記録）：" + "、".join(change_msgs))
         if filled:
-            flash("空欄補完：" + "、".join(filled))
+            messages.append("空欄補完：" + "、".join(filled))
         if failed:
-            flash("情報の取得に失敗：" + "、".join(failed))
-        return redirect('/import_horses')
+            messages.append("情報の取得に失敗：" + "、".join(failed))
+        return messages
     except Exception as e:
-        flash(f'登録処理中にエラーが発生しました: {e}')
-        return redirect('/import_horses')
+        messages.append(f'登録処理中にエラーが発生しました: {e}')
+        return messages
 
 
 def parse_jra_cancel_page(html_text):
@@ -5627,6 +5740,10 @@ def format_month_day(d, weekday=True):
 def short_race_label(text):
     """最新レースの表示：今年のレースは年を省く（例：2026/10/4 東京5R … → 10/4 東京5R …）"""
     text = str(text or '').strip()
+    # 「年月日 開催 レース名 着順」のレース名に空白があれば、その前（冠）を取り除く
+    tokens = re.split(r'[\s　]+', text)
+    if len(tokens) > 4:
+        text = ' '.join(tokens[:2] + [tokens[-2], tokens[-1]])
     prefix = f"{datetime.now().year}/"
     return text[len(prefix):] if text.startswith(prefix) else text
 
