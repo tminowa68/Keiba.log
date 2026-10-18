@@ -63,26 +63,6 @@
         </div>
     </section>
 
-    {% if program_race and session.get('login') %}
-    <section class="entry-form-box">
-        <div class="filter-container">
-            <select id="class-filter" onchange="filterHorses()">
-                <option value="全クラス">全クラス</option>
-                {% for c in ['新馬', '未勝利', '1勝クラス', '2勝クラス', '3勝クラス', 'オープン'] %}
-                <option value="{{ c }}"{% if program_race['class'] == c %} selected{% endif %}>{{ c }}</option>
-                {% endfor %}
-            </select>
-            <select id="select_estimated">
-                <option value="">馬を選択してください</option>
-                {% for h in available_horses %}
-                <option value="{{ h.name }}" data-class="{{ h['class'] }}">{{ h.name }}（{{ h.gender }}{{ h.age }}, {{ h['class'] }}, {{ h.stable }}）</option>
-                {% endfor %}
-            </select>
-            <button class="btn-add" onclick="registerSingle(this)">想定でエントリー</button>
-        </div>
-    </section>
-    {% endif %}
-
     {% if tabs %}
     <div class="entry-tabs">
         {% for t in tabs %}
@@ -92,9 +72,44 @@
 
     {% for t in tabs %}
     <section id="{{ t.key }}" class="entry-section">
-        {% if t.key == 'final' %}
+        <div class="section-title mb-8">
+            <h3 class="m-0">{{ t.label }} <span class="final-count-text">（{{ (t.horses or t.runners)|length }}頭）</span></h3>
+            <span class="sort-controls" data-table="tbl_{{ t.key }}">
+                並び替え：<select class="sort-key">
+                    {% if t.key == 'final' %}<option value="place">着順</option>{% endif %}
+                    <option value="num">馬番</option>
+                    <option value="name">馬名</option>
+                    <option value="age">馬齢</option>
+                    <option value="weight">斤量</option>
+                    <option value="prevdate">前走日付</option>
+                    <option value="prevplace">前走着順</option>
+                    <option value="shutoku">収得賞金</option>
+                </select>
+                <select class="sort-dir">
+                    <option value="asc">昇順</option>
+                    <option value="desc">降順</option>
+                </select>
+                <input type="hidden" class="sort-default" value="{{ 'place' if t.key == 'final' else 'shutoku' }}">
+                <input type="hidden" class="sort-default-dir" value="{{ 'asc' if t.key == 'final' else 'desc' }}">
+            </span>
+        </div>
+        {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
+        {# 前走レース（日付｜開催｜レース名｜着順）・間隔・収得賞金 #}
+        {% macro prev_ths() %}<th class="bl">前走日付</th><th>開催</th><th>前走レース</th><th>着順</th><th class="bl">間隔</th><th class="bl">収得賞金<br>（万円）</th>{% endmacro %}
+        {% macro prev_cells(h) %}{% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
+                    <td class="num nowrap bl">{{ h.prev_when }}</td>
+                    <td class="nowrap">{{ h.prev_venue }}</td>
+                    <td class="nowrap">{{ h.prev_title }}</td>
+                    <td class="num nowrap {{ rank_class.get(h.prev_place|string, '') }}">{{ (h.prev_place ~ '着') if (h.prev_place|string).isdigit() else h.prev_place }}</td>
+                    <td class="num nowrap bl">{{ h.interval }}</td>
+                    <td class="num bl">{{ "{:,}".format(h.shutoku) if h.shutoku else '0' if h.prev_when else '' }}</td>
+        {%- endmacro %}
+        {% macro sort_attrs(h, num, name, age, weight) -%}
+        data-num="{{ num }}" data-name="{{ name }}" data-age="{{ age }}" data-weight="{{ weight }}" data-prevdate="{{ h.prev_date }}" data-prevplace="{{ h.prev_place if (h.prev_place|string).isdigit() else '' }}" data-shutoku="{{ h.shutoku if h.prev_when else '' }}"
+        {%- endmacro %}
         <div class="race-result-scroll">
-        <table class="race-list-table race-result-table">
+        {% if t.key == 'final' %}
+        <table class="race-list-table race-result-table" id="tbl_{{ t.key }}">
             <thead>
                 <tr>
                     <th>着順</th>
@@ -112,12 +127,12 @@
                     <th class="bl">馬体重</th>
                     <th>調教師</th>
                     <th class="bl">本賞金</th>
+                    {{ prev_ths() }}
                 </tr>
             </thead>
             <tbody>
-                {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
                 {% for r in t.runners %}
-                <tr>
+                <tr {{ sort_attrs(r, r.horse_num, r.horse_name, r.age, r.weight) }} data-place="{{ r.place if (r.place|string).isdigit() else '' }}">
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
                     <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
@@ -133,14 +148,13 @@
                     <td class="nowrap bl">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
                     <td class="nowrap">{{ r.trainer }}</td>
                     <td class="num bl">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
+{{ prev_cells(r) }}
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        </div>
         {% else %}
-        <h3>{{ t.label }} <span class="final-count-text">（{{ t.horses|length }}頭）</span></h3>
-        <table class="entry-table">
+        <table class="race-list-table race-result-table" id="tbl_{{ t.key }}">
             <thead>
                 <tr>
                     <th>馬名</th>
@@ -148,36 +162,24 @@
                     <th>斤量</th>
                     <th>クラス</th>
                     <th>厩舎</th>
-                    <th>状態</th>
+                    {{ prev_ths() }}
                 </tr>
             </thead>
             <tbody>
                 {% for h in t.horses %}
-                <tr>
-                    <td class="col-name">{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-                    <td class="col-gender">{{ h.gender }}{{ h.age }}</td>
+                <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }}>
+                    <td class="nowrap">{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+                    <td class="nowrap">{{ h.gender }}{{ h.age }}</td>
                     <td>{{ h.weight }}</td>
-                    <td>{{ h['class'] }}</td>
-                    <td>{{ h.stable }}</td>
-                    <td>{{ h.status_label }}</td>
+                    <td class="nowrap">{{ h['class'] }}</td>
+                    <td class="nowrap">{{ h.stable }}</td>
+{{ prev_cells(h) }}
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        {% if session.get('login') and t.next and t.candidates %}
-        <div class="entry-form-box mt-20">
-            <div class="mb-8">
-                <button type="button" class="update-btn btn-secondary" onclick="selectAll('checkboxes_{{ t.key }}')">全てにチェックを入れる</button>
-            </div>
-            <div id="checkboxes_{{ t.key }}" class="checkbox-list">
-                {% for name in t.candidates %}
-                <label><input type="checkbox" value="{{ name }}"> {{ name }}</label>
-                {% endfor %}
-            </div>
-            <button class="btn-add" onclick="registerSelected(this, '{{ t.key }}', '{{ t.next[0] }}')">{{ t.next[1] }}</button>
+        {% endif %}
         </div>
-        {% endif %}
-        {% endif %}
     </section>
     {% endfor %}
     {% else %}
@@ -206,7 +208,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let active = null;
     try { active = localStorage.getItem('raceTab_' + raceKey); } catch (e) {}
     switchTab(tabKeys.includes(active) ? active : tabKeys[tabKeys.length - 1], false);
-    filterHorses();
 });
 
 function switchTab(key, remember = true) {
@@ -217,68 +218,39 @@ function switchTab(key, remember = true) {
     }
 }
 
-// 想定でエントリーできる馬を、選んだクラスで絞り込む
-const horseOptions = Array.from(document.querySelectorAll('#select_estimated option'))
-    .map(o => ({ value: o.value, text: o.textContent, cls: o.dataset.class }));
-function filterHorses() {
-    const select = document.getElementById('select_estimated');
-    if (!select) return;
-    const cls = document.getElementById('class-filter').value;
-    select.innerHTML = '';
-    horseOptions.forEach(o => {
-        if (o.value && cls !== '全クラス' && o.cls !== cls) return;
-        const opt = document.createElement('option');
-        opt.value = o.value;
-        opt.textContent = o.text;
-        opt.dataset.class = o.cls || '';
-        select.appendChild(opt);
-    });
-}
-
-async function postEntry(names, type) {
-    const res = await fetch('/save_entry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: {{ date|tojson }}, venue: {{ venue|tojson }}, race_num: {{ num }},
-                               horse_names: names, entry_type: type })
-    });
-    let data = {};
-    try { data = await res.json(); } catch (e) {}
-    if (!res.ok || data.status !== 'success') throw new Error(data.message || `保存に失敗しました（HTTP ${res.status}）`);
-}
-
-async function registerSingle(btn) {
-    const name = document.getElementById('select_estimated').value;
-    if (!name) return alert('馬を選択してください');
-    btn.disabled = true;
-    try {
-        await postEntry([name], 'estimated');
-        switchTab('estimated');
-        location.reload();
-    } catch (e) {
-        alert(e.message);
-        btn.disabled = false;
+// 出馬表の並び替え（値が無い行は最後。同じ値なら馬名順）
+(function() {
+    const numeric = { num: true, age: true, weight: true, prevplace: true, shutoku: true, place: true };
+    function value(tr, key) {
+        const v = tr.dataset[key] || '';
+        if (v === '') return null;
+        return numeric[key] ? Number(v) : v;
     }
-}
-
-async function registerSelected(btn, from, to) {
-    const names = Array.from(document.querySelectorAll(`#checkboxes_${from} input:checked`)).map(cb => cb.value);
-    if (!names.length) return alert('馬を選択してください');
-    btn.disabled = true;
-    btn.textContent = '登録中...';
-    try {
-        await postEntry(names, to);
-        switchTab(to);
-        location.reload();
-    } catch (e) {
-        alert(e.message);
-        location.reload();
+    function compare(a, b) {
+        if (a === null && b === null) return 0;
+        if (a === null) return 1;
+        if (b === null) return -1;
+        return typeof a === 'number' ? a - b : String(a).localeCompare(String(b), 'ja');
     }
-}
-
-function selectAll(containerId) {
-    document.querySelectorAll(`#${containerId} input[type="checkbox"]`).forEach(cb => cb.checked = true);
-}
+    function apply(ctrl) {
+        const table = document.getElementById(ctrl.dataset.table);
+        if (!table) return;
+        const key = ctrl.querySelector('.sort-key').value;
+        const dir = ctrl.querySelector('.sort-dir').value === 'desc' ? -1 : 1;
+        const tbody = table.tBodies[0];
+        Array.from(tbody.rows).sort((a, b) => {
+            const va = value(a, key), vb = value(b, key);
+            const c = (va === null || vb === null) ? compare(va, vb) : dir * compare(va, vb);
+            return c || compare(value(a, 'name'), value(b, 'name'));
+        }).forEach(tr => tbody.appendChild(tr));
+    }
+    document.querySelectorAll('.sort-controls').forEach(ctrl => {
+        ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;
+        ctrl.querySelector('.sort-dir').value = ctrl.querySelector('.sort-default-dir').value;
+        ctrl.querySelectorAll('select').forEach(sel => sel.addEventListener('change', () => apply(ctrl)));
+        apply(ctrl);
+    });
+})();
 </script>
 {% endif %}
 {% endblock %}

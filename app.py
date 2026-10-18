@@ -6521,6 +6521,34 @@ def runner_stage(r):
         return 'final'
     return ENTRY_STATUS_STAGE.get(r['entry'], 'estimated')
 
+def previous_race_info(horses, race_date, jump=False):
+    """出馬表の前走レース・間隔・収得賞金。horses：[(馬名, 馬ID, 生年)]。生年が分からなければ馬IDの先頭4桁を使う。
+    {馬名: {'prev', 'prev_when', 'prev_title', 'prev_place', 'prev_date', 'interval', 'shutoku'}} を返す"""
+    targets = []
+    for name, horse_id, birth_year in horses:
+        if not birth_year and str(horse_id or '')[:4].isdigit():
+            birth_year = int(str(horse_id)[:4])
+        targets.append({'key': name, 'name': name, 'horse_id': horse_id or '', 'birth_year': birth_year})
+    found = collect_race_results(targets, until_year=race_date.year)
+    out = {}
+    for t in targets:
+        res = [r for r in found.get(t['key'], []) if r['date'] < race_date]
+        info = {'prev_when': '', 'prev_title': '', 'prev_place': '', 'prev_date': '', 'interval': '',
+                'interval_weeks': '', 'shutoku': 0}
+        if res:
+            p = res[0]
+            weeks = (race_date - p['date']).days // 7 - 1
+            info.update({'prev_date': p['date'].isoformat(),
+                         'prev_when': f"{p['date'].month}/{p['date'].day}" if p['date'].year == race_date.year
+                                      else f"{p['date'].year}/{p['date'].month}/{p['date'].day}",
+                         'prev_venue': f"{p['venue']}{p['num']}R", 'prev_title': history_race_title(p),
+                         'prev_place': str(p['place']), 'interval_weeks': max(weeks, 0),
+                         'interval': '連闘' if weeks <= 0 else f"中{weeks}週"})
+            summary = RR.summarize_results(res, birth_year=t['birth_year'], today=race_date)
+            info['shutoku'] = summary['jump' if jump else 'flat']['shutoku'] or 0
+        out[t['key']] = info
+    return out
+
 def next_race_entries(horse_name, horse_id=''):
     """次走予定：成績シートのこの馬の想定・特別・確定（枠順確定前）の記録。
     そのレースの結果が取り込まれるか、同じレースの他の馬が先の段階（特別→確定など）に進んだ場合は表示しない"""
@@ -6658,7 +6686,10 @@ def race_detail():
             continue
         tabs.append({'key': key, 'label': label,
                      'horses': [dict(_horse_info(e['horse_name']), name=e['horse_name'], status=e['entry'],
-                                     status_label=entry_status_label(e['entry']), weight=e['weight'])
+                                     status_label=entry_status_label(e['entry']), weight=e['weight'],
+                                     horse_num=e['horse_num'], horse_id=e['horse_id'],
+                                     **({} if e['horse_name'] in horses or not e['horse_id'][:4].isdigit()
+                                        else {'age': race_date.year - int(e['horse_id'][:4])}))
                                 for e in entries if order.index(e['stage']) >= i],
                      # 次の段階に進める候補（この段階の馬）
                      'candidates': [e['horse_name'] for e in entries if e['stage'] == key]})
@@ -6672,25 +6703,24 @@ def race_detail():
         elif t['key'] == 'special':
             t['next'] = ('before_draw', '枠順確定前へ')
 
-    # 想定でエントリーできる馬（馬齢・クラスが合う、抹消されていない馬）
-    available = []
-    if program_race and session.get('login'):
-        entered = {r['horse_name'] for r in runners}
-        for name, h in horses.items():
-            if name in entered or str(h[H_STATUS] if len(h) > H_STATUS else '').strip() == '抹消':
-                continue
-            info = _horse_info(name)
-            if not age_allowed(program_race['category'], info['age']):
-                continue
-            if program_race['jump'] or class_allowed(program_race['class'], info['class'] or '新馬'):
-                available.append(dict(info, name=name, **{'class': info['class'] or '不明'}))
-        available.sort(key=lambda x: x['name'])
+    # 前走レース・間隔・収得賞金（このレースの日の前までの成績から）
+    if runners:
+        try:
+            jump = bool(race and race.get('jump'))
+            prev = previous_race_info([(r['horse_name'], r['horse_id'],
+                                        date_year(horses[r['horse_name']][H_BIRTH]) if r['horse_name'] in horses else None)
+                                       for r in runners], race_date, jump)
+            for t in tabs:
+                for h in t.get('horses') or t.get('runners') or []:
+                    h.update(prev.get(h['horse_name'] if 'horse_name' in h else h['name'], {}))
+        except Exception as e:
+            print(f"前走レースの読み込みエラー: {e}")
 
     heading = f"{race['kai']}回{venue}{race['nichi']}日" if race and race.get('kai') else venue
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
                            program_race=program_race, result_race=result_race, tabs=tabs,
-                           available_horses=available, heading=heading, **nav)
+                           heading=heading, **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required
