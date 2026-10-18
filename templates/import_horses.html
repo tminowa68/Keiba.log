@@ -410,7 +410,8 @@
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>クラス・最新レースの再計算</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
-        Horsesシートの「クラス」「最新レース」の列を、取り込んだレース結果から計算し直します（競走馬一覧に表示します）。<br>
+        Horsesシートの「クラス」「最新レース」「主な実績」「総本賞金」などの列を、取り込んだレース結果から計算し直します（競走馬一覧・週間レポートに表示します）。
+        Sire・Damシートの馬（JRAで出走した馬）の最新レース・主な実績・総本賞金も計算し直します。<br>
         レース結果を取り込むと、出走した登録馬の分は自動で計算し直します。最初の1回や、馬を登録した後などに実行してください。
     </p>
     <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
@@ -426,15 +427,20 @@
     btn.addEventListener('click', async () => {
         btn.disabled = true;
         msg.style.color = '';
-        let offset = 0, total = null, updated = 0;
+        const summary = [];
         try {
-            do {
-                msg.textContent = total === null ? '計算しています...' : `計算しています（${Math.min(offset, total)}／${total}頭）...`;
-                const res = await RaceImport.post('/api/race_results/update_classes',
-                    { offset: offset, limit: 40, include_cancelled: document.getElementById('uc-cancelled').checked });
-                total = res.total; offset = res.next; updated += res.updated;
-            } while (offset < total);
-            msg.textContent = `完了しました（${total}頭のうち${updated}頭を更新）。`;
+            // Horses、続けてSire・Damシートの馬（最新レース・主な実績・総本賞金）
+            for (const sheet of ['Horses', 'Sire', 'Dam']) {
+                let offset = 0, total = null, updated = 0;
+                do {
+                    msg.textContent = `${sheet}：` + (total === null ? '計算しています...' : `計算しています（${Math.min(offset, total)}／${total}頭）...`);
+                    const res = await RaceImport.post('/api/race_results/update_classes',
+                        { sheet: sheet, offset: offset, limit: 40, include_cancelled: document.getElementById('uc-cancelled').checked });
+                    total = res.total; offset = res.next; updated += res.updated;
+                } while (offset < total);
+                summary.push(`${sheet} ${total}頭のうち${updated}頭`);
+            }
+            msg.textContent = `完了しました（${summary.join('、')}を更新）。`;
         } catch (e) {
             msg.style.color = '#c62828';
             msg.textContent = e.message;
