@@ -1986,7 +1986,7 @@ SHORT_PASTURE_DAYS = 10   # 放牧から入厩までがこの日数以下の放�
 
 def pasture_note(pasture_history, start, end):
     """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を
-    「（放牧：3月20日　入厩：4月10日／放牧：5月1日　入厩：6月1日）」にする。
+    「放牧：3月20日→入厩：4月10日／放牧：5月1日→入厩：6月1日」にする。
     放牧入厩シートの1行ごとに分けて表示し（片方しか無ければその片方だけ）、放牧から入厩までが10日以下のものは表示しない"""
     in_range = lambda d: bool(d) and start < d and (end is None or d < end)
     parts = []
@@ -1998,8 +1998,8 @@ def pasture_note(pasture_history, start, end):
         if out_date and in_date and (in_date - out_date).days <= SHORT_PASTURE_DAYS:
             continue
         texts = [f"{label}：{d.month}月{d.day}日" for label, d in (('放牧', out_date), ('入厩', in_date)) if d]
-        parts.append('　'.join(texts))
-    return f"（{'／'.join(parts)}）" if parts else ''
+        parts.append('→'.join(texts))
+    return '／'.join(parts)
 
 def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=()):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
@@ -2022,10 +2022,16 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     chrono = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
     for before, after in zip(chrono, chrono[1:]):
         label = rest_label(before['date'], after['date'])
+        note = pasture_note(pasture_history, before['date'], after['date'])
         if label:
-            items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
-                                                   'date_label': '',
-                                                   'text': f"休養：{label}{pasture_note(pasture_history, before['date'], after['date'])}"}))
+            text = f"休養：{label}" + (f"（{note}）" if note else '')
+        elif note:
+            # 休養（中10週以上）に当たらない間の放牧は、放牧だけの行にする
+            text = note
+        else:
+            continue
+        items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
+                                               'date_label': '', 'text': text}))
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 0), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
