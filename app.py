@@ -1135,8 +1135,9 @@ def find_stable_match(all_stables, area, trainer_name):
 def get_all_horses():
     """Horsesシートの全行を返す（英字の馬はA列が空欄のため、A列の位置に英馬名を入れて返す）"""
     try:
-        sh = gc.open(horse_data)
-        data = sh.worksheet("Horses").get_all_values()
+        data = cached_sheet_values("Horses")
+        if data is None:
+            data = gc.open(horse_data).worksheet("Horses").get_all_values()
         rows = []
         for r in data[1:]:
             r = list(r)
@@ -1177,8 +1178,9 @@ def _load_stables_list():
         
         for sheet_name in ["美浦", "栗東"]:
             try:
-                sheet = sh.worksheet(sheet_name)
-                data = sheet.get_all_values()
+                data = cached_sheet_values(sheet_name)
+                if data is None:
+                    data = sh.worksheet(sheet_name).get_all_values()
                 for row in data[1:]:
                     if len(row) >= 2 and row[0] and row[1]:
                         # 列インデックスの更新 (E:開業[4], F:引退[5], G:馬房数[6], H:臨時貸付[7], I:貸付終了[8])
@@ -1288,9 +1290,8 @@ def split_dam_annotation(raw):
 def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc, base_is_english=False):
     # スプレッドシートから全データを取得
     try:
-        wb = gc.open('Horse_Data')
-        sire_data = wb.worksheet('Sire').get_all_records()
-        dam_data = wb.worksheet('Dam').get_all_records()
+        sire_data = horse_sheet_records('Sire')
+        dam_data = horse_sheet_records('Dam')
     except Exception as e:
         print(f"Spreadsheet fetch error: {e}")
         sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
@@ -1902,21 +1903,25 @@ def collect_race_results(horses):
         if h.get('name'):
             by_name.setdefault(h['name'], []).append(h['key'])
     found = {h['key']: {} for h in horses}
+    # 馬IDで探し、馬IDが分からない馬は馬名で探す（年ごとのファイルを並行して検索する）
+    ids = [h['horse_id'] for h in horses if h.get('horse_id')]
+    names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
+    jobs = []
     for year in range(max(first_year, 2000), this_year + 1):
         book = get_result_book(year)
-        if not book:
-            continue
-        # 馬IDで探し、馬IDが分からない馬は馬名で探す
-        ids = [h['horse_id'] for h in horses if h.get('horse_id')]
-        names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
-        for i in range(0, max(len(ids), len(names)), 40):
-            for row in query_runner_rows(book, ids[i:i + 40], names[i:i + 40]):
-                res = runner_row_to_result(row)
-                if not res:
-                    continue
-                keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
-                for key in keys:
-                    found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
+        if book:
+            jobs += [(book, ids[i:i + 40], names[i:i + 40]) for i in range(0, max(len(ids), len(names)), 40)]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        row_lists = list(pool.map(lambda job: query_runner_rows(*job), jobs))
+    for rows in row_lists:
+        for row in rows:
+            res = runner_row_to_result(row)
+            if not res:
+                continue
+            keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
+            for key in keys:
+                found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
     order = lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0)
     return {key: sorted(v.values(), key=order, reverse=True) for key, v in found.items()}
 
@@ -2207,6 +2212,43 @@ def horse_sheet_values(title):
     if cache is not None:
         cache[title] = values
     return values
+
+def prefetch_horse_sheets(titles):
+    """画面の表示に使うHorse_Dataのシートを、まとめて1回の読み込みで取得し、そのリクエストの間は使い回す
+    （シートごとに読み込むと、Google SheetsのAPIの1分あたりの読み込み回数の上限にかかりやすいため）"""
+    from flask import has_request_context
+    if not has_request_context():
+        return
+    cache = g.__dict__.setdefault('_sheet_values', {})
+    try:
+        sh = gc.open(horse_data)
+        existing = {ws.title for ws in sh.worksheets()}
+        want = [t for t in titles if t in existing and t not in cache]
+        if not want:
+            return
+        res = with_sheets_retry(sh.values_batch_get, ["'" + t.replace("'", "''") + "'" for t in want])
+        for t, vr in zip(want, res.get('valueRanges', [])):
+            cache[t] = gspread.utils.fill_gaps(vr.get('values', []) or [[]])
+    except Exception as e:
+        # まとめて読めなかった場合は、それぞれのシートを個別に読み込む
+        print(f"シートのまとめての読み込みに失敗しました: {e}")
+
+def cached_sheet_values(title):
+    """prefetch_horse_sheets などで、このリクエストの中で既に読み込んだシートの内容（無ければ None）"""
+    from flask import has_request_context
+    if not has_request_context():
+        return None
+    return g.__dict__.get('_sheet_values', {}).get(title)
+
+def horse_sheet_records(title):
+    """get_all_records と同じ形（1行目を見出しにした辞書の一覧。数字は数値にする）で返す"""
+    values = horse_sheet_values(title)
+    if not values:
+        return []
+    header = values[0]
+    rows = [gspread.utils.numericise_all(list(r) + [''] * (len(header) - len(r)), False, '')
+            for r in values[1:]]
+    return gspread.utils.to_records(header, rows)
 
 def remember_sheet_values(title, values=None):
     """書き込んだシートの内容を覚え直す（values が無ければ忘れて、次は読み込み直す）"""
@@ -4833,18 +4875,22 @@ def migrate_pasture_sheet():
     ws.update(range_name='A1', values=rows)
     _pasture_columns_ready = True
 
+_migration_tried = {}   # 列の追加に失敗した時刻（失敗した場合は、しばらくやり直さない）
+MIGRATION_RETRY_SECONDS = 600
+
 @app.before_request
 def require_changes_columns():
-    if request.endpoint not in (None, 'static') and not _changes_columns_ready:
+    if request.endpoint in (None, 'static'):
+        return
+    for key, ready, migrate in (('Changes', _changes_columns_ready, migrate_changes_sheet),
+                                ('放牧入厩', _pasture_columns_ready, migrate_pasture_sheet)):
+        if ready or time.time() - _migration_tried.get(key, 0) < MIGRATION_RETRY_SECONDS:
+            continue
+        _migration_tried[key] = time.time()
         try:
-            migrate_changes_sheet()
+            migrate()
         except Exception as e:
-            print(f"Changesシートの列の追加に失敗しました: {e}")
-    if request.endpoint not in (None, 'static') and not _pasture_columns_ready:
-        try:
-            migrate_pasture_sheet()
-        except Exception as e:
-            print(f"放牧入厩シートの列の追加に失敗しました: {e}")
+            print(f"{key}シートの列の追加に失敗しました: {e}")
 
 @app.before_request
 def require_name_columns():
@@ -5669,6 +5715,7 @@ def horse_detail_redirect(name):
 def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
+    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Entry", "Changes", "放牧入厩", "抹消", "美浦", "栗東"])
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
 
@@ -5681,7 +5728,7 @@ def horse_detail(name, active_tab):
     horse_races = []
     try:
         today = datetime.now().date()
-        records = gc.open(horse_data).worksheet("Entry").get_all_values()
+        records = horse_sheet_values("Entry")
         for row in records[1:]:
             if len(row) < 4 or row[3] != name:
                 continue
@@ -5707,9 +5754,7 @@ def horse_detail(name, active_tab):
 
     changes_history = []
     try:
-        sh = gc.open(horse_data)
-        ws_changes = sh.worksheet("Changes")
-        records = ws_changes.get_all_records()
+        records = horse_sheet_records("Changes")
         for r in records:
             # 該当馬の変更履歴をすべて取得（馬主変更・転厩含む）
             if str(r.get("馬名", "")) == name:
@@ -5721,8 +5766,7 @@ def horse_detail(name, active_tab):
     pasture_history, cancel_dates = [], []
     if active_tab == 'races':
         try:
-            sh = gc.open(horse_data)
-            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+            for r in horse_sheet_values("放牧入厩")[1:]:
                 r = list(r) + [''] * len(PASTURE_COLUMNS)
                 if r[PS_NAME].strip() != name:
                     continue
@@ -5733,7 +5777,7 @@ def horse_detail(name, active_tab):
         except Exception as e:
             print(f"放牧入厩シートの読み込みエラー: {e}")
         try:
-            for r in gc.open(horse_data).worksheet("抹消").get_all_values()[1:]:
+            for r in horse_sheet_values("抹消")[1:]:
                 if len(r) > 1 and r[1].strip() == name:
                     d = parse_full_date(r[0])
                     if d:
@@ -5746,14 +5790,14 @@ def horse_detail(name, active_tab):
         sh = gc.open(horse_data)
         if horse and len(horse) > H_SIRE and horse[H_SIRE]:
             try:
-                s_data = sh.worksheet("Sire").get_all_values()[1:]
+                s_data = horse_sheet_values("Sire")[1:]
                 s_row = next((r for r in s_data if row_matches_name(r, horse[H_SIRE])), None)
                 if s_row: sire_info.update({"line1": s_row[P_SIRE] if len(s_row)>P_SIRE else "不明", 
                                             "line2": s_row[P_DAM] if len(s_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
         if horse and len(horse) > H_DAM and horse[H_DAM]:
             try:
-                d_data = sh.worksheet("Dam").get_all_values()[1:]
+                d_data = horse_sheet_values("Dam")[1:]
                 d_row = next((r for r in d_data if row_matches_name(r, horse[H_DAM])), None)
                 if d_row: dam_info.update({"line3": d_row[P_SIRE] if len(d_row)>P_SIRE else "不明", 
                                            "line4": d_row[P_DAM] if len(d_row)>P_DAM else "不明"})
@@ -5940,7 +5984,7 @@ def read_entries(race_date, venue, num):
     """Entryシートから、指定したレースにエントリーした馬の一覧を返す"""
     entries = []
     try:
-        rows = gc.open(horse_data).worksheet("Entry").get_all_values()[1:]
+        rows = horse_sheet_values("Entry")[1:]
     except Exception:
         return entries
     for row in rows:
@@ -6000,6 +6044,7 @@ def race_detail():
     race_date = parse_full_date(request.args.get('date') or '') or datetime.now().date()
     venue = request.args.get('venue', '')
     num = request.args.get('num', default=1, type=int)
+    prefetch_horse_sheets(["Horses", "Entry"])
 
     # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
     # 指定された日・競馬場のまま表示する
@@ -6142,9 +6187,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     sire_records, dam_records = [], []
     try:
-        sh = gc.open(horse_data)
-        dam_records = normalize_name_records(sh.worksheet('Dam').get_all_records())
-        sire_records = normalize_name_records(sh.worksheet('Sire').get_all_records())
+        dam_records = normalize_name_records(horse_sheet_records('Dam'))
+        sire_records = normalize_name_records(horse_sheet_records('Sire'))
     except Exception as e:
         sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
     if not dam_records or not sire_records:
