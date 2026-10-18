@@ -75,7 +75,7 @@
     <h3 class="m-0">登録馬（{{ registered|length }}頭）</h3>
     {% if registered %}
     <table>
-        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>年齢</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th></tr></thead>
+        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>馬齢</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th></tr></thead>
         <tbody>
         {% for h in registered %}
         <tr>
@@ -97,12 +97,14 @@
     <h3 class="m-0">抹消馬（{{ cancelled|length }}頭）</h3>
     {% if cancelled %}
     <table>
-        <thead><tr><th>抹消日</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th></tr></thead>
+        <thead><tr><th>抹消日</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>最新レース</th><th>主な実績</th></tr></thead>
         <tbody>
         {% for h in cancelled %}
         <tr>
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
+            <td class="nowrap">{{ h.last_race|short_race }}</td>
+            <td class="nowrap">{{ h.best|short_race }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -116,7 +118,7 @@
     <h3 class="m-0">放牧入厩（{{ pasture|length }}件）</h3>
     {% if pasture %}
     <table>
-        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th><th>区分</th></tr></thead>
+        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>区分</th></tr></thead>
         <tbody>
         {% for h in pasture %}
         <tr>
@@ -136,7 +138,7 @@
     <h3 class="m-0">変更（{{ changes|length }}件）</h3>
     {% if changes %}
     <table>
-        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>年齢</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th></tr></thead>
+        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th></tr></thead>
         <tbody>
         {% for h in changes %}
         <tr>
