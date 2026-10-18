@@ -54,10 +54,6 @@
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
     {% with target_source='weekly', target_count=unregistered_count, target_label='未登録の馬をJRAから登録', target_date=date_for_input %}{% include "_auto_register.html" %}{% endwith %}
-    <details class="import-status-details" open>
-        <summary>JRAのページの更新状況</summary>
-        {% include "_import_status.html" %}
-    </details>
 </section>
 
 {% macro horse_cells(h) %}
@@ -97,8 +93,17 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 
 {% set other_sorts = [('race', '最新レース'), ('prize', '総本賞金')] %}
 
+{# 最新レース・主な実績：年または日付｜レース名（race_detailへのリンクと格）｜着順 #}
+{% macro race3(text, year_only=False) %}{% set p = text|race_parts(year_only) %}
+            <td class="nowrap">{{ p.when }}</td>
+            <td class="nowrap">{{ p.title_html }}</td>
+            <td class="num">{{ p.place }}</td>
+{%- endmacro %}
+{% macro race3_th(label, when_label) %}<th colspan="3">{{ label }}</th>{% endmacro %}
+{% macro race3_th2(when_label) %}<th>{{ when_label }}</th><th>レース名</th><th>着順</th>{% endmacro %}
+
 {% macro race_cells(h) %}
-            <td class="nowrap">{{ h.last_race|short_race }}</td>
+{{ race3(h.last_race) }}
             <td class="num nowrap">{{ "{:,}".format(h.total) if h.total else '' }}</td>
 {%- endmacro %}
 
@@ -114,7 +119,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     {% if registered %}
     <div class="weekly-table-scroll">
     <table id="tbl_registered">
-        <thead><tr><th>登録日</th><th>馬名</th><th>性別</th><th>馬齢</th><th>父</th><th>母</th><th>厩舎</th><th>状態</th><th>主な兄弟・近親馬</th><th>主な実績</th></tr></thead>
+        <thead>
+            <tr><th rowspan="2">登録日</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">父</th><th rowspan="2">母</th><th rowspan="2">厩舎</th><th rowspan="2">状態</th><th colspan="2">主な兄弟・近親馬</th>{{ race3_th('主な実績') }}</tr>
+            <tr><th>関係</th><th>馬名</th>{{ race3_th2('年') }}</tr>
+        </thead>
         <tbody>
         {% for h in registered %}
         <tr {{ row_attrs(h) }}>
@@ -123,15 +131,16 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <td class="col-parent"><span class="text-10ch" title="{{ h.dam }}">{{ h.dam }}</span></td>
 {{ stable_cell(h) }}
             <td>{{ h.status }}</td>
-            <td class="nowrap">{{ h.rel_name }}</td>
-            <td class="nowrap">{{ h.rel_best|best_race }}</td>
+            <td class="nowrap">{{ h.rel_relation }}</td>
+            <td class="nowrap">{% if h.rel_linkable %}<a href="/horse/{{ h.rel_horse|urlencode }}">{{ h.rel_horse }}</a>{% else %}{{ h.rel_horse }}{% endif %}</td>
+{{ race3(h.rel_best, True) }}
         </tr>
         {% endfor %}
         </tbody>
     </table>
     </div>
     {% else %}
-    <p>この週の登録馬はありません。</p>
+    <p class="weekly-empty">この週の登録馬はまだ登録されていません。<br>通常、翌週の月曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -143,21 +152,24 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     {% if cancelled %}
     <div class="weekly-table-scroll">
     <table id="tbl_cancelled">
-        <thead><tr><th>抹消日</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>最新レース</th><th>総本賞金</th><th>主な実績</th></tr></thead>
+        <thead>
+            <tr><th rowspan="2">抹消日</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th>{{ race3_th('最新レース') }}<th>総本賞金</th>{{ race3_th('主な実績') }}</tr>
+            <tr>{{ race3_th2('日付') }}<th>（万円）</th>{{ race3_th2('年') }}</tr>
+        </thead>
         <tbody>
         {% for h in cancelled %}
         <tr {{ row_attrs(h) }}>
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
 {{ race_cells(h) }}
-            <td class="nowrap">{{ h.best|best_race }}</td>
+{{ race3(h.best, True) }}
         </tr>
         {% endfor %}
         </tbody>
     </table>
     </div>
     {% else %}
-    <p>この週の抹消馬はありません。</p>
+    <p class="weekly-empty">この週の抹消馬はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -169,7 +181,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     {% if pasture %}
     <div class="weekly-table-scroll">
     <table id="tbl_pasture">
-        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>区分</th><th>最新レース</th><th>総本賞金</th></tr></thead>
+        <thead>
+            <tr><th rowspan="2">日付</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th><th rowspan="2">区分</th>{{ race3_th('最新レース') }}<th>総本賞金</th></tr>
+            <tr>{{ race3_th2('日付') }}<th>（万円）</th></tr>
+        </thead>
         <tbody>
         {% for h in pasture %}
         <tr {{ row_attrs(h) }}>
@@ -183,7 +198,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の放牧・入厩はありません。</p>
+    <p class="weekly-empty">この週の放牧・入厩はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -195,7 +210,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     {% if changes %}
     <div class="weekly-table-scroll">
     <table id="tbl_changes">
-        <thead><tr><th>日付</th><th>馬名</th><th>性別</th><th>馬齢</th><th>厩舎</th><th>項目</th><th>旧</th><th>新</th><th>最新レース</th><th>総本賞金</th></tr></thead>
+        <thead>
+            <tr><th rowspan="2">日付</th><th rowspan="2">馬名</th><th rowspan="2">性別</th><th rowspan="2">馬齢</th><th rowspan="2">厩舎</th><th rowspan="2">項目</th><th rowspan="2">旧</th><th rowspan="2">新</th>{{ race3_th('最新レース') }}<th>総本賞金</th></tr>
+            <tr>{{ race3_th2('日付') }}<th>（万円）</th></tr>
+        </thead>
         <tbody>
         {% for h in changes %}
         <tr {{ row_attrs(h) }}>
@@ -211,7 +229,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の変更はありません。</p>
+    <p class="weekly-empty">この週の変更はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 <script>
