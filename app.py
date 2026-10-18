@@ -192,6 +192,10 @@ HORSE_TO_PARENT_COLS = [(H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BI
 # Changesシートの列。「仮」はレースの結果から推定した日付（レースの前の木曜日）の記録に「仮」と入れる
 CHANGES_COLUMNS = ["年月日", "仮", "馬名", "項目", "旧", "新"]
 C_DATE, C_TENTATIVE, C_NAME, C_TYPE, C_OLD, C_NEW = range(len(CHANGES_COLUMNS))
+# 放牧入厩シート（「仮」は以前の記録で、実際の放牧・入厩の日付とは限らないもの）
+PASTURE_COLUMNS = ["放牧年月日", "仮", "馬名", "入厩年月日", "仮", "入厩前の状態"]
+PS_OUT, PS_OUT_TENTATIVE, PS_NAME, PS_IN, PS_IN_TENTATIVE, PS_BEFORE = range(len(PASTURE_COLUMNS))
+PASTURE_CONFIRMED_FROM = '20261013'   # 列の追加時に、これより前の日付には「仮」を付ける
 
 def changes_row(date_str, name, change_type, old='', new='', tentative=False):
     """Changesシートの1行を作る"""
@@ -1829,32 +1833,41 @@ def fetch_race_results(urls):
 def _gviz_quote(text):
     return '"' + str(text).replace('"', '') + '"'
 
-def query_runner_rows(book, horse_ids, horse_names):
-    """成績シートから、馬IDまたは馬名が一致する行だけを取り出す（Googleのクエリ機能で絞り込み、全行は読まない）"""
+def query_sheet_rows(book, sheet, columns, conds, keep):
+    """レース結果のファイルのシートから、条件に合う行だけを取り出す（Googleのクエリ機能で絞り込み、全行は読まない）。
+    conds：クエリの条件（or でつなぐ）、keep：クエリが使えずに全行を読んだ場合の絞り込み"""
     import csv, io
+    try:
+        session = gc.http_client.session
+        resp = session.get(f"https://docs.google.com/spreadsheets/d/{book.id}/gviz/tq",
+                           params={'tqx': 'out:csv', 'sheet': sheet, 'headers': '1',
+                                   'tq': 'select * where ' + ' or '.join(conds)}, timeout=30)
+        resp.raise_for_status()
+        rows = list(csv.reader(io.StringIO(resp.content.decode('utf-8'))))
+        if rows and rows[0] and rows[0][0] != columns[0]:
+            raise ValueError('クエリの結果の形式が違います')
+        return [r for r in rows[1:] if r and r[0]]
+    except Exception as e:
+        # クエリが使えない場合はシートを全部読んで絞り込む
+        print(f"{sheet}シートのクエリに失敗したため全件を読み込みます: {e}")
+        try:
+            ws = book.worksheet(sheet)
+        except gspread.WorksheetNotFound:
+            return []
+        return [r for r in ws.get_all_values()[1:] if r and r[0] and keep(r)]
+
+def query_runner_rows(book, horse_ids, horse_names):
+    """成績シートから、馬IDまたは馬名が一致する行だけを取り出す"""
     horse_ids = sorted({i for i in horse_ids if i})
     horse_names = sorted({n for n in horse_names if n})
     if not horse_ids and not horse_names:
         return []
     id_col, name_col = col_letter(RUNNER_COL['馬ID']), col_letter(RUNNER_COL['馬名'])
     conds = [f"{id_col} = {_gviz_quote(i)}" for i in horse_ids] + [f"{name_col} = {_gviz_quote(n)}" for n in horse_names]
-    try:
-        session = gc.http_client.session
-        resp = session.get(f"https://docs.google.com/spreadsheets/d/{book.id}/gviz/tq",
-                           params={'tqx': 'out:csv', 'sheet': RUNNER_SHEET, 'headers': '1',
-                                   'tq': 'select * where ' + ' or '.join(conds)}, timeout=30)
-        resp.raise_for_status()
-        rows = list(csv.reader(io.StringIO(resp.content.decode('utf-8'))))
-        if rows and rows[0] and rows[0][0] != RUNNER_SHEET_COLUMNS[0]:
-            raise ValueError('クエリの結果の形式が違います')
-        return [r for r in rows[1:] if r and r[0]]
-    except Exception as e:
-        # クエリが使えない場合は成績シートを全部読んで絞り込む
-        print(f"成績シートのクエリに失敗したため全件を読み込みます: {e}")
-        ids, names = set(horse_ids), set(horse_names)
-        rows = book.worksheet(RUNNER_SHEET).get_all_values()[1:]
-        return [r for r in rows if (len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] in ids)
-                or (len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] in names)]
+    ids, names = set(horse_ids), set(horse_names)
+    return query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, conds,
+                            lambda r: (len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] in ids)
+                            or (len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] in names))
 
 def runner_row_to_result(r):
     """成績シートの1行を出走成績（表示・収得賞金の計算用）にする"""
@@ -1873,7 +1886,7 @@ def runner_row_to_result(r):
         'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': int(prize) if prize.isdigit() else 0,
-        'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'),
+        'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
     }
 
 def collect_race_results(horses):
@@ -1962,9 +1975,37 @@ def rest_label(before, after):
     if interval_weeks < 10:
         return ''
     half_months = interval_weeks // 2
-    return f"{half_months // 2}ヶ月" + ('半' if half_months % 2 else '')
+    years, months, half = half_months // 24, (half_months % 24) // 2, half_months % 2
+    if not years:
+        return f"{months}ヶ月" + ('半' if half else '')
+    # 12ヶ月以上は「1年」「1年1ヶ月」「1年1ヶ月半」「1年半月」のようにする
+    text = f"{years}年"
+    if months:
+        text += f"{months}ヶ月" + ('半' if half else '')
+    elif half:
+        text += "半月"
+    return text
 
-def build_race_history(race_results, changes_history, birth_year=None):
+SHORT_PASTURE_DAYS = 10   # 放牧から入厩までがこの日数以下の放牧は表示しない
+
+def pasture_note(pasture_history, start, end):
+    """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を
+    「放牧：3月20日→入厩：4月10日／放牧：5月1日→入厩：6月1日」にする。
+    放牧入厩シートの1行ごとに分けて表示し（片方しか無ければその片方だけ）、放牧から入厩までが10日以下のものは表示しない"""
+    in_range = lambda d: bool(d) and start < d and (end is None or d < end)
+    parts = []
+    for p in sorted(pasture_history, key=lambda p: p.get('out') or p.get('in')):
+        out_date = p.get('out') if in_range(p.get('out')) else None
+        in_date = p.get('in') if in_range(p.get('in')) else None
+        if not out_date and not in_date:
+            continue
+        if out_date and in_date and (in_date - out_date).days <= SHORT_PASTURE_DAYS:
+            continue
+        texts = [f"{label}：{d.month}月{d.day}日" for label, d in (('放牧', out_date), ('入厩', in_date)) if d]
+        parts.append('→'.join(texts))
+    return '／'.join(parts)
+
+def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=()):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
@@ -1985,9 +2026,19 @@ def build_race_history(race_results, changes_history, birth_year=None):
     chrono = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
     for before, after in zip(chrono, chrono[1:]):
         label = rest_label(before['date'], after['date'])
+        note = pasture_note(pasture_history, before['date'], after['date'])
         if label:
-            items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
-                                                   'date_label': '', 'text': f"休養：{label}"}))
+            text = f"休養：{label}" + (f"（{note}）" if note else '')
+        elif note:
+            # 休養（中10週以上）に当たらない間の放牧は、放牧だけの行にする
+            text = note
+        else:
+            continue
+        items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
+                                               'date_label': '', 'text': text}))
+    # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
+    for d in cancel_dates:
+        items.append(((d, 2, 0), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -3227,7 +3278,7 @@ def api_auto_register_targets():
             name = (name or '').strip()
             if name and name not in registered and name not in parents and name not in found:
                 found[name] = known or {}
-        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', C_DATE, C_NAME), ('放牧入厩', 0, 1), ('放牧入厩', 2, 1)):
+        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', C_DATE, C_NAME), ('放牧入厩', PS_OUT, PS_NAME), ('放牧入厩', PS_IN, PS_NAME)):
             try:
                 for r in sh.worksheet(title).get_all_values()[1:]:
                     d = parse_full_date(r[date_col] if len(r) > date_col else '')
@@ -4341,14 +4392,15 @@ def weekly():
 
         try:
             for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
-                out_date, in_date = parse_full_date(cell(r, 0)), parse_full_date(cell(r, 2))
-                if in_week(out_date):
-                    pasture.append({'date': out_date, 'name': cell(r, 1), 'type': '放牧'})
-                if in_week(in_date):
-                    # 入厩は元の状態も表示する（D列が無い記録は、放牧日がある行なら放牧から）
-                    before = cell(r, 3) or ('放牧' if out_date else '')
+                out_date, in_date = parse_full_date(cell(r, PS_OUT)), parse_full_date(cell(r, PS_IN))
+                # 「仮」の記録（実際の日付とは限らないもの）は表示しない
+                if in_week(out_date) and cell(r, PS_OUT_TENTATIVE) != '仮':
+                    pasture.append({'date': out_date, 'name': cell(r, PS_NAME), 'type': '放牧'})
+                if in_week(in_date) and cell(r, PS_IN_TENTATIVE) != '仮':
+                    # 入厩は元の状態も表示する（入厩前の状態が無い記録は、放牧日がある行なら放牧から）
+                    before = cell(r, PS_BEFORE) or ('放牧' if out_date else '')
                     label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
-                    pasture.append({'date': in_date, 'name': cell(r, 1), 'type': label})
+                    pasture.append({'date': in_date, 'name': cell(r, PS_NAME), 'type': label})
         except gspread.WorksheetNotFound:
             pass
     except SheetNotReady:
@@ -4650,33 +4702,30 @@ def record_pasture_changes(sh, changes, today_str):
                if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
     if not changes:
         return
-    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日", "入厩前の状態"])
+    migrate_pasture_sheet()
+    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", PASTURE_COLUMNS)
     pasture_data = ws_pasture.get_all_values()
-    # D列：入厩した時の元の状態（早期→入厩・放牧→入厩を週間レポートに表示するため）
-    ensure_columns(ws_pasture, 4)
-    header = pasture_data[0] if pasture_data else []
-    if len(header) < 4 or not header[3]:
-        ws_pasture.update(range_name='D1', values=[['入厩前の状態']])
 
     append_rows, cell_updates = [], []
     for horse_name, old_status, new_status in changes:
         if new_status == '放牧':
-            append_rows.append([today_str, horse_name, ''])
+            append_rows.append([today_str, '', horse_name, '', '', ''])
             continue
         # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）
         open_row_idx = None
         for idx in range(len(pasture_data) - 1, 0, -1):
             prow = pasture_data[idx]
-            p_name = prow[1] if len(prow) > 1 else ''
-            p_checkin = prow[2] if len(prow) > 2 else ''
+            p_name = prow[PS_NAME] if len(prow) > PS_NAME else ''
+            p_checkin = prow[PS_IN] if len(prow) > PS_IN else ''
             if p_name == horse_name and not p_checkin:
                 open_row_idx = idx
                 break
         if open_row_idx is not None:
-            cell_updates.append({'range': f'C{open_row_idx + 1}:D{open_row_idx + 1}',
-                                 'values': [[today_str, old_status]]})
+            row_no = open_row_idx + 1
+            cell_updates.append({'range': f'{col_letter(PS_IN)}{row_no}:{col_letter(PS_BEFORE)}{row_no}',
+                                 'values': [[today_str, '', old_status]]})
         else:
-            append_rows.append(['', horse_name, today_str, old_status])
+            append_rows.append(['', '', horse_name, today_str, '', old_status])
 
     if cell_updates:
         ws_pasture.batch_update(cell_updates)
@@ -4749,6 +4798,41 @@ def migrate_changes_sheet():
     ws.update(range_name='A1', values=rows)
     _changes_columns_ready = True
 
+_pasture_columns_ready = False
+
+def migrate_pasture_sheet():
+    """放牧入厩シートの放牧年月日・入厩年月日の右に「仮」の列を追加する（1回だけ。実行前にシートを複製して残す）。
+    20261013より前の日付には「仮」を付ける"""
+    global _pasture_columns_ready
+    if _pasture_columns_ready:
+        return
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("放牧入厩")
+    except gspread.WorksheetNotFound:
+        _pasture_columns_ready = True
+        return
+    except Exception:
+        return
+    data = ws.get_all_values()
+    if data and len(data[0]) > 1 and data[0][1] == '仮':
+        _pasture_columns_ready = True
+        return
+    sh.duplicate_sheet(ws.id, new_sheet_name=f"放牧入厩_移行前_{datetime.now().strftime('%Y%m%d%H%M')}")
+
+    def _tentative(value):
+        d = parse_full_date(value)
+        return '仮' if d and d.strftime('%Y%m%d') < PASTURE_CONFIRMED_FROM else ''
+
+    rows = [PASTURE_COLUMNS]
+    for r in data[1:]:
+        r = list(r) + [''] * 4
+        rows.append([r[0], _tentative(r[0]), r[1], r[2], _tentative(r[2]), r[3]] + [c for c in r[4:] if c])
+    ensure_columns(ws, len(PASTURE_COLUMNS))
+    ws.clear()
+    ws.update(range_name='A1', values=rows)
+    _pasture_columns_ready = True
+
 @app.before_request
 def require_changes_columns():
     if request.endpoint not in (None, 'static') and not _changes_columns_ready:
@@ -4756,6 +4840,11 @@ def require_changes_columns():
             migrate_changes_sheet()
         except Exception as e:
             print(f"Changesシートの列の追加に失敗しました: {e}")
+    if request.endpoint not in (None, 'static') and not _pasture_columns_ready:
+        try:
+            migrate_pasture_sheet()
+        except Exception as e:
+            print(f"放牧入厩シートの列の追加に失敗しました: {e}")
 
 @app.before_request
 def require_name_columns():
@@ -5610,7 +5699,7 @@ def horse_detail(name, active_tab):
                 'name': (race['name'] or '-') if race else '-',
                 'condition': race['condition'] if race else '-',
                 'course': race['course'] if race else '-',
-                'status': (row[4] if len(row) > 4 else '') or '-',
+                'status': entry_status_label(row[4] if len(row) > 4 else '') or '-',
             })
         horse_races.sort(key=lambda r: r['sort_key'])
     except Exception as e:
@@ -5627,6 +5716,30 @@ def horse_detail(name, active_tab):
                 changes_history.append(r)
     except Exception:
         pass
+
+    # 出走履歴に表示する放牧・入厩（「仮」でないもの）と、JRAの登録の抹消
+    pasture_history, cancel_dates = [], []
+    if active_tab == 'races':
+        try:
+            sh = gc.open(horse_data)
+            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+                r = list(r) + [''] * len(PASTURE_COLUMNS)
+                if r[PS_NAME].strip() != name:
+                    continue
+                out_date = None if r[PS_OUT_TENTATIVE].strip() == '仮' else parse_full_date(r[PS_OUT])
+                in_date = None if r[PS_IN_TENTATIVE].strip() == '仮' else parse_full_date(r[PS_IN])
+                if out_date or in_date:
+                    pasture_history.append({'out': out_date, 'in': in_date})
+        except Exception as e:
+            print(f"放牧入厩シートの読み込みエラー: {e}")
+        try:
+            for r in gc.open(horse_data).worksheet("抹消").get_all_values()[1:]:
+                if len(r) > 1 and r[1].strip() == name:
+                    d = parse_full_date(r[0])
+                    if d:
+                        cancel_dates.append(d)
+        except Exception as e:
+            print(f"抹消シートの読み込みエラー: {e}")
 
     sire_info, dam_info = {"line1": "不明", "line2": "不明"}, {"line3": "不明", "line4": "不明"}
     try:
@@ -5701,7 +5814,8 @@ def horse_detail(name, active_tab):
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
-    race_history = build_race_history(race_results, changes_history, base_birth_year)
+    race_history = build_race_history(race_results, changes_history, base_birth_year,
+                                      pasture_history, cancel_dates)
 
     return render_template('horse_detail.html', 
                            horse=horse, 
@@ -5755,41 +5869,37 @@ app.jinja_env.filters['mdate'] = lambda v, weekday=True: (
 @app.route('/races')
 def race_list():
     """番組表：開催週（火〜月）ごとに、開催日・競馬場を選んでその日の番組を表示する"""
-    today = datetime.now().date()
-    base = parse_full_date(request.args.get('date') or '') or today
+    nav = race_week_nav(parse_full_date(request.args.get('date') or '') or datetime.now().date(),
+                        request.args.get('venue', ''))
+    selected, venue = nav['selected'], nav['venue']
+    day_races = nav['program'].get(selected, {}).get(venue, {}) if selected else {}
+    first = next(iter(day_races.values()), None)
+    heading = f"{first['kai']}回{venue}{first['nichi']}日" if first else ''
+    return render_template('race_list.html', date=selected.isoformat() if selected else '',
+                           day_races=day_races, search_text=heading, **nav)
+
+def race_week_nav(base, venue):
+    """番組表・レース詳細の上の、週の移動・開催日・競馬場のボタン用。開催週（火〜月）の番組を読み、
+    表示する開催日（指定された日。無ければその日以降で最初の開催日、それも無ければ週の最後の開催日）と競馬場を決める"""
     week_start = racing_week_start(base)
     week_days = [week_start + timedelta(days=i) for i in range(7)]
     program = get_program_for_dates(week_days)
     race_days = sorted(program)
-
-    # 表示する開催日：指定された日（無ければ今日以降で最初の開催日、それも無ければ週の最後の開催日）
     if base in program:
         selected = base
     else:
         selected = next((d for d in race_days if d >= base), race_days[-1] if race_days else None)
-
     venues = list(program.get(selected, {}).keys()) if selected else []
-    venue = request.args.get('venue', '')
     if venue not in venues:
         venue = venues[0] if venues else ''
-    day_races = program.get(selected, {}).get(venue, {}) if selected else {}
-    first = next(iter(day_races.values()), None)
-    heading = f"{first['kai']}回{venue}{first['nichi']}日" if first else ''
-
-    return render_template('race_list.html',
-                           date=selected.isoformat() if selected else '',
-                           selected=selected,
-                           date_for_input=(selected or base).isoformat(),
-                           venue=venue,
-                           day_races=day_races,
-                           available_venues=venues,
-                           display_dates=[{'value': d.isoformat(), 'label': format_month_day(d)} for d in race_days],
-                           week_label=f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
-                           week_start=week_start.isoformat(),
-                           week_end=week_days[-1].isoformat(),
-                           prev_week=(week_start - timedelta(days=7)).isoformat(),
-                           next_week=(week_start + timedelta(days=7)).isoformat(),
-                           search_text=heading)
+    return {'program': program, 'selected': selected, 'venue': venue, 'available_venues': venues,
+            'date_for_input': (selected or base).isoformat(),
+            'display_dates': [{'value': d.isoformat(), 'label': format_month_day(d),
+                               'venues': list(program[d].keys())} for d in race_days],
+            'week_label': f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
+            'week_start': week_start.isoformat(), 'week_end': week_days[-1].isoformat(),
+            'prev_week': (week_start - timedelta(days=7)).isoformat(),
+            'next_week': (week_start + timedelta(days=7)).isoformat()}
 
 def horse_class_of(h, today=None):
     """Horsesシートに記録したクラス。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
@@ -5818,6 +5928,14 @@ def age_allowed(category, age):
         return True
     return age >= int(m.group(1)) if m.group(2) else age == int(m.group(1))
 
+# Entryシートの状態 → race_detailのタブ（「確定」は以前の記録で、枠順確定前と同じ）
+ENTRY_STAGES = [('estimated', '想定'), ('special', '特別登録'), ('before_draw', '枠順確定前')]
+ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw', '枠順確定前': 'before_draw'}
+ENTRY_STATUS_LABEL = {'特別': '特別登録', '確定': '枠順確定前'}
+
+def entry_status_label(status):
+    return ENTRY_STATUS_LABEL.get(status, status)
+
 def read_entries(race_date, venue, num):
     """Entryシートから、指定したレースにエントリーした馬の一覧を返す"""
     entries = []
@@ -5830,87 +5948,164 @@ def read_entries(race_date, venue, num):
             continue
         if not str(row[2]).isdigit() or int(row[2]) != int(num):
             continue
-        entries.append({'name': row[3], 'status': row[4] if len(row) > 4 else '',
-                        'num': row[5] if len(row) > 5 else '', 'rank': row[6] if len(row) > 6 else ''})
+        status = row[4].strip() if len(row) > 4 else ''
+        entries.append({'name': row[3], 'status': status, 'status_label': entry_status_label(status), 'stage': ENTRY_STATUS_STAGE.get(status, 'estimated')})
     return entries
 
+def read_race_result(race_date, venue, num):
+    """年_レース結果のファイルから、指定したレースの情報（レースシート）と出走馬（成績シート）を返す"""
+    book = get_result_book(race_date.year)
+    if not book:
+        return None, []
+    day = race_date.strftime('%Y%m%d')
+
+    def _match(r, date_idx, venue_idx, num_idx):
+        return len(r) > num_idx and r[date_idx] == day and r[venue_idx] == venue and \
+            str(r[num_idx]).strip() == str(int(num))
+
+    cond = [f"{col_letter(1)} = {_gviz_quote(day)}"]
+    race_rows = [r for r in query_sheet_rows(book, RACE_SHEET, RACE_SHEET_COLUMNS, cond, lambda r: True)
+                 if _match(r, 1, 2, 5)]
+    runner_rows = [r for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, cond, lambda r: True)
+                   if _match(r, RUNNER_COL['年月日'], RUNNER_COL['場'], RUNNER_COL['R'])]
+    race = None
+    if race_rows:
+        r = list(race_rows[0]) + [''] * len(RACE_SHEET_COLUMNS)
+        c = lambda name: str(r[RACE_SHEET_COLUMNS.index(name)]).strip()
+        dist = c('距離')
+        dist_label = f"{int(dist):,}m" if dist.isdigit() else dist
+        jump = c('区分') == '障害'
+        detail = c('コース詳細')
+        going = '　'.join(f"{k}：{v}" for k, v in (('芝', c('芝')), ('ダート', c('ダート'))) if v)
+        race = {'name': c('レース名'), 'grade': c('グレード'), 'kai': c('回'), 'nichi': c('日'),
+                'num': f"{int(num)}レース", 'race_num': int(num), 'jump': jump,
+                'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
+                                                  c('記号'), c('重量')) if x),
+                'course': f"障 {dist_label}（{detail}）" if jump and detail else f"{detail or c('コース')} {dist_label}".strip(),
+                'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数')}
+    runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
+
+    def _order(x):
+        place = str(x['place'])
+        return (0, int(place)) if place.isdigit() else (1, int(x['horse_num']) if str(x['horse_num']).isdigit() else 99)
+    runners.sort(key=_order)
+    return race, runners
+
 @app.route('/edit_race')
+def edit_race():
+    return redirect(url_for('race_detail', **request.args))
+
+@app.route('/race_detail')
 def race_detail():
     race_date = parse_full_date(request.args.get('date') or '') or datetime.now().date()
     venue = request.args.get('venue', '')
-    r_num_target = request.args.get('num', default=1, type=int)
+    num = request.args.get('num', default=1, type=int)
 
-    target_race_data = find_program_race(race_date, venue, r_num_target)
-    search_text = f"{target_race_data['kai']}回{venue}{target_race_data['nichi']}日" if target_race_data else "番組が見つかりません"
+    # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
+    # 指定された日・競馬場のまま表示する
+    nav = race_week_nav(race_date, venue)
+    if nav['selected'] and (race_date in nav['program'] or not request.args.get('venue')
+                            or request.args.get('nav')):
+        race_date, venue = nav['selected'], nav['venue']
+    day_program = nav['program'].get(race_date, {}).get(venue, {})
+    nav['race_nums'] = sorted(day_program) or list(range(1, 13))
 
-    available_horses_with_class = []
-    if target_race_data:
-        for h in get_all_horses():
-            if len(h) <= H_STABLE or str(h[H_STATUS] if len(h) > H_STATUS else '').strip() == '抹消':
+    program_race = day_program.get(num)
+    try:
+        result_race, runners = read_race_result(race_date, venue, num)
+    except Exception as e:
+        print(f"レース結果の読み込みエラー: {e}")
+        result_race, runners = None, []
+    race = program_race or result_race
+    if race and not race.get('kai') and result_race:
+        race = dict(race, kai=result_race['kai'], nichi=result_race['nichi'])
+
+    horses = {}
+    for h in get_all_horses():
+        if len(h) > H_NAME and h[H_NAME].strip():
+            horses.setdefault(h[H_NAME].strip(), h)
+
+    def _horse_info(name):
+        h = horses.get(name)
+        if not h:
+            return {'registered': False}
+        b_year = date_year(h[H_BIRTH]) if len(h) > H_BIRTH else None
+        return {'registered': True, 'gender': h[H_GENDER] if len(h) > H_GENDER else '',
+                'age': race_date.year - b_year if b_year else '',
+                'class': horse_class_of(h, race_date),
+                'stable': '・'.join(x for x in (h[H_AREA] if len(h) > H_AREA else '',
+                                                h[H_STABLE] if len(h) > H_STABLE else '') if x)}
+
+    # 想定・特別登録・枠順確定前（Entryシート）：前の段階のタブには、後の段階の馬も表示する
+    entries = read_entries(race_date, venue, num) if race else []
+    order = [key for key, _ in ENTRY_STAGES]
+    tabs = []
+    for i, (key, label) in enumerate(ENTRY_STAGES):
+        horses_in_tab = [dict(e, **_horse_info(e['name'])) for e in entries if order.index(e['stage']) >= i]
+        if horses_in_tab:
+            tabs.append({'key': key, 'label': label, 'horses': horses_in_tab,
+                         # 次の段階に進める候補（この段階の馬）
+                         'candidates': [e['name'] for e in entries if e['stage'] == key]})
+    for r in runners:
+        r['registered'] = r['horse_name'] in horses
+    if runners:
+        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': runners})
+    # 特別登録はレース名のある（特別）レースだけ
+    for t in tabs:
+        if t['key'] == 'estimated':
+            t['next'] = ('special', '特別登録へ') if race and race.get('name') else ('before_draw', '枠順確定前へ')
+        elif t['key'] == 'special':
+            t['next'] = ('before_draw', '枠順確定前へ')
+
+    # 想定でエントリーできる馬（馬齢・クラスが合う、抹消されていない馬）
+    available = []
+    if program_race and session.get('login'):
+        entered = {e['name'] for e in entries}
+        for name, h in horses.items():
+            if name in entered or str(h[H_STATUS] if len(h) > H_STATUS else '').strip() == '抹消':
                 continue
-            b_year = date_year(h[H_BIRTH])
-            calculated_age = race_date.year - b_year if b_year else "不明"
-            current_class = horse_class_of(h, race_date)
-            if not age_allowed(target_race_data['category'], calculated_age):
+            info = _horse_info(name)
+            if not age_allowed(program_race['category'], info['age']):
                 continue
-            if target_race_data['jump'] or class_allowed(target_race_data['class'], current_class):
-                available_horses_with_class.append({
-                    'name': h[H_NAME], 'gender': h[H_GENDER], 'age': calculated_age,
-                    'class': current_class or '不明', 'stable': f"{h[H_AREA]}・{h[H_STABLE]}"
-                })
+            if program_race['jump'] or class_allowed(program_race['class'], info['class'] or '新馬'):
+                available.append(dict(info, name=name, **{'class': info['class'] or '不明'}))
+        available.sort(key=lambda x: x['name'])
 
-    return render_template('race_detail.html',
-                           date=race_date.isoformat(), venue=venue, race=target_race_data,
-                           available_horses=available_horses_with_class,
-                           all_horses=get_all_horses(),
-                           entered_horses=read_entries(race_date, venue, r_num_target) if target_race_data else [],
-                           search_text=search_text)
+    heading = f"{race['kai']}回{venue}{race['nichi']}日" if race and race.get('kai') else venue
+    nav.pop('venue', None)
+    return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
+                           program_race=program_race, result_race=result_race, tabs=tabs,
+                           available_horses=available, heading=heading, **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required
 def save_entry():
-    data = request.json
-    
-    # データの受け取り
-    race_date = data.get('date') # 例: "2026-05-28"
+    """Entryシートに想定・特別登録・枠順確定前のエントリーを記録する（同じレース・同じ馬の行があれば状態を更新）"""
+    data = request.json or {}
+    race_date = parse_full_date(data.get('date') or '')
     venue = data.get('venue')
     race_num = int(data.get('race_num'))
-    horse_name = data.get('horse_name')
-    entry_type = data.get('entry_type')
-    horse_num = data.get('horse_num') or ""
-    horse_rank = data.get('horse_rank') or ""
-
-    status_label = {"estimated": "想定", "special": "特別", "final": "確定"}.get(entry_type, "想定")
-    
+    horse_names = data.get('horse_names') or [data.get('horse_name')]
+    horse_names = [n for n in horse_names if n]
+    status_label = {"estimated": "想定", "special": "特別", "before_draw": "枠順確定前",
+                    "final": "枠順確定前"}.get(data.get('entry_type'), "想定")
+    if not race_date or not horse_names:
+        return {"status": "error", "message": "レースまたは馬が指定されていません。"}, 400
     try:
-        sh = gc.open(horse_data)
-        ws_entry = sh.worksheet("Entry")
+        ws_entry = gc.open(horse_data).worksheet("Entry")
         records = ws_entry.get_all_values()
-        
-        found_idx = -1
-        # 重複チェック (race_date, venue, race_num, horse_name が一致する行を探す)
-        if len(records) > 1:
-            for i, row in enumerate(records[1:], start=2): # ヘッダーが1行目のため start=2
-                if len(row) >= 4:
-                    r_date = row[0]
-                    r_venue = row[1]
-                    try:
-                        r_num = int(row[2])
-                    except ValueError:
-                        r_num = 0
-                    h_name = row[3]
-                    
-                    if r_date == race_date and r_venue == venue and r_num == race_num and h_name == horse_name:
-                        found_idx = i
-                        break
-
-        if found_idx != -1:
-            # 既に存在する場合はステータス、馬番、着順のみ更新
-            ws_entry.update(f'E{found_idx}:G{found_idx}', [[status_label, horse_num, horse_rank]])
-        else:
-            # 存在しない場合は新規行として追加
-            ws_entry.append_row([race_date, venue, race_num, horse_name, status_label, horse_num, horse_rank])
-
+        found = {}
+        for i, row in enumerate(records[1:], start=2):
+            if len(row) >= 4 and parse_full_date(row[0]) == race_date and row[1] == venue and \
+                    str(row[2]).strip().isdigit() and int(row[2]) == race_num:
+                found[row[3]] = i
+        updates = [{'range': f'E{found[n]}', 'values': [[status_label]]} for n in horse_names if n in found]
+        new_rows = [[race_date.isoformat(), venue, race_num, n, status_label, '', ''] for n in horse_names
+                    if n not in found]
+        if updates:
+            ws_entry.batch_update(updates)
+        if new_rows:
+            ws_entry.append_rows(new_rows)
         return {"status": "success"}, 200
     except Exception as e:
         print(f"Entry save error: {e}")

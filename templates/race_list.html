@@ -68,7 +68,7 @@
                     <tr>
                         <td class="col-time">{{ race.time }}</td>
                         <td class="col-num">
-                            <a href="/edit_race?date={{ date }}&venue={{ venue|urlencode }}&num={{ i }}">{{ i }}R</a>
+                            <a href="/race_detail?date={{ date }}&venue={{ venue|urlencode }}&num={{ i }}">{{ i }}R</a>
                         </td>
                         <td class="col-details">
                             {% if race.name %}
