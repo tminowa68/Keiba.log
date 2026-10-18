@@ -1962,7 +1962,16 @@ def rest_label(before, after):
     if interval_weeks < 10:
         return ''
     half_months = interval_weeks // 2
-    return f"{half_months // 2}ヶ月" + ('半' if half_months % 2 else '')
+    years, months, half = half_months // 24, (half_months % 24) // 2, half_months % 2
+    if not years:
+        return f"{months}ヶ月" + ('半' if half else '')
+    # 12ヶ月以上は「1年」「1年1ヶ月」「1年1ヶ月半」「1年半月」のようにする
+    text = f"{years}年"
+    if months:
+        text += f"{months}ヶ月" + ('半' if half else '')
+    elif half:
+        text += "半月"
+    return text
 
 def build_race_history(race_results, changes_history, birth_year=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
