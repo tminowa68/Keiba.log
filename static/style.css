@@ -2301,3 +2301,24 @@ td.col-last-race {
     background: #495057;
     color: #fff;
 }
+/* 週間レポート：見出しの右の並び順・最大表示件数 */
+.section-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+}
+.sort-controls {
+    font-size: 0.9em;
+    color: #555;
+}
+.sort-controls select {
+    padding: 2px 4px;
+    margin-right: 6px;
+}
+.weekly-table-scroll {
+    overflow-x: auto;
+}
+.weekly-table-scroll td.nowrap {
+    white-space: nowrap;
+}

@@ -173,21 +173,30 @@ def login_required(f):
 # 収得賞金は最新レースが平地なら平地の、障害なら障害の収得賞金（3歳の6月にクラスが変わる馬を、計算し直さずに判定するため）
 HORSE_COLUMNS = ["馬名", "英馬名", "性別", "生年月日", "父", "母", "馬主名", "拠点", "厩舎", "状態",
                  "産地", "地域", "生産牧場", "JRAのURL", "NARのURL", "競走馬登録", "登録時状態",
-                 "クラス", "最新レース", "収得賞金"]
+                 "クラス", "最新レース", "収得賞金", "主な実績", "総本賞金",
+                 "主な近親馬", "近親馬の総本賞金", "近親馬の主な実績"]
 (H_NAME, H_NAME_EN, H_GENDER, H_BIRTH, H_SIRE, H_DAM, H_OWNER, H_AREA, H_STABLE, H_STATUS,
  H_REGION, H_DETAIL, H_BREEDER, H_JRA_URL, H_NAR_URL, H_REGISTRATION, H_REG_STATUS,
- H_CLASS, H_LAST_RACE, H_SHUTOKU) = range(len(HORSE_COLUMNS))
+ H_CLASS, H_LAST_RACE, H_SHUTOKU, H_BEST, H_TOTAL_PRIZE,
+ H_REL_NAME, H_REL_TOTAL, H_REL_BEST) = range(len(HORSE_COLUMNS))
+# レース結果から計算して書き込む列（主な実績は、本賞金が最も高かったレースと着順。総本賞金は本賞金の合計）
+H_CALC_COLS = (H_CLASS, H_LAST_RACE, H_SHUTOKU, H_BEST, H_TOTAL_PRIZE)
+# 兄弟・近親馬のうち、競走馬登録日までの本賞金の合計が最も高い馬とその主な実績（週間レポートの登録馬に表示する。
+# 登録日の時点で固定するため、一度計算したら書き換えない。該当する馬がいなければ総本賞金を0にする）
+H_REL_COLS = (H_REL_NAME, H_REL_TOTAL, H_REL_BEST)
 # Sire・Damシートの列（競走馬登録〜収得賞金は、Horsesシートから移した馬の値を引き継ぐ列）
 PARENT_COLUMNS = ["馬名", "英馬名", "生年月日", "父", "母", "馬主", "産地", "地域", "生産牧場", "JRAのURL", "NARのURL",
-                  "競走馬登録", "登録時状態", "クラス", "最新レース", "収得賞金"]
+                  "競走馬登録", "登録時状態", "クラス", "最新レース", "収得賞金", "主な実績", "総本賞金"]
 (P_NAME, P_NAME_EN, P_BIRTH, P_SIRE, P_DAM, P_OWNER, P_REGION, P_DETAIL, P_BREEDER,
- P_JRA_URL, P_NAR_URL, P_REGISTRATION, P_REG_STATUS, P_CLASS, P_LAST_RACE, P_SHUTOKU) = range(len(PARENT_COLUMNS))
+ P_JRA_URL, P_NAR_URL, P_REGISTRATION, P_REG_STATUS, P_CLASS, P_LAST_RACE, P_SHUTOKU, P_BEST,
+ P_TOTAL_PRIZE) = range(len(PARENT_COLUMNS))
 # Horsesシートの馬をSire・Damシートに移すときの列の対応（性別・拠点・厩舎・状態は移さない）
 HORSE_TO_PARENT_COLS = [(H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BIRTH), (H_SIRE, P_SIRE),
                         (H_DAM, P_DAM), (H_OWNER, P_OWNER), (H_REGION, P_REGION), (H_DETAIL, P_DETAIL),
                         (H_BREEDER, P_BREEDER), (H_JRA_URL, P_JRA_URL), (H_NAR_URL, P_NAR_URL),
                         (H_REGISTRATION, P_REGISTRATION), (H_REG_STATUS, P_REG_STATUS), (H_CLASS, P_CLASS),
-                        (H_LAST_RACE, P_LAST_RACE), (H_SHUTOKU, P_SHUTOKU)]
+                        (H_LAST_RACE, P_LAST_RACE), (H_SHUTOKU, P_SHUTOKU), (H_BEST, P_BEST),
+                        (H_TOTAL_PRIZE, P_TOTAL_PRIZE)]
 
 # Changesシートの列。「仮」はレースの結果から推定した日付（レースの前の木曜日）の記録に「仮」と入れる
 CHANGES_COLUMNS = ["年月日", "仮", "馬名", "項目", "旧", "新"]
@@ -1135,8 +1144,9 @@ def find_stable_match(all_stables, area, trainer_name):
 def get_all_horses():
     """Horsesシートの全行を返す（英字の馬はA列が空欄のため、A列の位置に英馬名を入れて返す）"""
     try:
-        sh = gc.open(horse_data)
-        data = sh.worksheet("Horses").get_all_values()
+        data = cached_sheet_values("Horses")
+        if data is None:
+            data = gc.open(horse_data).worksheet("Horses").get_all_values()
         rows = []
         for r in data[1:]:
             r = list(r)
@@ -1177,8 +1187,9 @@ def _load_stables_list():
         
         for sheet_name in ["美浦", "栗東"]:
             try:
-                sheet = sh.worksheet(sheet_name)
-                data = sheet.get_all_values()
+                data = cached_sheet_values(sheet_name)
+                if data is None:
+                    data = sh.worksheet(sheet_name).get_all_values()
                 for row in data[1:]:
                     if len(row) >= 2 and row[0] and row[1]:
                         # 列インデックスの更新 (E:開業[4], F:引退[5], G:馬房数[6], H:臨時貸付[7], I:貸付終了[8])
@@ -1288,9 +1299,8 @@ def split_dam_annotation(raw):
 def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc, base_is_english=False):
     # スプレッドシートから全データを取得
     try:
-        wb = gc.open('Horse_Data')
-        sire_data = wb.worksheet('Sire').get_all_records()
-        dam_data = wb.worksheet('Dam').get_all_records()
+        sire_data = horse_sheet_records('Sire')
+        dam_data = horse_sheet_records('Dam')
     except Exception as e:
         print(f"Spreadsheet fetch error: {e}")
         sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
@@ -1889,7 +1899,7 @@ def runner_row_to_result(r):
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
     }
 
-def collect_race_results(horses):
+def collect_race_results(horses, until_year=None):
     """複数の馬の出走成績をまとめて集める。horses：[{'key', 'name', 'horse_id', 'birth_year'}]。
     {key: 出走成績の一覧（新しい順）} を返す"""
     if not horses:
@@ -1902,21 +1912,25 @@ def collect_race_results(horses):
         if h.get('name'):
             by_name.setdefault(h['name'], []).append(h['key'])
     found = {h['key']: {} for h in horses}
-    for year in range(max(first_year, 2000), this_year + 1):
+    # 馬IDで探し、馬IDが分からない馬は馬名で探す（年ごとのファイルを並行して検索する）
+    ids = [h['horse_id'] for h in horses if h.get('horse_id')]
+    names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
+    jobs = []
+    for year in range(max(first_year, 2000), min(this_year, until_year or this_year) + 1):
         book = get_result_book(year)
-        if not book:
-            continue
-        # 馬IDで探し、馬IDが分からない馬は馬名で探す
-        ids = [h['horse_id'] for h in horses if h.get('horse_id')]
-        names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
-        for i in range(0, max(len(ids), len(names)), 40):
-            for row in query_runner_rows(book, ids[i:i + 40], names[i:i + 40]):
-                res = runner_row_to_result(row)
-                if not res:
-                    continue
-                keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
-                for key in keys:
-                    found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
+        if book:
+            jobs += [(book, ids[i:i + 40], names[i:i + 40]) for i in range(0, max(len(ids), len(names)), 40)]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        row_lists = list(pool.map(lambda job: query_runner_rows(*job), jobs))
+    for rows in row_lists:
+        for row in rows:
+            res = runner_row_to_result(row)
+            if not res:
+                continue
+            keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
+            for key in keys:
+                found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
     order = lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0)
     return {key: sorted(v.values(), key=order, reverse=True) for key, v in found.items()}
 
@@ -1951,6 +1965,42 @@ def last_race_label(results):
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
     name = r['name'] or f"{r['category']}{r['class']}"
     return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
+
+def best_race_label(results):
+    """Horsesシートに記録する主な実績：本賞金が最も高かったレースの年・レース名・着順（例：2026 天皇賞（秋） 1着）。
+    本賞金を得たレースが無ければ空欄（同じ金額なら新しいレース）"""
+    earned = [r for r in results if r.get('prize')]
+    if not earned:
+        return ''
+    r = max(earned, key=lambda r: (r['prize'], r['date']))
+    place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
+    name = strip_race_name_prefix(r['name']) or f"{r['category']}{r['class']}"
+    return f"{r['date'].year} {name} {place}"
+
+def total_prize(results):
+    return sum(r.get('prize') or 0 for r in results)
+
+_OLD_BEST_RE = re.compile(r'^(\d{4})/\d{1,2}/\d{1,2}\s+\S+?\d+R\s+(.+)\s+(\S+)$')
+
+def best_race_display(text):
+    """主な実績の表示：年・レース名（冠を除き、ステークスなどは略す）・着順。以前の形式
+    （2026/11/1 東京11R 天皇賞（秋）(G1) 1着）で記録されたものも同じ形にする"""
+    text = str(text or '').strip()
+    m = _OLD_BEST_RE.match(text)
+    if m:
+        year, name, place = m.groups()
+        name = re.sub(r'\((?:(?:J・)?G\d|L)\)$', '', name).strip()
+    else:
+        parts = text.split(' ', 1)
+        if len(parts) < 2 or not parts[0].isdigit():
+            return text
+        year, rest = parts
+        name, _, place = rest.rpartition(' ')
+        if not name:
+            return text
+    return f"{year} {short_race_name(name)} {place}"
+
+app.jinja_env.filters['best_race'] = best_race_display
 
 # --- レースの間の転厩（成績の調教師が変わっている場合） ---
 def _trainer_key(name):
@@ -2208,6 +2258,43 @@ def horse_sheet_values(title):
         cache[title] = values
     return values
 
+def prefetch_horse_sheets(titles):
+    """画面の表示に使うHorse_Dataのシートを、まとめて1回の読み込みで取得し、そのリクエストの間は使い回す
+    （シートごとに読み込むと、Google SheetsのAPIの1分あたりの読み込み回数の上限にかかりやすいため）"""
+    from flask import has_request_context
+    if not has_request_context():
+        return
+    cache = g.__dict__.setdefault('_sheet_values', {})
+    try:
+        sh = gc.open(horse_data)
+        existing = {ws.title for ws in sh.worksheets()}
+        want = [t for t in titles if t in existing and t not in cache]
+        if not want:
+            return
+        res = with_sheets_retry(sh.values_batch_get, ["'" + t.replace("'", "''") + "'" for t in want])
+        for t, vr in zip(want, res.get('valueRanges', [])):
+            cache[t] = gspread.utils.fill_gaps(vr.get('values', []) or [[]])
+    except Exception as e:
+        # まとめて読めなかった場合は、それぞれのシートを個別に読み込む
+        print(f"シートのまとめての読み込みに失敗しました: {e}")
+
+def cached_sheet_values(title):
+    """prefetch_horse_sheets などで、このリクエストの中で既に読み込んだシートの内容（無ければ None）"""
+    from flask import has_request_context
+    if not has_request_context():
+        return None
+    return g.__dict__.get('_sheet_values', {}).get(title)
+
+def horse_sheet_records(title):
+    """get_all_records と同じ形（1行目を見出しにした辞書の一覧。数字は数値にする）で返す"""
+    values = horse_sheet_values(title)
+    if not values:
+        return []
+    header = values[0]
+    rows = [gspread.utils.numericise_all(list(r) + [''] * (len(header) - len(r)), False, '')
+            for r in values[1:]]
+    return gspread.utils.to_records(header, rows)
+
 def remember_sheet_values(title, values=None):
     """書き込んだシートの内容を覚え直す（values が無ければ忘れて、次は読み込み直す）"""
     from flask import has_request_context
@@ -2273,18 +2360,20 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
         else:
             new_class = '新馬' if h['birth_year'] and datetime.now().year - h['birth_year'] <= 3 else ''
             shutoku = ''
-        new_values = [new_class, last_race_label(res), shutoku]
-        old_values = [str(r[c]) if len(r) > c else '' for c in (H_CLASS, H_LAST_RACE, H_SHUTOKU)]
+        new_values = [new_class, last_race_label(res), shutoku, best_race_label(res),
+                      str(total_prize(res)) if res else '']
+        old_values = [str(r[c]) if len(r) > c else '' for c in H_CALC_COLS]
         if new_values != old_values:
             row_no = h['key'] + 2
-            updates.append({'range': f"{col_letter(H_CLASS)}{row_no}:{col_letter(H_SHUTOKU)}{row_no}",
+            updates.append({'range': f"{col_letter(H_CLASS)}{row_no}:{col_letter(H_CALC_COLS[-1])}{row_no}",
                             'values': [new_values]})
     updated = len(updates)
     header = data[0] if data else []
-    if updates or len(header) <= H_SHUTOKU or header[H_SHUTOKU] != HORSE_COLUMNS[H_SHUTOKU]:
+    last = H_CALC_COLS[-1]
+    if updates or len(header) <= last or header[last] != HORSE_COLUMNS[last]:
         ensure_columns(ws, len(HORSE_COLUMNS))
-        updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(H_SHUTOKU)}1",
-                        'values': [[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE], HORSE_COLUMNS[H_SHUTOKU]]]})
+        updates.append({'range': f"{col_letter(H_CLASS)}1:{col_letter(last)}1",
+                        'values': [[HORSE_COLUMNS[c] for c in H_CALC_COLS]]})
         with_sheets_retry(ws.batch_update, updates)
         remember_sheet_values("Horses")
     return total, updated
@@ -3142,9 +3231,9 @@ class AutoRegistrar:
             ensure_columns(ws, len(columns))
             if t != 'Horses':
                 ensure_parent_header(ws, self.header[t])
-            elif len(self.header[t]) < len(columns) or not all(self.header[t][i] for i in (H_CLASS, H_LAST_RACE, H_SHUTOKU)):
-                with_sheets_retry(ws.update, range_name=f"{col_letter(H_CLASS)}1:{col_letter(H_SHUTOKU)}1",
-                                  values=[[HORSE_COLUMNS[H_CLASS], HORSE_COLUMNS[H_LAST_RACE], HORSE_COLUMNS[H_SHUTOKU]]])
+            elif len(self.header[t]) < len(columns) or not all(self.header[t][i] for i in H_CALC_COLS):
+                with_sheets_retry(ws.update, range_name=f"{col_letter(H_CLASS)}1:{col_letter(H_CALC_COLS[-1])}1",
+                                  values=[[HORSE_COLUMNS[c] for c in H_CALC_COLS]])
             updates = {idx: row for idx, row in self.updated[t].items() if id(row) not in deleted}
             if updates:
                 last = col_letter(len(columns) - 1)
@@ -3647,7 +3736,7 @@ def import_horses():
 
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        for idx in (H_REGISTRATION, H_REG_STATUS, H_CLASS, H_LAST_RACE, H_SHUTOKU):
+        for idx in (H_REGISTRATION, H_REG_STATUS) + H_CALC_COLS + H_REL_COLS:
             if _blank(headers[idx]):
                 headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
@@ -3985,7 +4074,7 @@ def import_trainer_page(html_text):
         rows = [list(r) for r in data[1:]]
         while len(headers) < len(HORSE_COLUMNS):
             headers.append('')
-        for idx in (H_REG_STATUS, H_CLASS, H_LAST_RACE, H_SHUTOKU):
+        for idx in (H_REG_STATUS,) + H_CALC_COLS + H_REL_COLS:
             if not headers[idx]:
                 headers[idx] = HORSE_COLUMNS[idx]
         ensure_columns(ws, len(HORSE_COLUMNS))
@@ -4311,6 +4400,18 @@ def import_cancel_horses():
         return redirect('/import_horses')
 
 
+VENUE_ORDER = ['札幌', '函館', '福島', '新潟', '東京', '中山', '中京', '京都', '阪神', '小倉']
+
+def race_sort_key(text):
+    """最新レース（2026/10/4 東京5R メイクデビュー東京 1着）の並べ替え用の文字列：レース日・競馬場・レース番号・着順"""
+    m = re.match(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s', str(text or '').strip())
+    if not m:
+        return ''
+    y, mo, d, venue, num = m.groups()
+    place = re.search(r'(\d+)着$', str(text).strip())
+    venue_no = VENUE_ORDER.index(venue) if venue in VENUE_ORDER else 99
+    return f"{y}{int(mo):02d}{int(d):02d}-{venue_no:02d}-{int(num):02d}-{int(place.group(1)) if place else 99:02d}"
+
 @app.route('/weekly')
 @wait_for_sheets
 def weekly():
@@ -4327,15 +4428,17 @@ def weekly():
         return row[i].strip() if len(row) > i and row[i] else ''
 
     registered, cancelled, pasture, changes = [], [], [], []
+    sheet_updates = []   # Horsesシートに書き込む値（登録時状態・主な近親馬）
     horse_info = {}   # Horsesシートの馬：馬名 → 性別・生年・厩舎・URLの有無
     parent_info = {}  # Sire・Damシートの馬（Horsesシートに無い馬の性別・URLボタンの判定に使う）
     try:
         sh = gc.open(horse_data)
 
-        horses_data = sh.worksheet("Horses").get_all_values()[1:]
+        prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes", "抹消", "放牧入厩"])
+        horses_data = horse_sheet_values("Horses")[1:]
         if not horses_data:
             sheet_not_ready("Horsesシートのデータが0件です")
-        for r in horses_data:
+        for row_no, r in enumerate(horses_data, start=2):
             name = display_name_of_row(r)
             if not name:
                 continue
@@ -4343,7 +4446,14 @@ def weekly():
                 'gender': cell(r, H_GENDER), 'birth_year': date_year(cell(r, H_BIRTH)),
                 'stable': f"{cell(r, H_AREA)}・{cell(r, H_STABLE)}" if cell(r, H_AREA) else cell(r, H_STABLE),
                 'has_url': bool(cell(r, H_JRA_URL) or cell(r, H_NAR_URL)),
+                'last_race': cell(r, H_LAST_RACE), 'best': cell(r, H_BEST),
+                'total': cell(r, H_TOTAL_PRIZE), 'horse_id': RR.horse_id_from_url(cell(r, H_JRA_URL)),
             }
+            # 今の状態が早期の馬は、登録時状態も早期（早期から入厩した後に早期に戻ることは無いため）
+            if cell(r, H_STATUS) == '早期' and cell(r, H_REG_STATUS) != '早期':
+                sheet_updates.append({'range': f"{col_letter(H_REG_STATUS)}{row_no}", 'values': [['早期']]})
+                r = list(r) + [''] * (len(HORSE_COLUMNS) - len(r))
+                r[H_REG_STATUS] = '早期'
             reg_date = parse_full_date(cell(r, H_REGISTRATION))
             if in_week(reg_date):
                 # 状態は登録した時の値（O列）で固定する。O列が無い馬は、競走馬登録日と生年から
@@ -4352,14 +4462,20 @@ def weekly():
                 if not status:
                     status = resolve_registration_status('', date_year(cell(r, H_BIRTH)) or '',
                                                          reg_date.year, reg_date.month)
+                rel_done = cell(r, H_REL_TOTAL) != ''
                 registered.append({'date': reg_date, 'name': name,
-                                   'sire': cell(r, H_SIRE), 'dam': cell(r, H_DAM), 'status': status})
+                                   'sire': cell(r, H_SIRE), 'dam': cell(r, H_DAM), 'status': status,
+                                   'row_no': row_no, 'row': r, 'rel_done': rel_done,
+                                   'rel_name': cell(r, H_REL_NAME), 'rel_best': cell(r, H_REL_BEST),
+                                   'rel_total': int(cell(r, H_REL_TOTAL)) if cell(r, H_REL_TOTAL).isdigit() else 0})
 
         for p_type, gender in (('Sire', '牡'), ('Dam', '牝')):
             try:
-                for r in sh.worksheet(p_type).get_all_values()[1:]:
+                for r in horse_sheet_values(p_type)[1:]:
                     info = {'type': p_type, 'gender': gender, 'birth_year': date_year(cell(r, P_BIRTH)),
-                            'has_url': bool(cell(r, P_JRA_URL) or cell(r, P_NAR_URL))}
+                            'has_url': bool(cell(r, P_JRA_URL) or cell(r, P_NAR_URL)),
+                            'last_race': cell(r, P_LAST_RACE), 'best': cell(r, P_BEST),
+                            'total': cell(r, P_TOTAL_PRIZE), 'horse_id': RR.horse_id_from_url(cell(r, P_JRA_URL))}
                     # Horsesシートから移した馬も、競走馬登録日の週の登録馬に表示する
                     reg_date = parse_full_date(cell(r, P_REGISTRATION))
                     if in_week(reg_date) and display_name_of_row(r):
@@ -4374,7 +4490,7 @@ def weekly():
 
         # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
         # 「仮」の記録（レースの結果から推定した日付）は表示しない
-        for r in sh.worksheet("Changes").get_all_values()[1:]:
+        for r in horse_sheet_values("Changes")[1:]:
             d = parse_full_date(cell(r, C_DATE))
             if in_week(d) and cell(r, C_TYPE) != '抹消' and cell(r, C_TENTATIVE) != '仮':
                 changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
@@ -4382,7 +4498,7 @@ def weekly():
 
         cancelled_keys = set()
         try:
-            for r in sh.worksheet("抹消").get_all_values()[1:]:
+            for r in horse_sheet_values("抹消")[1:]:
                 d = parse_full_date(cell(r, 0))
                 if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
                     cancelled_keys.add((d, cell(r, 1)))
@@ -4391,7 +4507,7 @@ def weekly():
             pass
 
         try:
-            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+            for r in horse_sheet_values("放牧入厩")[1:]:
                 out_date, in_date = parse_full_date(cell(r, PS_OUT)), parse_full_date(cell(r, PS_IN))
                 # 「仮」の記録（実際の日付とは限らないもの）は表示しない
                 if in_week(out_date) and cell(r, PS_OUT_TENTATIVE) != '仮':
@@ -4423,10 +4539,58 @@ def weekly():
             item['gender'] = (info or parent or {}).get('gender', '')
             birth_year = (info or parent or {}).get('birth_year')
             item['age'] = f"{item['date'].year - birth_year}歳" if birth_year else ''
+            item['last_race'] = (info or parent or {}).get('last_race', '')
+            item['race_key'] = race_sort_key(item['last_race'])
+            item['best'] = (info or parent or {}).get('best', '')
+            total = str((info or parent or {}).get('total', '')).replace(',', '')
+            item['total'] = int(total) if total.isdigit() else None
+            item['age_num'] = item['date'].year - birth_year if birth_year else ''
             # 年は見出しの週でわかるため、日付は月日と曜日だけ表示する
             item['date_label'] = '' if item.get('tentative') else \
                 f"{item['date'].month}月{item['date'].day}日({JP_WEEKDAYS[item['date'].weekday()]})"
         items.sort(key=lambda x: (x['date'], x['name']))
+
+    # 主な実績・総本賞金をまだ計算していない（列が空の）馬は、レース結果から求めて表示する
+    missing = {}
+    for h in cancelled + pasture + changes:
+        if h['last_race'] and (not h['best'] or h['total'] is None) and h['name'] not in missing:
+            src = horse_info.get(h['name']) or parent_info.get(h['name']) or {}
+            missing[h['name']] = {'key': h['name'], 'name': h['name'], 'horse_id': src.get('horse_id', ''),
+                                  'birth_year': src.get('birth_year')}
+    if missing:
+        try:
+            found = collect_race_results(list(missing.values()))
+            for h in cancelled + pasture + changes:
+                if h['name'] in found:
+                    h['best'] = h['best'] or best_race_label(found[h['name']])
+                    if h['total'] is None:
+                        h['total'] = total_prize(found[h['name']])
+        except Exception as e:
+            print(f"主な実績・総本賞金の計算に失敗しました: {e}")
+
+    # 登録馬の主な兄弟・近親馬（競走馬登録日までの本賞金の合計が最も高い馬）：まだ求めていない馬は求めてHorsesシートに記録する
+    pending = [h for h in registered if 'row' in h and not h['rel_done']]
+    if pending:
+        try:
+            rels = compute_relative_bests([(h['row_no'], h['row']) for h in pending])
+            for h in pending:
+                if h['row_no'] in rels:
+                    h['rel_name'], h['rel_total'], h['rel_best'] = rels[h['row_no']]
+                    sheet_updates.append({'range': f"{col_letter(H_REL_NAME)}{h['row_no']}:{col_letter(H_REL_BEST)}{h['row_no']}",
+                                          'values': [[h['rel_name'], str(h['rel_total']), h['rel_best']]]})
+        except Exception as e:
+            print(f"主な近親馬の計算に失敗しました: {e}")
+    if sheet_updates:
+        try:
+            ws_h = gc.open(horse_data).worksheet("Horses")
+            ensure_columns(ws_h, len(HORSE_COLUMNS))
+            header = horse_sheet_values("Horses")[0]
+            if len(header) < len(HORSE_COLUMNS) or not all(header[c] if c < len(header) else '' for c in H_REL_COLS):
+                sheet_updates.append({'range': f"{col_letter(H_CALC_COLS[0])}1:{col_letter(len(HORSE_COLUMNS) - 1)}1",
+                                      'values': [HORSE_COLUMNS[H_CALC_COLS[0]:]]})
+            with_sheets_retry(ws_h.batch_update, sheet_updates)
+        except Exception as e:
+            print(f"Horsesシートへの書き込みに失敗しました: {e}")
 
     if stable_filter:
         def _match(item):
@@ -4833,18 +4997,22 @@ def migrate_pasture_sheet():
     ws.update(range_name='A1', values=rows)
     _pasture_columns_ready = True
 
+_migration_tried = {}   # 列の追加に失敗した時刻（失敗した場合は、しばらくやり直さない）
+MIGRATION_RETRY_SECONDS = 600
+
 @app.before_request
 def require_changes_columns():
-    if request.endpoint not in (None, 'static') and not _changes_columns_ready:
+    if request.endpoint in (None, 'static'):
+        return
+    for key, ready, migrate in (('Changes', _changes_columns_ready, migrate_changes_sheet),
+                                ('放牧入厩', _pasture_columns_ready, migrate_pasture_sheet)):
+        if ready or time.time() - _migration_tried.get(key, 0) < MIGRATION_RETRY_SECONDS:
+            continue
+        _migration_tried[key] = time.time()
         try:
-            migrate_changes_sheet()
+            migrate()
         except Exception as e:
-            print(f"Changesシートの列の追加に失敗しました: {e}")
-    if request.endpoint not in (None, 'static') and not _pasture_columns_ready:
-        try:
-            migrate_pasture_sheet()
-        except Exception as e:
-            print(f"放牧入厩シートの列の追加に失敗しました: {e}")
+            print(f"{key}シートの列の追加に失敗しました: {e}")
 
 @app.before_request
 def require_name_columns():
@@ -5669,6 +5837,7 @@ def horse_detail_redirect(name):
 def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
+    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Entry", "Changes", "放牧入厩", "抹消", "美浦", "栗東"])
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
 
@@ -5681,7 +5850,7 @@ def horse_detail(name, active_tab):
     horse_races = []
     try:
         today = datetime.now().date()
-        records = gc.open(horse_data).worksheet("Entry").get_all_values()
+        records = horse_sheet_values("Entry")
         for row in records[1:]:
             if len(row) < 4 or row[3] != name:
                 continue
@@ -5707,9 +5876,7 @@ def horse_detail(name, active_tab):
 
     changes_history = []
     try:
-        sh = gc.open(horse_data)
-        ws_changes = sh.worksheet("Changes")
-        records = ws_changes.get_all_records()
+        records = horse_sheet_records("Changes")
         for r in records:
             # 該当馬の変更履歴をすべて取得（馬主変更・転厩含む）
             if str(r.get("馬名", "")) == name:
@@ -5721,8 +5888,7 @@ def horse_detail(name, active_tab):
     pasture_history, cancel_dates = [], []
     if active_tab == 'races':
         try:
-            sh = gc.open(horse_data)
-            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+            for r in horse_sheet_values("放牧入厩")[1:]:
                 r = list(r) + [''] * len(PASTURE_COLUMNS)
                 if r[PS_NAME].strip() != name:
                     continue
@@ -5733,7 +5899,7 @@ def horse_detail(name, active_tab):
         except Exception as e:
             print(f"放牧入厩シートの読み込みエラー: {e}")
         try:
-            for r in gc.open(horse_data).worksheet("抹消").get_all_values()[1:]:
+            for r in horse_sheet_values("抹消")[1:]:
                 if len(r) > 1 and r[1].strip() == name:
                     d = parse_full_date(r[0])
                     if d:
@@ -5746,14 +5912,14 @@ def horse_detail(name, active_tab):
         sh = gc.open(horse_data)
         if horse and len(horse) > H_SIRE and horse[H_SIRE]:
             try:
-                s_data = sh.worksheet("Sire").get_all_values()[1:]
+                s_data = horse_sheet_values("Sire")[1:]
                 s_row = next((r for r in s_data if row_matches_name(r, horse[H_SIRE])), None)
                 if s_row: sire_info.update({"line1": s_row[P_SIRE] if len(s_row)>P_SIRE else "不明", 
                                             "line2": s_row[P_DAM] if len(s_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
         if horse and len(horse) > H_DAM and horse[H_DAM]:
             try:
-                d_data = sh.worksheet("Dam").get_all_values()[1:]
+                d_data = horse_sheet_values("Dam")[1:]
                 d_row = next((r for r in d_data if row_matches_name(r, horse[H_DAM])), None)
                 if d_row: dam_info.update({"line3": d_row[P_SIRE] if len(d_row)>P_SIRE else "不明", 
                                            "line4": d_row[P_DAM] if len(d_row)>P_DAM else "不明"})
@@ -5779,32 +5945,7 @@ def horse_detail(name, active_tab):
 
     # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
     # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
-    dam_node = pedigree_data.get(3)
-    granddam_node = pedigree_data.get(7)
-    ggranddam_node = pedigree_data.get(15)
-
-    def _horse_blank(idx):
-        return len(horse) > idx and (horse[idx] is None or str(horse[idx]).strip() == '')
-
-    horse_status = horse[H_STATUS].strip() if len(horse) > H_STATUS and horse[H_STATUS] else ''
-    horse_has_url = any(len(horse) > c and str(horse[c] or '').strip() for c in (H_JRA_URL, H_NAR_URL))
-    horse_has_alert = _horse_blank(H_OWNER) or _horse_blank(H_REGION) or _horse_blank(H_BREEDER)
-
-    family_table1, family_table2 = [], []
-    if dam_node and dam_node.get('full_db_name'):
-        family_table1, family_table2 = compute_family_tables(
-            horse[H_NAME], horse[H_GENDER], base_birth_year or 0, horse[H_SIRE],
-            horse_status, horse_has_url, horse_has_alert,
-            dam_node.get('name', ''),
-            dam_node.get('full_db_name', ''),
-            dam_node.get('birth_year'),
-            granddam_node.get('name', '') if granddam_node else '',
-            granddam_node.get('full_db_name', '') if granddam_node else '',
-            granddam_node.get('birth_year') if granddam_node else None,
-            ggranddam_node.get('name', '') if ggranddam_node else '',
-            ggranddam_node.get('full_db_name', '') if ggranddam_node else '',
-            ggranddam_node.get('birth_year') if ggranddam_node else None
-        )
+    family_table1, family_table2 = family_tables_for(horse, pedigree_data, base_birth_year)
 
     # 出走履歴（年ごとのレース結果のファイルから、馬IDまたは馬名で探す）と本賞金・収得賞金・クラス
     race_results, race_summary_data = [], RR.summarize_results([])
@@ -5940,7 +6081,7 @@ def read_entries(race_date, venue, num):
     """Entryシートから、指定したレースにエントリーした馬の一覧を返す"""
     entries = []
     try:
-        rows = gc.open(horse_data).worksheet("Entry").get_all_values()[1:]
+        rows = horse_sheet_values("Entry")[1:]
     except Exception:
         return entries
     for row in rows:
@@ -6000,6 +6141,7 @@ def race_detail():
     race_date = parse_full_date(request.args.get('date') or '') or datetime.now().date()
     venue = request.args.get('venue', '')
     num = request.args.get('num', default=1, type=int)
+    prefetch_horse_sheets(["Horses", "Entry"])
 
     # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
     # 指定された日・競馬場のまま表示する
@@ -6111,6 +6253,89 @@ def save_entry():
         print(f"Entry save error: {e}")
         return {"status": "error", "message": str(e)}, 500
 
+def family_tables_for(horse, pedigree_data, base_birth_year):
+    """Horsesシートの馬の兄弟馬・近親馬のテーブル（compute_family_tables の戻り値）。pedigree_data は get_5gen_pedigree の結果"""
+    dam_node = pedigree_data.get(3)
+    granddam_node = pedigree_data.get(7) or {}
+    ggranddam_node = pedigree_data.get(15) or {}
+    if not dam_node or not dam_node.get('full_db_name'):
+        return [], []
+
+    def _horse_blank(idx):
+        return len(horse) > idx and (horse[idx] is None or str(horse[idx]).strip() == '')
+
+    horse_status = horse[H_STATUS].strip() if len(horse) > H_STATUS and horse[H_STATUS] else ''
+    horse_has_url = any(len(horse) > c and str(horse[c] or '').strip() for c in (H_JRA_URL, H_NAR_URL))
+    horse_has_alert = _horse_blank(H_OWNER) or _horse_blank(H_REGION) or _horse_blank(H_BREEDER)
+    return compute_family_tables(
+        horse[H_NAME], horse[H_GENDER], base_birth_year or 0, horse[H_SIRE],
+        horse_status, horse_has_url, horse_has_alert,
+        dam_node.get('name', ''), dam_node.get('full_db_name', ''), dam_node.get('birth_year'),
+        granddam_node.get('name', ''), granddam_node.get('full_db_name', ''), granddam_node.get('birth_year'),
+        ggranddam_node.get('name', ''), ggranddam_node.get('full_db_name', ''), ggranddam_node.get('birth_year'))
+
+def family_relatives(horse):
+    """Horsesシートの馬の兄弟・近親馬（本馬を除く）を [{'relation', 'name'}] で返す"""
+    birth_year = date_year(horse[H_BIRTH]) if len(horse) > H_BIRTH else None
+    pedigree = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], birth_year, gc,
+                                 base_is_english=is_english_name(horse[H_NAME]))
+    tables1, tables2 = family_tables_for(horse, pedigree, birth_year)
+    found, seen = [], set()
+
+    def _walk(rows):
+        for r in rows or []:
+            if r.get('kind') == 'row' and not r.get('is_self') and r.get('name') and r['name'] not in seen \
+                    and r['name'] != horse[H_NAME]:
+                seen.add(r['name'])
+                found.append({'relation': r.get('relation', ''), 'name': r['name'],
+                              'birth_year': r['birth_year'] if isinstance(r.get('birth_year'), int) else None})
+            _walk(r.get('children'))
+    for t in list(tables1) + list(tables2):
+        _walk(t.get('rows'))
+    return found
+
+def compute_relative_bests(horses, limit_seconds=12):
+    """登録馬の兄弟・近親馬のうち、その馬の競走馬登録日までの本賞金の合計が最も高い馬を求める。
+    horses：[(キー, Horsesの行)]。{キー: (「馬名（関係）」, 総本賞金, 主な実績)} を返す（時間の都合で求められなかった馬は含まない）"""
+    started = time.time()
+    targets = []
+    for key, row in horses:
+        reg = parse_full_date(row[H_REGISTRATION]) if len(row) > H_REGISTRATION else None
+        if not reg or time.time() - started > limit_seconds / 2:
+            continue
+        try:
+            targets.append((key, reg, family_relatives(row)))
+        except Exception as e:
+            print(f"近親馬の検索に失敗しました（{row[H_NAME]}）: {e}")
+    names = {r['name']: r for _, _, rels in targets for r in rels}
+    if not names:
+        return {key: ('', 0, '') for key, _, _ in targets}
+    ids = {}
+    for title, url_col, name_cols in (("Horses", H_JRA_URL, (H_NAME, H_NAME_EN)),
+                                      ("Sire", P_JRA_URL, (P_NAME, P_NAME_EN)), ("Dam", P_JRA_URL, (P_NAME, P_NAME_EN))):
+        try:
+            for r in horse_sheet_values(title)[1:]:
+                hid = RR.horse_id_from_url(r[url_col] if len(r) > url_col else '')
+                for c in name_cols:
+                    if hid and len(r) > c and r[c].strip() in names:
+                        ids.setdefault(r[c].strip(), hid)
+        except Exception:
+            pass
+    last_year = max(reg.year for _, reg, _ in targets)
+    results = collect_race_results([{'key': n, 'name': n, 'horse_id': ids.get(n, ''),
+                                     'birth_year': names[n]['birth_year']} for n in names], until_year=last_year)
+    out = {}
+    for key, reg, rels in targets:
+        best = ('', 0, '')
+        for rel in rels:
+            res = [r for r in results.get(rel['name'], []) if r['date'] <= reg]
+            total = total_prize(res)
+            if total > best[1]:
+                label = f"{rel['name']}（{rel['relation']}）" if rel['relation'] else rel['name']
+                best = (label, total, best_race_label(res))
+        out[key] = best
+    return out
+
 def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire_disp,
                            horse_status, horse_has_url, horse_has_alert,
                            dam_name, dam_full_name, dam_birth_year,
@@ -6142,9 +6367,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     sire_records, dam_records = [], []
     try:
-        sh = gc.open(horse_data)
-        dam_records = normalize_name_records(sh.worksheet('Dam').get_all_records())
-        sire_records = normalize_name_records(sh.worksheet('Sire').get_all_records())
+        dam_records = normalize_name_records(horse_sheet_records('Dam'))
+        sire_records = normalize_name_records(horse_sheet_records('Sire'))
     except Exception as e:
         sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
     if not dam_records or not sire_records:
