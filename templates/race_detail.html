@@ -145,6 +145,7 @@
                 <tr>
                     <th>馬名</th>
                     <th>性齢</th>
+                    <th>斤量</th>
                     <th>クラス</th>
                     <th>厩舎</th>
                     <th>状態</th>
@@ -155,6 +156,7 @@
                 <tr>
                     <td class="col-name">{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
                     <td class="col-gender">{{ h.gender }}{{ h.age }}</td>
+                    <td>{{ h.weight }}</td>
                     <td>{{ h['class'] }}</td>
                     <td>{{ h.stable }}</td>
                     <td>{{ h.status_label }}</td>

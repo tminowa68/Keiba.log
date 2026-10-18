@@ -505,3 +505,94 @@ def parse_program_page(html_or_soup, page_date=None):
                 'time': f"{int(tm.group(1))}:{tm.group(2)}" if tm else '',
             })
     return races
+
+
+# --- 特別レース登録馬（競馬メニューの「特別レース登録馬」） ---
+SPECIAL_LIST_CNAME = 'pw03trl00/29'
+_SPECIAL_CNAME_RE = re.compile(r'(pw03tde\d{2}(\d{2})(\d{2})(\d{2})(\d{2})(\d{8})/[0-9A-Fa-f]{2})')
+_CLASS_TEXT_RE = re.compile(r'^(障害)?\s*(\d歳(?:以上)?)?\s*(.*)$')
+
+
+def split_class_text(text):
+    """「3歳以上2勝クラス」「障害3歳以上オープン」を (障害か, 年齢条件, クラス) に分ける"""
+    m = _CLASS_TEXT_RE.match(re.sub(r'\s+', '', text or ''))
+    return bool(m.group(1)), m.group(2) or '', (m.group(3) or '').strip()
+
+
+def _surface_of(text):
+    if '障害' in text:
+        return '障'
+    if 'ダート' in text or 'ダ' in text:
+        return 'ダ'
+    return '芝' if '芝' in text else ''
+
+
+def parse_special_list_page(html_or_soup):
+    """特別レース登録馬の一覧のページから、各レースの {'cname', 'date', 'venue', 'kai', 'nichi', 'num', 'name',
+    'grade', 'jump', 'category', 'class', 'distance', 'surface', 'marks', 'weight_rule'} を返す"""
+    soup = _soup(html_or_soup)
+    races = []
+    for a in soup.find_all('a', onclick=True):
+        m = _SPECIAL_CNAME_RE.search(a['onclick'])
+        if not m:
+            continue
+        cname, venue_code, kai, nichi, num, ymd = m.groups()
+        race_date = date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:]))
+        name = ''.join(s for s in a.find_all(string=True, recursive=False)).strip()
+        grade = ''
+        for img in a.select('.grade_icon img'):
+            grade = normalize_grade(img.get('alt')) or grade
+        jump, category, race_class = split_class_text(_text(a.select_one('.cell.class')))
+        dist = _text(a.select_one('.cell.dist'))
+        dm = re.search(r'[\d,]+', dist)
+        cap = _text(a.select_one('.cap'))
+        wm = re.search(r'(馬齢|定量|別定|ハンデ)\s*$', cap)
+        races.append({
+            'cname': cname, 'date': race_date, 'venue': VENUES.get(venue_code, venue_code),
+            'kai': int(kai), 'nichi': int(nichi), 'num': int(num), 'name': name, 'grade': grade,
+            'jump': jump or '障害' in dist, 'category': category, 'class': race_class,
+            'distance': int(dm.group(0).replace(',', '')) if dm else '',
+            'surface': '障' if jump else _surface_of(dist),
+            'marks': cap[:wm.start()].strip() if wm else cap, 'weight_rule': wm.group(1) if wm else '',
+        })
+    if not races and '特別レース登録馬' not in _text(soup.title) + _text(soup.body)[:3000]:
+        raise ValueError('特別レース登録馬のページではありません。')
+    return races
+
+
+def parse_special_race_page(html_or_soup):
+    """特別レース登録馬の各レースのページから、登録馬 [{'name', 'url', 'horse_id', 'weight', 'added'}] と、
+    ページから読み取れたレースの情報（年月日・競馬場・回・日・レース番号・レース名・グレードなど。読み取れない項目は無し）を返す"""
+    soup = _soup(html_or_soup)
+    horses = []
+    for td in soup.select('td.horse'):
+        a = td.find('a')
+        name = _text(a or td)
+        if not name or name == '馬名':
+            continue
+        tr = td.find_parent('tr')
+        url = a.get('href', '') if a else ''
+        horses.append({'name': name, 'url': url, 'horse_id': horse_id_from_url(url),
+                       'weight': _text(tr.select_one('td.weight')) if tr else '',
+                       'added': '追加' in _text(tr.select_one('td.add')) if tr else False})
+    race = {}
+    text = _text(soup.select_one('div.race_header') or soup.body or soup)
+    m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
+    if m:
+        race['date'] = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    km = re.search(r'(\d+)回\s*(札幌|函館|福島|新潟|東京|中山|中京|京都|阪神|小倉)\s*(\d+)日', text)
+    if km:
+        race['kai'], race['venue'], race['nichi'] = int(km.group(1)), km.group(2), int(km.group(3))
+    num_img = soup.select_one('.race_number img')
+    nm = re.search(r'(\d+)', (num_img.get('alt') if num_img else '') or '') or re.search(r'(\d{1,2})\s*レース', text)
+    if nm:
+        race['num'] = int(nm.group(1))
+    title = soup.select_one('.race_title .race_name') or soup.select_one('.race_name')
+    if title:
+        race['name'] = _text(title)
+    for img in soup.select('.race_title img, .race_name img, .grade_icon img'):
+        g = normalize_grade(img.get('alt'))
+        if g:
+            race['grade'] = g
+            break
+    return {'race': race, 'horses': horses}

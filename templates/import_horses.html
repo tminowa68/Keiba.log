@@ -280,6 +280,102 @@
 })();
 </script>
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>特別レース登録馬 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの競馬メニューの「特別レース登録馬」から、各特別レースの登録馬を年ごとのファイル（例：「2026_レース結果」）の成績シートに「特別」として記録します
+        （レースの「特別登録」のタブ・競走馬の「次走予定」に表示します）。<br>
+        ・「取り込み開始」：JRAのサイトから特別レース登録馬の一覧を取得し、1レースずつ登録馬を取り込みます。<br>
+        ・ファイルから取り込む：各レースの登録馬のページを保存したファイル（.mhtml／.html）を指定します（複数可）。<br>
+        既に「確定」になっている馬は「特別」に戻しません。結果を取り込み済みのレースは飛ばします。
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:10px;">
+        <button type="button" id="sp-start-btn" class="rr-btn">取り込み開始</button>
+        <span style="color:#888;">または</span>
+        <input type="file" id="sp-files" accept=".mhtml,.mht,.html,.htm" multiple>
+        <button type="button" id="sp-upload-btn" class="rr-btn">ファイルから取り込む</button>
+    </div>
+    <div id="sp-message" style="margin-top:10px; font-size:0.9em;"></div>
+    <ul id="sp-log" style="margin-top:6px; font-size:0.85em; color:#555; max-height:240px; overflow-y:auto;"></ul>
+</section>
+
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    function message(text, isError) {
+        $('sp-message').textContent = text;
+        $('sp-message').style.color = isError ? '#c62828' : '#333';
+    }
+    function log(results, failed) {
+        (results || []).forEach(r => {
+            const li = document.createElement('li');
+            li.textContent = `${r.label}：` + (r.message || `${r.added}頭を追加` + (r.updated ? `、${r.updated}頭を特別に更新` : ''));
+            $('sp-log').appendChild(li);
+        });
+        (failed || []).forEach(f => {
+            const li = document.createElement('li');
+            li.style.color = '#c62828';
+            li.textContent = f;
+            $('sp-log').appendChild(li);
+        });
+    }
+    function setBusy(busy) { $('sp-start-btn').disabled = busy; $('sp-upload-btn').disabled = busy; }
+
+    $('sp-start-btn').addEventListener('click', async () => {
+        setBusy(true);
+        $('sp-log').innerHTML = '';
+        try {
+            message('特別レース登録馬の一覧を取得しています...');
+            const list = await RaceImport.post('/api/special_entries/list', {});
+            const races = list.races || [];
+            if (!races.length) { message('特別レース登録馬のレースはありませんでした。'); return; }
+            let added = 0, failed = 0;
+            // サーバーの処理時間の上限にかからないよう、4レースずつ取り込む
+            for (let i = 0; i < races.length; i += 4) {
+                const chunk = races.slice(i, i + 4);
+                message(`登録馬を取り込んでいます（${i + 1}〜${Math.min(i + 4, races.length)}／${races.length}レース）...`);
+                try {
+                    const res = await RaceImport.post('/api/special_entries/import', { races: chunk });
+                    log(res.results, res.failed);
+                    added += (res.results || []).reduce((n, r) => n + r.added, 0);
+                    failed += (res.failed || []).length;
+                } catch (e) {
+                    if (RaceImport.isFatalError(e.message)) throw e;
+                    log([], [chunk.map(r => `${r.venue}${r.num}R ${r.name}`).join('、') + `：${e.message}`]);
+                    failed += chunk.length;
+                }
+            }
+            message(`完了しました（${races.length}レース、${added}頭を追加` + (failed ? `、${failed}レース失敗` : '') + '）。');
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+
+    $('sp-upload-btn').addEventListener('click', async () => {
+        const files = $('sp-files').files;
+        if (!files.length) { message('ファイルを選択してください。', true); return; }
+        setBusy(true);
+        $('sp-log').innerHTML = '';
+        message('ファイルから取り込んでいます...');
+        try {
+            const form = new FormData();
+            Array.from(files).forEach(f => form.append('special_files', f));
+            const res = await fetch('/api/special_entries/upload', { method: 'POST', body: form });
+            const data = await res.json().catch(() => ({ error: `取り込みに失敗しました（HTTP ${res.status}）` }));
+            if (!res.ok || data.error) throw new Error(data.error || `取り込みに失敗しました（HTTP ${res.status}）`);
+            log(data.results, data.failed);
+            message('完了しました。');
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+})();
+</script>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>登録馬の出走レースから取り込み</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         Horses・Sire・DamシートにJRAのURLが登録されている馬について、JRAの競走馬情報のページの「出走レース」から、
