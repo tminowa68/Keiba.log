@@ -462,8 +462,7 @@
 
     <div class="race-list-container mt-20">
         <div class="race-list-header">
-            <h2>出走予定</h2>
-            <button id="toggle-entry-form-btn" class="btn-entry-toggle">レースに登録する</button>
+            <h2>次走予定</h2>
         </div>
 
         <table class="race-list-table">
@@ -475,7 +474,7 @@
                     <th>レース名</th>
                     <th>条件</th>
                     <th>コース</th>
-                    <th>ステータス</th>
+                    <th>登録</th>
                 </tr>
             </thead>
             <tbody>
@@ -484,29 +483,20 @@
                     <td>{{ r.date_label }}</td>
                     <td>{{ r.venue }}</td>
                     <td>{{ r.num }}R</td>
-                    <td><a href="/race_detail?date={{ r.date }}&venue={{ r.venue|urlencode }}&num={{ r.num }}">{{ r.name }}</a></td>
+                    <td class="nowrap">{{ r.title_html }}</td>
                     <td>{{ r.condition }}</td>
                     <td>{{ r.course }}</td>
                     <td>{{ r.status }}</td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="7" class="no-data-text">出走予定はありません。</td>
+                    <td colspan="7" class="no-data-text">次走予定はありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 
-    <div id="entry-form-section" class="entry-form-section hidden">
-        <h3>新規レース登録</h3>
-        <div class="form-group">
-            <label for="input-race-date">開催年月日を選択してください：</label>
-            <input type="date" id="input-race-date" class="form-date-input">
-        </div>
-        
-        <div id="available-races-section" class="available-races-section"></div>
-    </div>
 </section>
 {% endif %}
 
@@ -962,130 +952,6 @@ document.addEventListener("DOMContentLoaded", function() {
         resultDiv.innerHTML = '<strong class="inbreed-title">5代前までに発生したクロス（インブリード）</strong><span class="inbreed-none">なし</span>';
         resultDiv.style.display = 'block';
     }
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-    const toggleBtn = document.getElementById('toggle-entry-form-btn');
-    const formSection = document.getElementById('entry-form-section');
-    const dateInput = document.getElementById('input-race-date');
-    const racesSection = document.getElementById('available-races-section');
-    const horseName = "{{ horse[0] }}"; // テンプレートから馬名を取得
-
-    // 「レースに登録する」ボタンでフォームの表示/非表示を切り替え
-    toggleBtn.addEventListener('click', function() {
-        formSection.classList.toggle('hidden');
-    });
-
-    // 年月日が入力・変更された時の処理
-    dateInput.addEventListener('change', function() {
-        const selectedDate = dateInput.value;
-        if (!selectedDate) {
-            racesSection.innerHTML = '';
-            return;
-        }
-
-        racesSection.innerHTML = '<p class="status-msg-loading">出走可能なレースを検索中...</p>';
-
-        // 出走可能レースを取得するAPIを呼び出し
-        fetch(`/api/available_races?horse_name=${encodeURIComponent(horseName)}&date=${selectedDate}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    racesSection.innerHTML = `<p class="status-msg-error">エラー: ${data.error}</p>`;
-                    return;
-                }
-
-                if (!data.races || data.races.length === 0) {
-                    racesSection.innerHTML = `<p class="status-msg-empty">${data.message || '出走可能なレースが見つかりませんでした。'}</p>`;
-                    return;
-                }
-
-                // 出走可能レース一覧のテーブルを生成
-                let html = `
-                    <p class="class-badge-info">判定時点の賞金クラス: <strong>${data.current_class}</strong></p>
-                    <table class="available-races-table">
-                        <thead>
-                            <tr>
-                                <th>開催</th>
-                                <th>レース</th>
-                                <th>発走時刻</th>
-                                <th>レース名</th>
-                                <th>条件</th>
-                                <th>コース</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-
-                data.races.forEach(race => {
-                    html += `
-                        <tr>
-                            <td>${race.venue}</td>
-                            <td>${race.race_num}R</td>
-                            <td>${race.time || '-'}</td>
-                            <td><strong>${race.name}</strong></td>
-                            <td>${race.condition}</td>
-                            <td>${race.course}</td>
-                            <td>
-                                <button class="btn-submit-entry" 
-                                        data-venue="${race.venue}" 
-                                        data-num="${race.race_num}">
-                                    エントリー
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-
-                html += '</tbody></table>';
-                racesSection.innerHTML = html;
-
-                // 生成された各「エントリー」ボタンにクリックイベントを設定
-                document.querySelectorAll('.btn-submit-entry').forEach(btn => {
-                    btn.addEventListener('click', function() {
-                        const venue = this.getAttribute('data-venue');
-                        const raceNum = this.getAttribute('data-num');
-
-                        if (confirm(`${selectedDate} ${venue}${raceNum}R に「想定」でエントリーしますか？`)) {
-                            // 既存の save_entry エンドポイントへPOST
-                            fetch('/save_entry', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                    date: selectedDate,
-                                    venue: venue,
-                                    race_num: raceNum,
-                                    horse_name: horseName,
-                                    entry_type: 'estimated', // 想定として登録
-                                    horse_num: null,
-                                    horse_rank: null
-                                })
-                            })
-                            .then(res => res.json())
-                            .then(resData => {
-                                if (resData.status === 'success') {
-                                    alert('レースへのエントリーが完了しました！');
-                                    location.reload(); // 画面をリロードして出走履歴に反映
-                                } else {
-                                    alert('エントリーの保存に失敗しました。');
-                                }
-                            })
-                            .catch(err => {
-                                console.error(err);
-                                alert('通信エラーが発生しました。');
-                            });
-                        }
-                    });
-                });
-            })
-            .catch(err => {
-                console.error(err);
-                racesSection.innerHTML = '<p class="status-msg-error">データの取得中に通信エラーが発生しました。</p>';
-            });
-    });
 });
 
 function openHistoryModal() {

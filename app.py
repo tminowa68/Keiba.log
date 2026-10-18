@@ -329,11 +329,6 @@ except gspread.WorksheetNotFound:
     ws_changes = sh.add_worksheet(title="Changes", rows=100, cols=10)
     ws_changes.append_row(CHANGES_COLUMNS)
 
-try:
-    sh.worksheet("Entry")
-except gspread.WorksheetNotFound:
-    ws_entry = sh.add_worksheet(title="Entry", rows=100, cols=10)
-    ws_entry.append_row(["race_date", "venue", "race_num", "horse_name", "status", "horse_num", "rank"])
 
 # ==============================================================================
 # 共通ヘルパー関数群
@@ -1651,15 +1646,54 @@ RACE_SHEET_COLUMNS = ["レースID", "年月日", "場", "回", "日", "R", "レ
                       "クラス", "記号", "重量", "距離", "コース", "コース詳細", "発走時刻", "天候", "芝", "ダート",
                       "頭数", "1着本賞金", "2着本賞金", "3着本賞金", "4着本賞金", "5着本賞金", "JRAのURL"]
 RUNNER_SHEET_COLUMNS = ["レースID", "年月日", "場", "R", "レース名", "グレード", "区分", "年齢条件", "クラス",
-                        "記号", "距離", "コース", "馬場", "頭数", "着順", "枠", "馬番", "馬名", "馬ID", "性別",
+                        "記号", "距離", "コース", "馬場", "頭数", "着順", "枠", "馬番", "馬名", "馬ID", "登録", "性別",
                         "年齢", "斤量", "減量", "騎手", "タイム", "着差", "通過順", "上り", "馬体重", "増減",
                         "調教師", "人気", "本賞金"]
 RUNNER_COL = {name: i for i, name in enumerate(RUNNER_SHEET_COLUMNS)}
+# 成績シートの「登録」：想定・特別（特別レース登録馬）・確定。レース結果の行は確定。
+# 想定・特別・確定（枠順確定前）の記録の行は、レースIDの代わりに「E年月日場R」（例：E20261025京都11）を入れる
+ENTRY_RANK = {'想定': 1, '特別': 2, '確定': 3}
+
+def entry_key(race_date, venue, num):
+    return f"E{race_date.strftime('%Y%m%d')}{venue}{int(num):02d}"
+
+def is_entry_row_id(race_id):
+    return str(race_id or '').startswith('E')
 _result_book_keys = {}   # 年 → スプレッドシートのID（開くたびにファイルを検索しないよう覚えておく）
 _result_book_missing = {}  # 年 → 見つからなかった時刻（無いファイルを何度も探さないよう、しばらく覚えておく）
 RESULT_BOOK_MISSING_TTL = 600
 
+_runner_columns_ready = set()   # 「登録」の列を確認した成績シート（ファイルのID）
+
+def ensure_runner_entry_column(book):
+    """成績シートの馬IDの右に「登録」の列が無ければ追加し、記録されている行は全て「確定」にする（1回だけ）"""
+    if not book or book.id in _runner_columns_ready:
+        return
+    try:
+        ws = book.worksheet(RUNNER_SHEET)
+    except gspread.WorksheetNotFound:
+        _runner_columns_ready.add(book.id)
+        return
+    header = with_sheets_retry(ws.row_values, 1)
+    idx = RUNNER_COL['登録']
+    if len(header) > idx and header[idx] == '登録':
+        _runner_columns_ready.add(book.id)
+        return
+    if len(header) > idx - 1 and header[idx - 1] == '馬ID':
+        rows = len(with_sheets_retry(ws.col_values, 1))
+        ensure_columns(ws, len(header) + 1)
+        with_sheets_retry(ws.insert_cols, [['登録'] + ['確定'] * max(rows - 1, 0)], col=idx + 1,
+                          value_input_option='RAW')
+    _runner_columns_ready.add(book.id)
+
 def get_result_book(year, create=False):
+    """年ごとのレース結果のファイルを開く（成績シートに「登録」の列が無ければ追加する）"""
+    book = _open_result_book(year, create)
+    if book:
+        ensure_runner_entry_column(book)
+    return book
+
+def _open_result_book(year, create=False):
     """年ごとのレース結果のファイルを開く。無ければ create=True の時だけ作成し、Horse_Dataと同じ人に共有する。
     無くて作らない場合は None を返す"""
     year = int(year)
@@ -1754,7 +1788,7 @@ def runner_sheet_row(race, r):
     return [race['race_id'], race['date'].strftime('%Y%m%d'), race['venue'], race['num'], race['name'], race['grade'],
             '障害' if race['jump'] else '平地', race['category'], race['class'], race['rule'], race['distance'],
             race['surface'], going, race['runners_count'], r['place'], r['waku'], r['num'], r['name'], r['horse_id'],
-            r['sex'], r['age'], r['weight'], r['mark'], r['jockey'], r['time'], r['margin'], r['corners'], r['last'],
+            '確定', r['sex'], r['age'], r['weight'], r['mark'], r['jockey'], r['time'], r['margin'], r['corners'], r['last'],
             r['body_weight'], r['body_diff'], r['trainer'], r['pop'], r['prize']]
 
 def save_race_results(parsed_list, overwrite=False):
@@ -1793,14 +1827,19 @@ def save_race_results(parsed_list, overwrite=False):
             runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
             saved.append(label)
             saved_ids.add(race['race_id'])
-        if replace_ids:
+        # 結果を取り込んだレースの想定・特別登録などの記録（成績シート）も消す
+        entry_ids = {entry_key(p['race']['date'], p['race']['venue'], p['race']['num'])
+                     for p in items if p['race']['race_id'] in this_time}
+        if replace_ids or entry_ids:
             # 入れ替えるレースの古い行を消す（下の行から消して行番号がずれないようにする）
             # 同じレースの行は続いているため、続いている行はまとめて消す
-            for ws in (ws_race, ws_runner):
+            for ws, remove in ((ws_race, replace_ids), (ws_runner, replace_ids | entry_ids)):
+                if not remove:
+                    continue
                 ids = ws.col_values(1)
                 blocks = []
                 for idx in range(2, len(ids) + 1):
-                    if ids[idx - 1] in replace_ids:
+                    if ids[idx - 1] in remove:
                         if blocks and blocks[-1][1] == idx - 1:
                             blocks[-1][1] = idx
                         else:
@@ -1819,6 +1858,142 @@ def save_race_results(parsed_list, overwrite=False):
         # 出走した登録馬のクラス・最新レースを計算し直す
         update_class_for_runners([p for p in parsed_list if p['race']['race_id'] in saved_ids])
     return saved, skipped
+
+def entry_sheet_row(race, horse, status):
+    """想定・特別登録・確定（枠順確定前）の記録の成績シートの行"""
+    values = {'レースID': entry_key(race['date'], race['venue'], race['num']), '年月日': race['date'].strftime('%Y%m%d'),
+              '場': race['venue'], 'R': int(race['num']), 'レース名': race.get('name', ''), 'グレード': race.get('grade', ''),
+              '区分': '障害' if race.get('jump') else '平地', '年齢条件': race.get('category', ''),
+              'クラス': race.get('class', ''), '記号': race.get('marks', ''), '距離': race.get('distance', ''),
+              'コース': race.get('surface', ''), '馬名': horse['name'], '馬ID': horse.get('horse_id', ''),
+              '登録': status, '斤量': horse.get('weight', '')}
+    return [str(values.get(c, '')) for c in RUNNER_SHEET_COLUMNS]
+
+def save_entries(entries):
+    """想定・特別登録・確定（枠順確定前）を年_レース結果の成績シートに記録する。
+    entries：[{'race': {date, venue, num, name, grade, jump, category, class, marks, distance, surface},
+               'horses': [{'name', 'horse_id', 'weight'}], 'status': '想定'／'特別'／'確定'}]。
+    記録済みの馬は、登録の段階が進む場合だけ書き換える（確定を特別に戻さない）。結果を取り込み済みのレースは飛ばす。
+    レースごとの [{'label', 'added', 'updated', 'message'}] を返す"""
+    out = []
+    by_year = {}
+    for e in entries:
+        by_year.setdefault(e['race']['date'].year, []).append(e)
+    last_r, first_name, entry_c = RUNNER_COL['R'], RUNNER_COL['馬名'], RUNNER_COL['登録']
+    for year, items in sorted(by_year.items()):
+        ws_race, ws_runner = result_sheets(year, create=True)
+        keys, names = with_sheets_retry(ws_runner.batch_get, [f"A2:{col_letter(last_r)}",
+                                                              f"{col_letter(first_name)}2:{col_letter(entry_c)}"])
+        keys, names = list(keys), list(names)
+        results_done, recorded = set(), {}
+        for i, k in enumerate(keys):
+            k = list(k) + [''] * 4
+            if is_entry_row_id(k[0]):
+                n = list(names[i]) + [''] * 3 if i < len(names) else [''] * 3
+                recorded.setdefault(k[0], {})[n[0]] = (i + 2, n[2] or '確定')
+            elif k[0]:
+                results_done.add((k[1], k[2], str(k[3]).strip()))
+        updates, new_rows = [], []
+        for e in items:
+            race, status = e['race'], e['status']
+            label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R {race.get('name', '')}".strip()
+            if (race['date'].strftime('%Y%m%d'), race['venue'], str(int(race['num']))) in results_done:
+                out.append({'label': label, 'added': 0, 'updated': 0, 'message': 'レース結果を取り込み済み'})
+                continue
+            key = entry_key(race['date'], race['venue'], race['num'])
+            have = recorded.setdefault(key, {})
+            added = updated = 0
+            for h in e['horses']:
+                if h['name'] in have:
+                    row_no, old = have[h['name']]
+                    if ENTRY_RANK.get(status, 0) > ENTRY_RANK.get(old, 0) and row_no:
+                        updates.append({'range': f"{col_letter(entry_c)}{row_no}", 'values': [[status]]})
+                        have[h['name']] = (row_no, status)
+                        updated += 1
+                    continue
+                new_rows.append(entry_sheet_row(race, h, status))
+                have[h['name']] = (None, status)
+                added += 1
+            out.append({'label': label, 'added': added, 'updated': updated, 'message': ''})
+        if updates:
+            with_sheets_retry(ws_runner.batch_update, updates)
+        if new_rows:
+            with_sheets_retry(ws_runner.append_rows, new_rows, value_input_option='RAW')
+    return out
+
+def special_race_info(r):
+    """特別レース登録馬の一覧から読み取ったレース（日付は文字列でも可）を、記録用のレースの情報にする"""
+    race = dict(r)
+    race['date'] = r['date'] if isinstance(r['date'], date) else parse_full_date(r['date'])
+    return race
+
+JRA_ACCESS_T = "https://www.jra.go.jp/JRADB/accessT.html"
+
+@app.route('/api/special_entries/list', methods=['POST'])
+@login_required
+def api_special_entries_list():
+    """JRAの競馬メニューの「特別レース登録馬」から、レースの一覧を取得する"""
+    try:
+        races = RR.parse_special_list_page(fetch_jra_html(JRA_ACCESS_T, cname=RR.SPECIAL_LIST_CNAME))
+    except Exception as e:
+        return jsonify({'error': f"特別レース登録馬のページを取得できませんでした（{e}）"}), 400
+    for r in races:
+        r['date'] = r['date'].isoformat()
+    return jsonify({'races': races})
+
+@app.route('/api/special_entries/import', methods=['POST'])
+@login_required
+def api_special_entries_import():
+    """特別レース登録馬の各レースのページを取得し、登録馬を「特別」として成績シートに記録する（数レースずつ）"""
+    from concurrent.futures import ThreadPoolExecutor
+    races = [special_race_info(r) for r in (request.get_json(silent=True) or {}).get('races') or []]
+
+    def _fetch(race):
+        try:
+            return race, RR.parse_special_race_page(fetch_jra_html(JRA_ACCESS_T, cname=race['cname']))['horses'], None
+        except Exception as e:
+            return race, [], str(e)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        fetched = list(pool.map(_fetch, races))
+    failed = [f"{r['date'].month}/{r['date'].day} {r['venue']}{r['num']}R {r['name']}（{err}）" for r, _, err in fetched if err]
+    try:
+        saved = save_entries([{'race': r, 'horses': horses, 'status': '特別'} for r, horses, err in fetched if not err])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'results': saved, 'failed': failed})
+
+@app.route('/api/special_entries/upload', methods=['POST'])
+@login_required
+def api_special_entries_upload():
+    """特別レース登録馬のレースのページを保存したファイル（.mhtml／.html、複数可）から登録馬を記録する"""
+    entries, failed = [], []
+    for f in request.files.getlist('special_files'):
+        if not f or not f.filename:
+            continue
+        try:
+            page = RR.parse_special_race_page(_extract_html_from_upload(f.read()))
+            race = page['race']
+            if not page['horses']:
+                raise ValueError('登録馬が見つかりません（各レースの登録馬のページを指定してください）')
+            missing = [label for key, label in (('date', '年月日'), ('venue', '競馬場'), ('num', 'レース番号'))
+                       if not race.get(key)]
+            if missing:
+                raise ValueError('ページから' + '・'.join(missing) + 'を読み取れませんでした')
+            # レース名・条件などは、ページから読み取れなければ番組から補う
+            prog = find_program_race(race['date'], race['venue'], race['num']) or {}
+            info = {k: prog.get(k, '') for k in ('name', 'grade', 'jump', 'category', 'class', 'distance', 'surface')}
+            info['marks'] = prog.get('marks', '')
+            info.update({k: v for k, v in race.items() if v not in ('', None)})
+            entries.append({'race': info, 'horses': page['horses'], 'status': '特別'})
+        except Exception as e:
+            failed.append(f"{f.filename}（{e}）")
+    if not entries:
+        return jsonify({'error': '登録馬を読み取れませんでした。' + ' '.join(failed)}), 400
+    try:
+        saved = save_entries(entries)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'results': saved, 'failed': failed})
 
 def fetch_jra_html(url, cname=None):
     """JRAのページを取得してHTMLを返す（cname を指定すると、ページのボタンと同じようにPOSTで開く）"""
@@ -1909,6 +2084,7 @@ def runner_row_to_result(r):
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': int(prize) if prize.isdigit() else 0,
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
+        'entry': c('登録') or '確定', 'is_result': not is_entry_row_id(c('レースID')),
     }
 
 def collect_race_results(horses, until_year=None):
@@ -1938,8 +2114,8 @@ def collect_race_results(horses, until_year=None):
     for rows in row_lists:
         for row in rows:
             res = runner_row_to_result(row)
-            if not res:
-                continue
+            if not res or not res['is_result']:
+                continue   # 想定・特別登録などの記録はレース結果に含めない
             keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
             for key in keys:
                 found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
@@ -5236,6 +5412,48 @@ def migrate_pasture_sheet():
     ws.update(range_name='A1', values=rows)
     _pasture_columns_ready = True
 
+_entry_sheet_migrated = False
+
+def migrate_entry_sheet():
+    """廃止したEntryシートの今日以降のレースの記録を、年_レース結果の成績シートに移す（1回だけ。
+    移した後はシート名を「Entry_廃止」に変える）"""
+    global _entry_sheet_migrated
+    if _entry_sheet_migrated:
+        return
+    sh = gc.open(horse_data)
+    try:
+        ws = sh.worksheet("Entry")
+    except gspread.WorksheetNotFound:
+        _entry_sheet_migrated = True
+        return
+    today = datetime.now().date()
+    status_map = {'想定': '想定', '特別': '特別', '確定': '確定', '枠順確定前': '確定'}
+    groups = {}
+    for r in ws.get_all_values()[1:]:
+        r = list(r) + [''] * 5
+        d = parse_full_date(r[0])
+        if not d or d < today or not str(r[2]).strip().isdigit() or not r[3].strip():
+            continue
+        key = (d, r[1].strip(), int(r[2]), status_map.get(r[4].strip(), '想定'))
+        groups.setdefault(key, []).append(r[3].strip())
+    if groups:
+        ids = {display_name_of_row(h): RR.horse_id_from_url(h[H_JRA_URL] if len(h) > H_JRA_URL else '')
+               for h in get_all_horses()}
+        entries = []
+        for (d, venue, num, status), names in sorted(groups.items(), key=lambda x: ENTRY_RANK[x[0][3]]):
+            prog = find_program_race(d, venue, num) or {}
+            race = {k: prog.get(k, '') for k in ('name', 'grade', 'jump', 'category', 'class', 'marks', 'distance', 'surface')}
+            race.update({'date': d, 'venue': venue, 'num': num})
+            entries.append({'race': race, 'status': status,
+                            'horses': [{'name': n, 'horse_id': ids.get(n, '')} for n in names]})
+        save_entries(entries)
+    title = "Entry_廃止"
+    if any(w.title == title for w in sh.worksheets()):
+        title += datetime.now().strftime('_%Y%m%d%H%M')
+    ws.update_title(title)
+    getattr(sh, '_forget', lambda: None)()
+    _entry_sheet_migrated = True
+
 _migration_tried = {}   # 列の追加に失敗した時刻（失敗した場合は、しばらくやり直さない）
 MIGRATION_RETRY_SECONDS = 600
 
@@ -5244,7 +5462,8 @@ def require_changes_columns():
     if request.endpoint in (None, 'static'):
         return
     for key, ready, migrate in (('Changes', _changes_columns_ready, migrate_changes_sheet),
-                                ('放牧入厩', _pasture_columns_ready, migrate_pasture_sheet)):
+                                ('放牧入厩', _pasture_columns_ready, migrate_pasture_sheet),
+                                ('Entry', _entry_sheet_migrated, migrate_entry_sheet)):
         if ready or time.time() - _migration_tried.get(key, 0) < MIGRATION_RETRY_SECONDS:
             continue
         _migration_tried[key] = time.time()
@@ -6076,7 +6295,7 @@ def horse_detail_redirect(name):
 def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
-    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Entry", "Changes", "放牧入厩", "抹消", "美浦", "栗東"])
+    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes", "放牧入厩", "抹消", "美浦", "栗東"])
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
 
@@ -6085,33 +6304,12 @@ def horse_detail(name, active_tab):
         # 再読み込みするかホームに戻るかを選ぶ画面にする
         raise SheetNotReady(f"Horsesシートに『{name}』が見つかりません")
 
-    # 出走予定（Entryシートの今日以降のレース）。レース名・条件・コースは番組から
+    # 次走予定（成績シートの想定・特別・確定の記録）
     horse_races = []
     try:
-        today = datetime.now().date()
-        records = horse_sheet_values("Entry")
-        for row in records[1:]:
-            if len(row) < 4 or row[3] != name:
-                continue
-            r_date = parse_full_date(row[0])
-            if not r_date or r_date < today:
-                continue
-            r_num = int(row[2]) if str(row[2]).isdigit() else 0
-            race = find_program_race(r_date, row[1], r_num) if r_num else None
-            horse_races.append({
-                'sort_key': (r_date, r_num),
-                'date_label': format_date_jp(r_date, weekday=True),
-                'date': r_date.isoformat(),
-                'venue': row[1],
-                'num': r_num,
-                'name': (race['name'] or '-') if race else '-',
-                'condition': race['condition'] if race else '-',
-                'course': race['course'] if race else '-',
-                'status': entry_status_label(row[4] if len(row) > 4 else '') or '-',
-            })
-        horse_races.sort(key=lambda r: r['sort_key'])
+        horse_races = next_race_entries(horse[H_NAME], RR.horse_id_from_url(horse[H_JRA_URL] if len(horse) > H_JRA_URL else ''))
     except Exception as e:
-        print(f"スプレッドシート(Entry)の読み込みエラー: {e}")
+        print(f"次走予定の読み込みエラー: {e}")
 
     changes_history = []
     try:
@@ -6308,29 +6506,52 @@ def age_allowed(category, age):
         return True
     return age >= int(m.group(1)) if m.group(2) else age == int(m.group(1))
 
-# Entryシートの状態 → race_detailのタブ（「確定」は以前の記録で、枠順確定前と同じ）
+# race_detailのタブ：成績シートの「登録」（想定・特別・確定）と、確定のうち馬番の有無（枠順確定前／確定出馬表）
 ENTRY_STAGES = [('estimated', '想定'), ('special', '特別登録'), ('before_draw', '枠順確定前')]
-ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw', '枠順確定前': 'before_draw'}
+ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw'}
 ENTRY_STATUS_LABEL = {'特別': '特別登録', '確定': '枠順確定前'}
+STAGE_STATUS = {'estimated': '想定', 'special': '特別', 'before_draw': '確定', 'final': '確定'}
 
 def entry_status_label(status):
     return ENTRY_STATUS_LABEL.get(status, status)
 
-def read_entries(race_date, venue, num):
-    """Entryシートから、指定したレースにエントリーした馬の一覧を返す"""
-    entries = []
-    try:
-        rows = horse_sheet_values("Entry")[1:]
-    except Exception:
-        return entries
-    for row in rows:
-        if len(row) < 4 or parse_full_date(row[0]) != race_date or row[1] != venue:
+def runner_stage(r):
+    """成績シートの行の段階：レース結果か、確定で馬番がある行は確定出馬表（final）"""
+    if r['is_result'] or (r['entry'] == '確定' and str(r['horse_num']).strip()):
+        return 'final'
+    return ENTRY_STATUS_STAGE.get(r['entry'], 'estimated')
+
+def next_race_entries(horse_name, horse_id=''):
+    """次走予定：成績シートのこの馬の想定・特別・確定（枠順確定前）の記録。
+    そのレースの結果が取り込まれるか、同じレースの他の馬が先の段階（特別→確定など）に進んだ場合は表示しない"""
+    today = datetime.now().date()
+    out = []
+    for year in sorted({today.year, (today + timedelta(days=60)).year}):
+        book = get_result_book(year)
+        if not book:
             continue
-        if not str(row[2]).isdigit() or int(row[2]) != int(num):
-            continue
-        status = row[4].strip() if len(row) > 4 else ''
-        entries.append({'name': row[3], 'status': status, 'status_label': entry_status_label(status), 'stage': ENTRY_STATUS_STAGE.get(status, 'estimated')})
-    return entries
+        mine = [x for x in (runner_row_to_result(r) for r in query_runner_rows(book, [horse_id], [horse_name])) if x]
+        for e in mine:
+            if e['is_result'] or (horse_id and e['horse_id'] and e['horse_id'] != horse_id):
+                continue
+            day = e['date'].strftime('%Y%m%d')
+            same = [x for x in (runner_row_to_result(r) for r in query_sheet_rows(
+                        book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, [f"{col_letter(1)} = {_gviz_quote(day)}"],
+                        lambda r: len(r) > 1 and r[1] == day))
+                    if x and x['venue'] == e['venue'] and str(x['num']) == str(e['num'])]
+            rank = ENTRY_RANK.get(e['entry'], 0)
+            if any(x['is_result'] for x in same) or any(ENTRY_RANK.get(x['entry'], 0) > rank for x in same):
+                continue
+            title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'])
+            out.append({'sort_key': (e['date'], int(e['num']) if str(e['num']).isdigit() else 0),
+                        'date_label': format_date_jp(e['date'], weekday=True), 'date': e['date'].isoformat(),
+                        'venue': e['venue'], 'num': e['num'],
+                        'title_html': race_title_html(title, grade_rank, race_detail_url(e['date'], e['venue'], e['num'])),
+                        'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class']) if x),
+                        'course': f"{e['surface']}{e['distance']}" if e['distance'] else '',
+                        'status': entry_status_label(e['entry'])})
+    out.sort(key=lambda r: r['sort_key'])
+    return out
 
 def read_race_result(race_date, venue, num):
     """年_レース結果のファイルから、指定したレースの情報（レースシート）と出走馬（成績シート）を返す"""
@@ -6380,7 +6601,7 @@ def race_detail():
     race_date = parse_full_date(request.args.get('date') or '') or datetime.now().date()
     venue = request.args.get('venue', '')
     num = request.args.get('num', default=1, type=int)
-    prefetch_horse_sheets(["Horses", "Entry"])
+    prefetch_horse_sheets(["Horses"])
 
     # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
     # 指定された日・競馬場のまま表示する
@@ -6398,6 +6619,14 @@ def race_detail():
         print(f"レース結果の読み込みエラー: {e}")
         result_race, runners = None, []
     race = program_race or result_race
+    if not race and runners:
+        # 番組も結果も無いレース（特別登録などの記録だけがある）は、記録からレースの見出しを作る
+        e = runners[0]
+        dist = str(e['distance'])
+        race = {'name': e['name'], 'grade': e['grade'], 'num': f"{num}レース", 'race_num': num, 'jump': e['jump'],
+                'category': e['category'], 'class': e['class'], 'time': '',
+                'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class'], e['rule']) if x),
+                'course': f"{e['surface']} {int(dist):,}m" if dist.isdigit() else e['surface']}
     if race and not race.get('kai') and result_race:
         race = dict(race, kai=result_race['kai'], nichi=result_race['nichi'])
 
@@ -6417,20 +6646,25 @@ def race_detail():
                 'stable': '・'.join(x for x in (h[H_AREA] if len(h) > H_AREA else '',
                                                 h[H_STABLE] if len(h) > H_STABLE else '') if x)}
 
-    # 想定・特別登録・枠順確定前（Entryシート）：前の段階のタブには、後の段階の馬も表示する
-    entries = read_entries(race_date, venue, num) if race else []
+    # 想定・特別登録・枠順確定前（成績シートの登録）：その段階の馬がいるタブだけ表示し、後の段階の馬も一緒に表示する
     order = [key for key, _ in ENTRY_STAGES]
+    for r in runners:
+        r['stage'] = runner_stage(r)
+        r['registered'] = r['horse_name'] in horses
+    entries = [r for r in runners if r['stage'] != 'final']
     tabs = []
     for i, (key, label) in enumerate(ENTRY_STAGES):
-        horses_in_tab = [dict(e, **_horse_info(e['name'])) for e in entries if order.index(e['stage']) >= i]
-        if horses_in_tab:
-            tabs.append({'key': key, 'label': label, 'horses': horses_in_tab,
-                         # 次の段階に進める候補（この段階の馬）
-                         'candidates': [e['name'] for e in entries if e['stage'] == key]})
-    for r in runners:
-        r['registered'] = r['horse_name'] in horses
-    if runners:
-        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': runners})
+        if not any(e['stage'] == key for e in entries):
+            continue
+        tabs.append({'key': key, 'label': label,
+                     'horses': [dict(_horse_info(e['horse_name']), name=e['horse_name'], status=e['entry'],
+                                     status_label=entry_status_label(e['entry']), weight=e['weight'])
+                                for e in entries if order.index(e['stage']) >= i],
+                     # 次の段階に進める候補（この段階の馬）
+                     'candidates': [e['horse_name'] for e in entries if e['stage'] == key]})
+    finals = [r for r in runners if r['stage'] == 'final']
+    if finals:
+        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals})
     # 特別登録はレース名のある（特別）レースだけ
     for t in tabs:
         if t['key'] == 'estimated':
@@ -6441,7 +6675,7 @@ def race_detail():
     # 想定でエントリーできる馬（馬齢・クラスが合う、抹消されていない馬）
     available = []
     if program_race and session.get('login'):
-        entered = {e['name'] for e in entries}
+        entered = {r['horse_name'] for r in runners}
         for name, h in horses.items():
             if name in entered or str(h[H_STATUS] if len(h) > H_STATUS else '').strip() == '抹消':
                 continue
@@ -6461,32 +6695,23 @@ def race_detail():
 @app.route('/save_entry', methods=['POST'])
 @login_required
 def save_entry():
-    """Entryシートに想定・特別登録・枠順確定前のエントリーを記録する（同じレース・同じ馬の行があれば状態を更新）"""
+    """想定・特別登録・枠順確定前を年_レース結果の成績シートに記録する（記録済みの馬は段階が進む場合だけ書き換える）"""
     data = request.json or {}
     race_date = parse_full_date(data.get('date') or '')
     venue = data.get('venue')
     race_num = int(data.get('race_num'))
-    horse_names = data.get('horse_names') or [data.get('horse_name')]
-    horse_names = [n for n in horse_names if n]
-    status_label = {"estimated": "想定", "special": "特別", "before_draw": "枠順確定前",
-                    "final": "枠順確定前"}.get(data.get('entry_type'), "想定")
+    horse_names = [n for n in (data.get('horse_names') or [data.get('horse_name')]) if n]
+    status = STAGE_STATUS.get(data.get('entry_type'), '想定')
     if not race_date or not horse_names:
         return {"status": "error", "message": "レースまたは馬が指定されていません。"}, 400
     try:
-        ws_entry = gc.open(horse_data).worksheet("Entry")
-        records = ws_entry.get_all_values()
-        found = {}
-        for i, row in enumerate(records[1:], start=2):
-            if len(row) >= 4 and parse_full_date(row[0]) == race_date and row[1] == venue and \
-                    str(row[2]).strip().isdigit() and int(row[2]) == race_num:
-                found[row[3]] = i
-        updates = [{'range': f'E{found[n]}', 'values': [[status_label]]} for n in horse_names if n in found]
-        new_rows = [[race_date.isoformat(), venue, race_num, n, status_label, '', ''] for n in horse_names
-                    if n not in found]
-        if updates:
-            ws_entry.batch_update(updates)
-        if new_rows:
-            ws_entry.append_rows(new_rows)
+        prog = find_program_race(race_date, venue, race_num) or {}
+        race = {k: prog.get(k, '') for k in ('name', 'grade', 'jump', 'category', 'class', 'marks', 'distance', 'surface')}
+        race.update({'date': race_date, 'venue': venue, 'num': race_num})
+        ids = {display_name_of_row(h): RR.horse_id_from_url(h[H_JRA_URL] if len(h) > H_JRA_URL else '')
+               for h in get_all_horses()}
+        save_entries([{'race': race, 'status': status,
+                       'horses': [{'name': n, 'horse_id': ids.get(n, '')} for n in horse_names]}])
         return {"status": "success"}, 200
     except Exception as e:
         print(f"Entry save error: {e}")
@@ -7160,35 +7385,6 @@ def api_relatives():
 
     relatives = compute_relatives(horse_name, horse_birth_year, dam_name, dam_full_name, granddam_name, granddam_full_name)
     return jsonify({"relatives": relatives})
-
-@app.route('/api/available_races')
-def api_available_races():
-    horse_name = request.args.get('horse_name')
-    race_date = parse_full_date(request.args.get('date') or '')
-    if not horse_name or not race_date:
-        return {"error": "パラメータが不足しています。"}, 400
-
-    horse = next((h for h in get_all_horses() if len(h) > 0 and (h[0] == horse_name or row_matches_name(h, horse_name))), None)
-    if not horse:
-        return {"error": "馬が見つかりませんでした。"}, 404
-    current_class = horse_class_of(horse, race_date)
-    birth_year = date_year(horse[H_BIRTH]) if len(horse) > H_BIRTH else None
-    age = race_date.year - birth_year if birth_year else None
-
-    day = get_program_for_dates([race_date]).get(race_date, {})
-    if not day:
-        return {"races": [], "message": "指定された日の番組はありません（番組が取り込まれていない場合は「データ更新」の「開催日程（番組）インポート」から取り込んでください）。"}, 200
-
-    available_races = []
-    for venue, races in day.items():
-        for r_num, race in sorted(races.items()):
-            if race['jump'] or not class_allowed(race['class'], current_class) or not age_allowed(race['category'], age):
-                continue
-            available_races.append({
-                'venue': venue, 'race_num': r_num, 'name': race['name'] or '-',
-                'condition': race['condition'], 'course': race['course'], 'time': race['time']
-            })
-    return {"races": available_races, "current_class": current_class or '不明'}, 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001 ,use_reloader=False)
