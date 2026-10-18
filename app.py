@@ -1974,6 +1974,8 @@ def race_rank(name, grade, race_class):
         return ''
     if grade:
         return grade
+    if re.search(r'\d勝クラス', name):
+        return ''   # レース名に〇勝クラスとあれば格は付けない
     if race_class == 'オープン':
         return 'OP'
     return race_class if re.fullmatch(r'\d勝クラス', race_class or '') else ''
@@ -2014,6 +2016,9 @@ def race_title(name, grade='', race_class='', jump=False):
     特別戦は冠を除いてステークスなどを略し、格（G1〜G3・L・OP・〇勝クラス）を付ける。
     条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする"""
     if name:
+        cond = _CONDITION_RACE_RE.match(name)
+        if cond and not grade:
+            return (cond.group(1) or '') + cond.group(3), ''   # 「3歳以上1勝クラス」のような名前は条件戦と同じ表示
         return short_race_name(name), race_rank(name, grade, race_class)
     return ('障害' if jump else '') + (race_class or ''), ''
 
@@ -2039,6 +2044,8 @@ def parse_race_label(text):
     m = _RANK_SUFFIX_RE.match(name)
     if m:
         name, rank = m.group(1), m.group(2)
+    if re.search(r'\d勝クラス', name) and not re.match(r'(?:J・)?G\d|L$', rank):
+        rank = ''   # レース名に〇勝クラスとあれば格は表示しない
     cond = _CONDITION_RACE_RE.match(name)
     if cond and not rank:
         title = (cond.group(1) or '') + cond.group(3)
