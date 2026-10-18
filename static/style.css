@@ -2324,3 +2324,6 @@ td.col-last-race {
 }
 .grade-badge.grade-class { background: #78909c; }
 .grade-badge.grade-op { background: #6d4c41; }
+.weekly-empty a {
+    margin-left: 8px;
+}

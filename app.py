@@ -4701,8 +4701,7 @@ def weekly():
                            stables=get_stables_list(), stable=stable_filter,
                            date_for_input=base.strftime('%Y-%m-%d'),
                            prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
-                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'),
-                           import_status=get_import_status(), schedule_note=IMPORT_SCHEDULE_NOTE)
+                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
 
 
 @app.route('/add_horse', methods=['POST'])

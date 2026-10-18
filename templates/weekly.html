@@ -54,10 +54,6 @@
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
     {% with target_source='weekly', target_count=unregistered_count, target_label='未登録の馬をJRAから登録', target_date=date_for_input %}{% include "_auto_register.html" %}{% endwith %}
-    <details class="import-status-details" open>
-        <summary>JRAのページの更新状況</summary>
-        {% include "_import_status.html" %}
-    </details>
 </section>
 
 {% macro horse_cells(h) %}
@@ -144,7 +140,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の登録馬はありません。</p>
+    <p class="weekly-empty">この週の登録馬はまだ登録されていません。<br>通常、翌週の月曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -173,7 +169,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の抹消馬はありません。</p>
+    <p class="weekly-empty">この週の抹消馬はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -202,7 +198,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の放牧・入厩はありません。</p>
+    <p class="weekly-empty">この週の放牧・入厩はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 
@@ -233,7 +229,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     </table>
     </div>
     {% else %}
-    <p>この週の変更はありません。</p>
+    <p class="weekly-empty">この週の変更はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
 <script>
