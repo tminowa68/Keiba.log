@@ -1982,18 +1982,24 @@ def rest_label(before, after):
         text += "半月"
     return text
 
+SHORT_PASTURE_DAYS = 10   # 放牧から入厩までがこの日数以下の放牧は表示しない
+
 def pasture_note(pasture_history, start, end):
-    """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を「（放牧：8月3日　入厩：9月20日）」にする。
-    放牧は期間内で最初の放牧、入厩は期間内で最後の入厩（片方しか無ければその片方だけ）"""
-    in_range = lambda d: d and start < d and (end is None or d < end)
-    outs = sorted(p['out'] for p in pasture_history if in_range(p.get('out')))
-    ins = sorted(p['in'] for p in pasture_history if in_range(p.get('in')))
+    """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を
+    「（放牧：3月20日　入厩：4月10日／放牧：5月1日　入厩：6月1日）」にする。
+    放牧入厩シートの1行ごとに分けて表示し（片方しか無ければその片方だけ）、放牧から入厩までが10日以下のものは表示しない"""
+    in_range = lambda d: bool(d) and start < d and (end is None or d < end)
     parts = []
-    if outs:
-        parts.append(f"放牧：{outs[0].month}月{outs[0].day}日")
-    if ins:
-        parts.append(f"入厩：{ins[-1].month}月{ins[-1].day}日")
-    return f"（{'　'.join(parts)}）" if parts else ''
+    for p in sorted(pasture_history, key=lambda p: p.get('out') or p.get('in')):
+        out_date = p.get('out') if in_range(p.get('out')) else None
+        in_date = p.get('in') if in_range(p.get('in')) else None
+        if not out_date and not in_date:
+            continue
+        if out_date and in_date and (in_date - out_date).days <= SHORT_PASTURE_DAYS:
+            continue
+        texts = [f"{label}：{d.month}月{d.day}日" for label, d in (('放牧', out_date), ('入厩', in_date)) if d]
+        parts.append('　'.join(texts))
+    return f"（{'／'.join(parts)}）" if parts else ''
 
 def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=()):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
@@ -4377,9 +4383,10 @@ def weekly():
         try:
             for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
                 out_date, in_date = parse_full_date(cell(r, PS_OUT)), parse_full_date(cell(r, PS_IN))
-                if in_week(out_date):
+                # 「仮」の記録（実際の日付とは限らないもの）は表示しない
+                if in_week(out_date) and cell(r, PS_OUT_TENTATIVE) != '仮':
                     pasture.append({'date': out_date, 'name': cell(r, PS_NAME), 'type': '放牧'})
-                if in_week(in_date):
+                if in_week(in_date) and cell(r, PS_IN_TENTATIVE) != '仮':
                     # 入厩は元の状態も表示する（入厩前の状態が無い記録は、放牧日がある行なら放牧から）
                     before = cell(r, PS_BEFORE) or ('放牧' if out_date else '')
                     label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
