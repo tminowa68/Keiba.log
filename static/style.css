@@ -2265,3 +2265,14 @@ td.col-last-race {
     color: inherit;
     text-align: center;
 }
+.race-result-table tr.cancel-row td {
+    text-align: left;
+    background: #fdecea;
+    color: #b71c1c;
+    font-weight: bold;
+}
+.race-result-table tr.cancel-row td.year-cell {
+    background: #f7f7f7;
+    color: inherit;
+    text-align: center;
+}

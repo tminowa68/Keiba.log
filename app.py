@@ -192,6 +192,10 @@ HORSE_TO_PARENT_COLS = [(H_NAME, P_NAME), (H_NAME_EN, P_NAME_EN), (H_BIRTH, P_BI
 # Changesシートの列。「仮」はレースの結果から推定した日付（レースの前の木曜日）の記録に「仮」と入れる
 CHANGES_COLUMNS = ["年月日", "仮", "馬名", "項目", "旧", "新"]
 C_DATE, C_TENTATIVE, C_NAME, C_TYPE, C_OLD, C_NEW = range(len(CHANGES_COLUMNS))
+# 放牧入厩シート（「仮」は以前の記録で、実際の放牧・入厩の日付とは限らないもの）
+PASTURE_COLUMNS = ["放牧年月日", "仮", "馬名", "入厩年月日", "仮", "入厩前の状態"]
+PS_OUT, PS_OUT_TENTATIVE, PS_NAME, PS_IN, PS_IN_TENTATIVE, PS_BEFORE = range(len(PASTURE_COLUMNS))
+PASTURE_CONFIRMED_FROM = '20261013'   # 列の追加時に、これより前の日付には「仮」を付ける
 
 def changes_row(date_str, name, change_type, old='', new='', tentative=False):
     """Changesシートの1行を作る"""
@@ -1978,7 +1982,20 @@ def rest_label(before, after):
         text += "半月"
     return text
 
-def build_race_history(race_results, changes_history, birth_year=None):
+def pasture_note(pasture_history, start, end):
+    """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を「（放牧：8月3日　入厩：9月20日）」にする。
+    放牧は期間内で最初の放牧、入厩は期間内で最後の入厩（片方しか無ければその片方だけ）"""
+    in_range = lambda d: d and start < d and (end is None or d < end)
+    outs = sorted(p['out'] for p in pasture_history if in_range(p.get('out')))
+    ins = sorted(p['in'] for p in pasture_history if in_range(p.get('in')))
+    parts = []
+    if outs:
+        parts.append(f"放牧：{outs[0].month}月{outs[0].day}日")
+    if ins:
+        parts.append(f"入厩：{ins[-1].month}月{ins[-1].day}日")
+    return f"（{'　'.join(parts)}）" if parts else ''
+
+def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=()):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
@@ -2001,7 +2018,11 @@ def build_race_history(race_results, changes_history, birth_year=None):
         label = rest_label(before['date'], after['date'])
         if label:
             items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
-                                                   'date_label': '', 'text': f"休養：{label}"}))
+                                                   'date_label': '',
+                                                   'text': f"休養：{label}{pasture_note(pasture_history, before['date'], after['date'])}"}))
+    # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
+    for d in cancel_dates:
+        items.append(((d, 2, 0), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -3241,7 +3262,7 @@ def api_auto_register_targets():
             name = (name or '').strip()
             if name and name not in registered and name not in parents and name not in found:
                 found[name] = known or {}
-        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', C_DATE, C_NAME), ('放牧入厩', 0, 1), ('放牧入厩', 2, 1)):
+        for title, date_col, name_col in (('抹消', 0, 1), ('Changes', C_DATE, C_NAME), ('放牧入厩', PS_OUT, PS_NAME), ('放牧入厩', PS_IN, PS_NAME)):
             try:
                 for r in sh.worksheet(title).get_all_values()[1:]:
                     d = parse_full_date(r[date_col] if len(r) > date_col else '')
@@ -4355,14 +4376,14 @@ def weekly():
 
         try:
             for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
-                out_date, in_date = parse_full_date(cell(r, 0)), parse_full_date(cell(r, 2))
+                out_date, in_date = parse_full_date(cell(r, PS_OUT)), parse_full_date(cell(r, PS_IN))
                 if in_week(out_date):
-                    pasture.append({'date': out_date, 'name': cell(r, 1), 'type': '放牧'})
+                    pasture.append({'date': out_date, 'name': cell(r, PS_NAME), 'type': '放牧'})
                 if in_week(in_date):
-                    # 入厩は元の状態も表示する（D列が無い記録は、放牧日がある行なら放牧から）
-                    before = cell(r, 3) or ('放牧' if out_date else '')
+                    # 入厩は元の状態も表示する（入厩前の状態が無い記録は、放牧日がある行なら放牧から）
+                    before = cell(r, PS_BEFORE) or ('放牧' if out_date else '')
                     label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
-                    pasture.append({'date': in_date, 'name': cell(r, 1), 'type': label})
+                    pasture.append({'date': in_date, 'name': cell(r, PS_NAME), 'type': label})
         except gspread.WorksheetNotFound:
             pass
     except SheetNotReady:
@@ -4664,33 +4685,30 @@ def record_pasture_changes(sh, changes, today_str):
                if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
     if not changes:
         return
-    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", ["放牧年月日", "馬名", "入厩年月日", "入厩前の状態"])
+    migrate_pasture_sheet()
+    ws_pasture = get_or_create_worksheet(sh, "放牧入厩", PASTURE_COLUMNS)
     pasture_data = ws_pasture.get_all_values()
-    # D列：入厩した時の元の状態（早期→入厩・放牧→入厩を週間レポートに表示するため）
-    ensure_columns(ws_pasture, 4)
-    header = pasture_data[0] if pasture_data else []
-    if len(header) < 4 or not header[3]:
-        ws_pasture.update(range_name='D1', values=[['入厩前の状態']])
 
     append_rows, cell_updates = [], []
     for horse_name, old_status, new_status in changes:
         if new_status == '放牧':
-            append_rows.append([today_str, horse_name, ''])
+            append_rows.append([today_str, '', horse_name, '', '', ''])
             continue
         # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）
         open_row_idx = None
         for idx in range(len(pasture_data) - 1, 0, -1):
             prow = pasture_data[idx]
-            p_name = prow[1] if len(prow) > 1 else ''
-            p_checkin = prow[2] if len(prow) > 2 else ''
+            p_name = prow[PS_NAME] if len(prow) > PS_NAME else ''
+            p_checkin = prow[PS_IN] if len(prow) > PS_IN else ''
             if p_name == horse_name and not p_checkin:
                 open_row_idx = idx
                 break
         if open_row_idx is not None:
-            cell_updates.append({'range': f'C{open_row_idx + 1}:D{open_row_idx + 1}',
-                                 'values': [[today_str, old_status]]})
+            row_no = open_row_idx + 1
+            cell_updates.append({'range': f'{col_letter(PS_IN)}{row_no}:{col_letter(PS_BEFORE)}{row_no}',
+                                 'values': [[today_str, '', old_status]]})
         else:
-            append_rows.append(['', horse_name, today_str, old_status])
+            append_rows.append(['', '', horse_name, today_str, '', old_status])
 
     if cell_updates:
         ws_pasture.batch_update(cell_updates)
@@ -4763,6 +4781,41 @@ def migrate_changes_sheet():
     ws.update(range_name='A1', values=rows)
     _changes_columns_ready = True
 
+_pasture_columns_ready = False
+
+def migrate_pasture_sheet():
+    """放牧入厩シートの放牧年月日・入厩年月日の右に「仮」の列を追加する（1回だけ。実行前にシートを複製して残す）。
+    20261013より前の日付には「仮」を付ける"""
+    global _pasture_columns_ready
+    if _pasture_columns_ready:
+        return
+    try:
+        sh = gc.open(horse_data)
+        ws = sh.worksheet("放牧入厩")
+    except gspread.WorksheetNotFound:
+        _pasture_columns_ready = True
+        return
+    except Exception:
+        return
+    data = ws.get_all_values()
+    if data and len(data[0]) > 1 and data[0][1] == '仮':
+        _pasture_columns_ready = True
+        return
+    sh.duplicate_sheet(ws.id, new_sheet_name=f"放牧入厩_移行前_{datetime.now().strftime('%Y%m%d%H%M')}")
+
+    def _tentative(value):
+        d = parse_full_date(value)
+        return '仮' if d and d.strftime('%Y%m%d') < PASTURE_CONFIRMED_FROM else ''
+
+    rows = [PASTURE_COLUMNS]
+    for r in data[1:]:
+        r = list(r) + [''] * 4
+        rows.append([r[0], _tentative(r[0]), r[1], r[2], _tentative(r[2]), r[3]] + [c for c in r[4:] if c])
+    ensure_columns(ws, len(PASTURE_COLUMNS))
+    ws.clear()
+    ws.update(range_name='A1', values=rows)
+    _pasture_columns_ready = True
+
 @app.before_request
 def require_changes_columns():
     if request.endpoint not in (None, 'static') and not _changes_columns_ready:
@@ -4770,6 +4823,11 @@ def require_changes_columns():
             migrate_changes_sheet()
         except Exception as e:
             print(f"Changesシートの列の追加に失敗しました: {e}")
+    if request.endpoint not in (None, 'static') and not _pasture_columns_ready:
+        try:
+            migrate_pasture_sheet()
+        except Exception as e:
+            print(f"放牧入厩シートの列の追加に失敗しました: {e}")
 
 @app.before_request
 def require_name_columns():
@@ -5642,6 +5700,30 @@ def horse_detail(name, active_tab):
     except Exception:
         pass
 
+    # 出走履歴に表示する放牧・入厩（「仮」でないもの）と、JRAの登録の抹消
+    pasture_history, cancel_dates = [], []
+    if active_tab == 'races':
+        try:
+            sh = gc.open(horse_data)
+            for r in sh.worksheet("放牧入厩").get_all_values()[1:]:
+                r = list(r) + [''] * len(PASTURE_COLUMNS)
+                if r[PS_NAME].strip() != name:
+                    continue
+                out_date = None if r[PS_OUT_TENTATIVE].strip() == '仮' else parse_full_date(r[PS_OUT])
+                in_date = None if r[PS_IN_TENTATIVE].strip() == '仮' else parse_full_date(r[PS_IN])
+                if out_date or in_date:
+                    pasture_history.append({'out': out_date, 'in': in_date})
+        except Exception as e:
+            print(f"放牧入厩シートの読み込みエラー: {e}")
+        try:
+            for r in gc.open(horse_data).worksheet("抹消").get_all_values()[1:]:
+                if len(r) > 1 and r[1].strip() == name:
+                    d = parse_full_date(r[0])
+                    if d:
+                        cancel_dates.append(d)
+        except Exception as e:
+            print(f"抹消シートの読み込みエラー: {e}")
+
     sire_info, dam_info = {"line1": "不明", "line2": "不明"}, {"line3": "不明", "line4": "不明"}
     try:
         sh = gc.open(horse_data)
@@ -5715,7 +5797,8 @@ def horse_detail(name, active_tab):
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
-    race_history = build_race_history(race_results, changes_history, base_birth_year)
+    race_history = build_race_history(race_results, changes_history, base_birth_year,
+                                      pasture_history, cancel_dates)
 
     return render_template('horse_detail.html', 
                            horse=horse, 

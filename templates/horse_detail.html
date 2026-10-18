@@ -418,8 +418,8 @@
             <tbody>
                 {% for r in race_history %}
                 {% set year_start = ' year-start' if r.year_rowspan else '' %}
-                {% if r.kind in ('change', 'rest') %}
-                <tr class="{{ 'rest-row' if r.kind == 'rest' else 'transfer-row' }}{{ year_start }}">
+                {% if r.kind in ('change', 'rest', 'cancel') %}
+                <tr class="{{ {'rest': 'rest-row', 'cancel': 'cancel-row'}.get(r.kind, 'transfer-row') }}{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="bl" colspan="18">{{ r.text }}</td>
