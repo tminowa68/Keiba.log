@@ -2223,7 +2223,44 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         i = j
     return history
 
-RACE_NAME_ABBREVIATIONS = (('ステークス', 'Ｓ'), ('カップ', 'Ｃ'), ('トロフィー', 'Ｔ'))
+# レース名の表示の変換は、Horse_Dataの「レース名変換表」シートで管理する（無ければ下の初期値で作成する）。
+# 一致：「部分」はレース名の中の変換前の文字を変換後に置き換え、「完全」はレース名（冠を除いたもの）全体が
+# 変換前と同じ場合に変換後にする。完全一致の変換を先に行い、続けて部分一致の変換を表の上から順に行う
+RACE_NAME_SHEET = "レース名変換表"
+RACE_NAME_SHEET_COLUMNS = ["変換前", "変換後", "一致", "メモ"]
+RACE_NAME_DEFAULT_RULES = [["ステークス", "Ｓ", "部分", ""], ["カップ", "Ｃ", "部分", ""], ["トロフィー", "Ｔ", "部分", ""]]
+RACE_NAME_RULES_TTL = 300
+_race_name_rules = {}
+
+def race_name_rules():
+    """レース名変換表の (完全一致の変換 {変換前: 変換後}, 部分一致の変換 [(変換前, 変換後)])。しばらくの間は覚えておく"""
+    cached = _race_name_rules.get('rules')
+    if cached and time.time() - cached[0] < RACE_NAME_RULES_TTL:
+        return cached[1]
+    rows = RACE_NAME_DEFAULT_RULES
+    try:
+        sh = gc.open(horse_data)
+        try:
+            rows = sh.worksheet(RACE_NAME_SHEET).get_all_values()[1:]
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=RACE_NAME_SHEET, rows=100, cols=len(RACE_NAME_SHEET_COLUMNS))
+            ws.update(range_name='A1', values=[RACE_NAME_SHEET_COLUMNS] + RACE_NAME_DEFAULT_RULES)
+    except Exception as e:
+        print(f"レース名変換表を読み込めませんでした: {e}")
+        if cached:
+            return cached[1]
+    exact, partial = {}, []
+    for r in rows:
+        r = [str(c).strip() for c in r] + [''] * 3
+        if not r[0]:
+            continue
+        if r[2] == '完全':
+            exact[r[0]] = r[1]
+        else:
+            partial.append((r[0], r[1]))
+    rules = (exact, partial)
+    _race_name_rules['rules'] = (time.time(), rules)
+    return rules
 
 def strip_race_name_prefix(name):
     """レース名に空白があれば、その前（「農林水産省賞典」「サンケイスポーツ賞」などの冠）を取り除く"""
@@ -2231,9 +2268,15 @@ def strip_race_name_prefix(name):
     return parts[-1] if parts else ''
 
 def short_race_name(name):
-    """レース名の冠（空白より前）を取り除き、「ステークス」「カップ」「トロフィー」を「Ｓ」「Ｃ」「Ｔ」にする"""
-    name = strip_race_name_prefix(name)
-    for long, short in RACE_NAME_ABBREVIATIONS:
+    """レース名の表示：冠（空白より前）を取り除き、レース名変換表で変換する（「ステークス」を「Ｓ」にするなど）"""
+    exact, partial = race_name_rules()
+    full = str(name or '').strip()
+    if full in exact:
+        return exact[full]
+    name = strip_race_name_prefix(full)
+    if name in exact:
+        return exact[name]
+    for long, short in partial:
         name = name.replace(long, short)
     return name
 
