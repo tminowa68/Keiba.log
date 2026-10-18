@@ -104,10 +104,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <td class="nowrap" data-col="race">{{ p.venue_num }}</td>
             <td class="nowrap" data-col="race">{{ p.title_html }}</td>
             {{ place_cell(p.place, 'race', 'br') }}
-            <td class="num nowrap" data-col="prize">{{ "{:,}".format(h.total) if h.total else '' }}</td>
+            <td class="num nowrap bl br" data-col="prize">{{ "{:,}".format(h.total) if h.total else '' }}</td>
 {%- endmacro %}
-{% macro last_race_th() %}<th colspan="4" class="bl br" data-col="race">最新レース</th><th data-col="prize">総本賞金</th>{% endmacro %}
-{% macro last_race_th2() %}<th class="bl" data-col="race">日付</th><th data-col="race">開催</th><th data-col="race">レース名</th><th class="br" data-col="race">着順</th><th data-col="prize">（万円）</th>{% endmacro %}
+{% macro last_race_th() %}<th colspan="4" class="bl br" data-col="race">最新レース</th><th class="bl br" data-col="prize">総本賞金</th>{% endmacro %}
+{% macro last_race_th2() %}<th class="bl" data-col="race">日付</th><th data-col="race">開催</th><th data-col="race">レース名</th><th class="br" data-col="race">着順</th><th class="bl br" data-col="prize">（万円）</th>{% endmacro %}
 
 {# 主な実績：年｜レース名｜着順 #}
 {% macro best_cells(text, col='') %}{% set p = text|race_parts(True) %}
