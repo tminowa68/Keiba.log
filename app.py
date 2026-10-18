@@ -1955,12 +1955,13 @@ def trainer_label(name, stables):
     return str(name or '').strip()
 
 def rest_label(before, after):
-    """2つのレースの間隔が中10週以上なら「2ヶ月半」のような休養の期間を返す（中13週は3ヶ月、中15週は3ヶ月半。
-    1週に満たない日数は切り捨てる）。中10週未満なら空文字"""
+    """2つのレースの間隔が中10週以上なら「2ヶ月半」のような休養の期間を返す。中2週ごとに半月ずつ増やす
+    （中10・11週は2ヶ月半、中12・13週は3ヶ月、中14・15週は3ヶ月半。1週に満たない日数は切り捨てる）。
+    中10週未満なら空文字"""
     interval_weeks = (after - before).days // 7 - 1   # 中○週
     if interval_weeks < 10:
         return ''
-    half_months = int((interval_weeks + 1) * 7 / 30.44 * 2)
+    half_months = interval_weeks // 2
     return f"{half_months // 2}ヶ月" + ('半' if half_months % 2 else '')
 
 def build_race_history(race_results, changes_history, birth_year=None):
