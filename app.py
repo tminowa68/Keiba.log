@@ -2259,21 +2259,24 @@ def race_label(r):
     else:
         name = ('障害' if r.get('jump') else '') + f"{r['category']}{r['class']}"
     # 牝馬限定・別定・ハンデのマーク（例：天皇賞（秋）(G1)[ハンデ]）
-    name += ''.join(f"[{m}]" for m in race_mark_list(r.get('rule'), r.get('weight_rule')))
+    name += ''.join(f"[{m}]" for m in race_mark_list(r.get('rule'), r.get('weight_rule'), r.get('name')))
     return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
 
-def race_mark_list(marks, weight_rule):
-    """レース名に付けるマーク：牝馬限定なら「牝」、重量が別定・ハンデならその重量（定量・馬齢は付けない）"""
+def race_mark_list(marks, weight_rule, name=''):
+    """レース名に付けるマーク：牝馬限定なら「牝」、九州産馬限定（記号かレース名に「九州産」）なら「九州」、
+    重量が別定・ハンデならその重量（定量・馬齢は付けない）"""
     out = ['牝'] if is_filly_only(marks) else []
+    if '九州産' in str(marks or '') + str(name or ''):
+        out.append('九州')
     if str(weight_rule or '').strip() in ('別定', 'ハンデ'):
         out.append(str(weight_rule).strip())
     return out
 
-def race_marks_html(marks, weight_rule=''):
-    """牝馬限定・別定・ハンデのマーク（marks がマークの一覧ならそのまま使う）"""
+def race_marks_html(marks, weight_rule='', name=''):
+    """牝馬限定・九州産馬限定・別定・ハンデのマーク（marks がマークの一覧ならそのまま使う）"""
     from markupsafe import Markup
-    items = marks if isinstance(marks, list) else race_mark_list(marks, weight_rule)
-    cls = {'牝': 'race-mark-filly', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
+    items = marks if isinstance(marks, list) else race_mark_list(marks, weight_rule, name)
+    cls = {'牝': 'race-mark-filly', '九州': 'race-mark-kyushu', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
     return Markup(''.join(f' <span class="race-mark {cls.get(m, "")}">{m}</span>' for m in items))
 
 app.jinja_env.globals['race_marks'] = race_marks_html
@@ -2326,6 +2329,8 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
     条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする。
     地方のレース（nar=True）は、すべてのレースにクラス（重賞はグレード）を付ける"""
     if nar:
+        name = re.sub(r'\s*九州産$', '', str(name or '')) or name   # 九州産は「九州」のマークで表す
+        name = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
         # 地方のレースは、レース名にクラスの表記が無い場合だけクラスを付ける（重賞はグレード）
         rank = grade or ('' if RR.nar_name_has_class(name, race_class) else nar_class_mark(race_class))
         return (short_race_name(name), rank) if name else (rank, '')
@@ -2355,8 +2360,8 @@ def parse_race_label(text):
             return None
         y, race_date, venue, num = parts[0], None, '', ''
     rank = ''
-    mm = re.match(r'^(.*?)((?:\[(?:牝|別定|ハンデ)\])*)$', name)
-    name, marks = mm.group(1), re.findall(r'\[(牝|別定|ハンデ)\]', mm.group(2))
+    mm = re.match(r'^(.*?)((?:\[(?:牝|九州|別定|ハンデ)\])*)$', name)
+    name, marks = mm.group(1), re.findall(r'\[(牝|九州|別定|ハンデ)\]', mm.group(2))
     m = _RANK_SUFFIX_RE.match(name)
     if m:
         name, rank = m.group(1), m.group(2)
@@ -2420,7 +2425,7 @@ def history_race_title(r):
     """出走履歴などのレース名（race_detailへのリンク）と、格・牝馬限定・別定・ハンデのマーク（この順）"""
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
     return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']),
-                           race_mark_list(r.get('rule'), r.get('weight_rule')))
+                           race_mark_list(r.get('rule'), r.get('weight_rule'), r.get('name')))
 
 def add_race_weight_rules(results):
     """出走成績にレースシートの重量（馬齢・定量・別定・ハンデ）を付ける（成績シートには重量の列が無いため）"""
@@ -2450,7 +2455,7 @@ def add_race_weight_rules(results):
 JRA_AREAS = ('美浦', '栗東')
 
 def chiho_horse_names():
-    """マル地の馬名の集合：Changesシートに地方抹消・再転入、または地方の厩舎（「川崎・〇〇」など）からの転厩の記録があり、
+    """マル地の馬名の集合：Changesシートに再転入、または地方の厩舎（「川崎・〇〇」など）からの転厩の記録があり、
     Horsesシートの拠点が美浦・栗東の馬（1回の画面の処理の中では覚えておく）"""
     from flask import has_request_context
     if has_request_context() and '_chiho_names' in g.__dict__:
@@ -2462,7 +2467,8 @@ def chiho_horse_names():
             c = list(c) + [''] * len(CHANGES_COLUMNS)
             kind, old = c[C_TYPE].strip(), c[C_OLD].strip()
             area = old.split('・', 1)[0] if '・' in old else ''
-            if kind in ('地方抹消', '再転入') or (kind == '転厩' and area and area not in JRA_AREAS):
+            # 地方抹消は、JRA所属のまま交流競走に出走した馬にも記録されるため、マル地の判定には使わない
+            if kind == '再転入' or (kind == '転厩' and area and area not in JRA_AREAS):
                 nar.add(c[C_NAME].strip())
         if nar:
             for r in horse_sheet_values("Horses")[1:]:
@@ -2574,6 +2580,12 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         # 「仮」の記録（レースの結果から推定した日付）は日付を表示しない
         tentative = str(c.get('仮', '')).strip() == '仮'
         if kind == '地方抹消':
+            # JRA所属のまま地方の交流競走に出走した後の地方抹消は表示しない
+            # （抹消の日までで最後の地方のレースに、JRA所属として出走していた場合）
+            last_nar = max((r for r in race_results if r.get('nar') and r['date'] <= d), key=lambda r: r['date'],
+                           default=None)
+            if last_nar and last_nar.get('affiliation') == 'JRA':
+                continue
             items.append(((d, 2, 1), {'kind': 'cancel', 'date': d, 'tentative': tentative, 'date_label': '',
                                       'text': '地方競馬登録を抹消'}))
             continue
@@ -7417,7 +7429,7 @@ def next_race_entries(horse_name, horse_id=''):
                 continue
             title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'], e.get('nar'))
             prog = find_program_race(e['date'], e['venue'], e['num']) if str(e['num']).isdigit() else None
-            marks = race_mark_list(e['rule'] or (prog or {}).get('marks'), (prog or {}).get('weight_rule'))
+            marks = race_mark_list(e['rule'] or (prog or {}).get('marks'), (prog or {}).get('weight_rule'), e['name'])
             out.append({'sort_key': (e['date'], int(e['num']) if str(e['num']).isdigit() else 0),
                         'date_label': format_month_day(e['date']), 'date': e['date'].isoformat(),
                         'venue': e['venue'], 'num': e['num'],
