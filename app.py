@@ -4515,7 +4515,13 @@ def import_trainer_page(html_text):
         added, status_changed, filled, failed = [], [], [], []
         pasture_changes = []
         changes_rows, change_msgs = [], []
-        restored = []  # 抹消になっていたが管理馬一覧に載っていた馬
+        restored = []  # 抹消になっていたが管理馬一覧に載っていた馬（抹消の記録が誤り）
+        reregistered = []  # 再登録した馬（Changesに再登録の記録がある。抹消の記録は残す）
+        try:
+            reregistered_names = {r[C_NAME].strip() for r in horse_sheet_values("Changes")[1:]
+                                  if len(r) > C_TYPE and r[C_TYPE].strip() == '再登録'}
+        except Exception:
+            reregistered_names = set()
 
         for h in parsed_horses:
             name = h['name']
@@ -4550,15 +4556,20 @@ def import_trainer_page(html_text):
             # 状態（I列）の更新
             current = row[H_STATUS].strip()
             if current == '抹消':
-                # 管理馬一覧に載っている＝現役なので、抹消は誤り。一覧の内容から状態を決め直す
+                # 管理馬一覧に載っている＝現役。再登録した馬は抹消の後に再び登録された馬、それ以外は抹消が誤り。
+                # 一覧の内容から状態を決め直す
                 new_status = resolve_trainer_page_status('', h)
-                restored.append(name)
+                if name in reregistered_names:
+                    reregistered.append(name)
+                else:
+                    restored.append(name)
             else:
                 new_status = resolve_trainer_page_status(current, h)
             if new_status != current:
                 row[H_STATUS] = new_status
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
-                pasture_changes.append((name, current, new_status))
+                if current != '抹消' or name in reregistered_names:
+                    pasture_changes.append((name, current, new_status))
 
             # 転厩：管理馬一覧の調教師（一致する厩舎が無ければリンク先の調教師名）と拠点・厩舎が異なる場合
             new_stable = None
@@ -4630,6 +4641,8 @@ def import_trainer_page(html_text):
             messages.append("状態更新：" + "、".join(status_changed))
         if restored:
             messages.append("抹消を解除（管理馬一覧に載っているため）：" + "、".join(restored))
+        if reregistered:
+            messages.append("再登録後の状態を設定：" + "、".join(reregistered))
         if change_msgs:
             messages.append("変更（Changesシートに記録）：" + "、".join(change_msgs))
         if filled:
@@ -4936,7 +4949,7 @@ def weekly():
                 if in_week(in_date) and cell(r, PS_IN_TENTATIVE) != '仮':
                     # 入厩は元の状態も表示する（入厩前の状態が無い記録は、放牧日がある行なら放牧から）
                     before = cell(r, PS_BEFORE) or ('放牧' if out_date else '')
-                    label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
+                    label = f"{before}→入厩" if before in ('放牧', '早期', '抹消') else '入厩'
                     pasture.append({'date': in_date, 'name': cell(r, PS_NAME), 'type': label})
         except gspread.WorksheetNotFound:
             pass
@@ -5328,8 +5341,9 @@ def record_pasture_changes(sh, changes, today_str):
     """複数頭の放牧／入厩の切り替えをまとめて放牧入厩シートに記録する。
     Googleの1分あたりの読み書き回数の上限にかからないよう、読み込み1回・書き込みは最大2回にまとめる。
     changes: [(馬名, 旧状態, 新状態), ...]"""
+    # 抹消→放牧／入厩は、再登録した馬（管理馬一覧に載っていた抹消の馬は、誤った抹消なら記録しない）
     changes = [(n, o, nw) for n, o, nw in changes
-               if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
+               if o in ('放牧', '入厩', '早期', '抹消') and nw in ('放牧', '入厩')]
     if not changes:
         return
     migrate_pasture_sheet()
@@ -5341,9 +5355,10 @@ def record_pasture_changes(sh, changes, today_str):
         if new_status == '放牧':
             append_rows.append([today_str, '', horse_name, '', '', ''])
             continue
-        # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）
+        # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）。
+        # 抹消からの入厩（再登録）は、抹消前の放牧の行には入れない
         open_row_idx = None
-        for idx in range(len(pasture_data) - 1, 0, -1):
+        for idx in range(len(pasture_data) - 1, 0, -1) if old_status != '抹消' else ():
             prow = pasture_data[idx]
             p_name = prow[PS_NAME] if len(prow) > PS_NAME else ''
             p_checkin = prow[PS_IN] if len(prow) > PS_IN else ''
