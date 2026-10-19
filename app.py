@@ -3387,17 +3387,26 @@ def search_nar_horse(row):
     return cands[0]['url'], fetch_nar_html(cands[0]['url'])
 
 def nar_horse_races(horse_url):
-    """JRAの競走馬（Horsesシートの馬）の地方競馬の出走レースを地方競馬情報サイトから探す。
+    """JRAの競走馬（Horses・Sire・Damシートの馬）の地方競馬の出走レースを地方競馬情報サイトから探す。
+    見つかった馬の競走馬情報のページ（k_activeCode=1）のURLをそのシートのNARのURLに書き込む。
     地方競馬登録抹消の日をChangesシートに「地方抹消」として、地方競馬情報サイトの馬主が違えば
     「馬主変更」（日付は地方抹消の日、仮）として記録する。{'races': [...], 'messages': [...]} を返す"""
     horse_id = RR.horse_id_from_url(horse_url)
     sh = gc.open(horse_data)
-    rows = horse_sheet_values("Horses")
-    row_no, row = next(((i, r) for i, r in enumerate(rows[1:], start=2)
-                        if horse_id and RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else '') == horse_id),
-                       (None, None))
+    title = row_no = row = None
+    for t, url_col, gender in (('Horses', H_JRA_URL, None), ('Sire', P_JRA_URL, '牡'), ('Dam', P_JRA_URL, '牝')):
+        try:
+            rows = horse_sheet_values(t)
+        except gspread.WorksheetNotFound:
+            continue
+        found = next(((i, r) for i, r in enumerate(rows[1:], start=2) if horse_id
+                      and RR.horse_id_from_url(r[url_col] if len(r) > url_col else '') == horse_id), None)
+        if found:
+            # Sire・Damの行はHorsesシートの列の並びにして扱う
+            title, row_no, row = t, found[0], (found[1] if t == 'Horses' else parent_row_as_horse(found[1], gender))
+            break
     if not row:
-        return {'races': [], 'messages': ['Horsesシートに無い馬は地方競馬のレースを探せません']}
+        return {'races': [], 'messages': ['Horses・Sire・Damシートに無い馬は地方競馬のレースを探せません']}
     name = display_name_of_row(row)
     url, html = search_nar_horse(row)
     if not url:
@@ -3411,9 +3420,12 @@ def nar_horse_races(horse_url):
     messages = []
     lm = re.search(r'k_lineageLoginCode=(\d+)', url)
     profile_url = f"{NAR_HORSE_INFO_URL}?k_lineageLoginCode={lm.group(1)}&k_activeCode=1" if lm else ''
-    if profile_url and not str(row[H_NAR_URL] if len(row) > H_NAR_URL else '').strip():
+    if profile_url and str(row[H_NAR_URL] if len(row) > H_NAR_URL else '').strip() != profile_url:
         try:
-            sh.worksheet("Horses").update(range_name=f"{col_letter(H_NAR_URL)}{row_no}", values=[[profile_url]])
+            nar_col = H_NAR_URL if title == 'Horses' else P_NAR_URL
+            sh.worksheet(title).update(range_name=f"{col_letter(nar_col)}{row_no}", values=[[profile_url]])
+            remember_sheet_values(title)
+            messages.append(f"{name}：NARのURLを{title}シートに記録")
         except Exception as e:
             print(f"NARのURLを記録できませんでした: {e}")
     migrate_changes_sheet()
