@@ -3143,14 +3143,29 @@ def get_program_rows(year):
     _program_cache[year] = (time.time(), rows)
     return rows
 
+_COURSE_SIDE = {'外': '外回り', '内': '内回り', '直': '直線', '直線': '直線', '外→内': '外→内回り', '内→外': '内→外回り'}
+
+def course_label(surface, detail, distance, jump=False):
+    """コースの表示：「芝 1,600m」の下に「外回り」「直線」などを改行して付ける（障害は「障 3,000m」だけ）"""
+    from markupsafe import Markup, escape
+    dist = str(distance or '').replace(',', '').strip()
+    dist_label = f"{int(dist):,}m" if dist.isdigit() else dist
+    if jump:
+        return Markup(escape(f"障 {dist_label}".strip()))
+    parts = [p for p in re.split(r'[・･]', str(detail or '').strip()) if p]
+    head = parts[0] if parts and parts[0] in ('芝', 'ダ', 'ダート') else (surface or '')
+    head = 'ダ' if head == 'ダート' else head
+    sides = [_COURSE_SIDE.get(p, p) for p in (parts[1:] if parts and parts[0] in ('芝', 'ダ', 'ダート') else parts)]
+    text = escape(f"{head} {dist_label}".strip())
+    return Markup(text + (Markup('<br>') + escape('・'.join(sides)) if sides else ''))
+
 def program_race_from_row(r):
     """番組シートの1行を画面表示用にする"""
     c = lambda name: str(r[PROGRAM_COL[name]]).strip()
     dist = c('距離')
-    dist_label = f"{int(dist):,}m" if dist.isdigit() else ''
     jump = c('区分') == '障害'
     detail = c('コース詳細')
-    course = f"障 {dist_label}（{detail}）" if jump and detail else f"{detail or c('コース')} {dist_label}".strip()
+    course = course_label(c('コース'), detail, dist, jump)
     marks = c('記号')
     num = int(c('R')) if c('R').isdigit() else 0
     return {'date': parse_full_date(c('年月日')), 'venue': c('場'), 'kai': c('回'), 'nichi': c('日'),
@@ -6815,7 +6830,6 @@ def read_race_result(race_date, venue, num):
         r = list(race_rows[0]) + [''] * len(RACE_SHEET_COLUMNS)
         c = lambda name: str(r[RACE_SHEET_COLUMNS.index(name)]).strip()
         dist = c('距離')
-        dist_label = f"{int(dist):,}m" if dist.isdigit() else dist
         jump = c('区分') == '障害'
         detail = c('コース詳細')
         going = '　'.join(f"{k}：{v}" for k, v in (('芝', c('芝')), ('ダート', c('ダート'))) if v)
@@ -6823,7 +6837,7 @@ def read_race_result(race_date, venue, num):
                 'num': f"{int(num)}レース", 'race_num': int(num), 'jump': jump,
                 'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
                                                   c('記号'), c('重量')) if x),
-                'course': f"障 {dist_label}（{detail}）" if jump and detail else f"{detail or c('コース')} {dist_label}".strip(),
+                'course': course_label(c('コース'), detail, dist, jump),
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
                 'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース')}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
@@ -6869,7 +6883,7 @@ def race_detail():
                 'marks': e['rule'], 'surface': e['surface'],
                 'category': e['category'], 'class': e['class'], 'time': '',
                 'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class'], e['rule']) if x),
-                'course': f"{e['surface']} {int(dist):,}m" if dist.isdigit() else e['surface']}
+                'course': course_label(e['surface'], '', dist, e['jump'])}
     if race and not race.get('kai') and result_race:
         race = dict(race, kai=result_race['kai'], nichi=result_race['nichi'])
 
