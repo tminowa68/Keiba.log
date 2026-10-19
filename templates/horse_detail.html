@@ -736,7 +736,7 @@ function closeCandidateModal() {
 }
 
 // --- 出走レース：JRAの競走馬情報のページの「出走レース」から、まだ取り込んでいないレースを取り込む ---
-// ボタンを押すと、まず取り込んでいないレースをカードで並べ（未登録の出走馬の頭数も表示）、
+// ボタンを押すと、まず取り込んでいないレースをカードで並べ、
 // 「取り込み開始」を押すと取り込む
 document.addEventListener('DOMContentLoaded', function() {
     const btn = document.getElementById('race-import-btn');
@@ -752,14 +752,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const horseId = idMatch ? idMatch[1] : '';
     const surfaceClass = { '芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump' };
     const rankClass = { '1': 'rank-1', '2': 'rank-2', '3': 'rank-3' };
-    let unregistered = new Set();
 
-    function showSummary(races, loading) {
-        const reg = register.checked;
-        document.querySelectorAll('.race-card-unregistered').forEach(el => el.style.display = reg ? '' : 'none');
-        summary.textContent = `取り込んでいないレース：${races}レース`
-            + (reg ? `／未登録の出走馬：${loading ? '確認中...' : unregistered.size + '頭'}` : '')
-            + (reg && wholeDay.checked ? '（同じ日の他のレースの未登録馬も取り込み時に登録します）' : '');
+    function showSummary(races) {
+        summary.textContent = `取り込んでいないレース：${races}レース`;
     }
 
     btn.addEventListener('click', async function() {
@@ -768,7 +763,6 @@ document.addEventListener('DOMContentLoaded', function() {
         status.style.color = '';
         status.textContent = 'JRAの競走馬情報を読み込んでいます...';
         cards.innerHTML = '';
-        unregistered = new Set();
         try {
             const data = await RaceImport.post('/api/race_results/horse_races', { url: btn.dataset.url });
             const todo = (data.races || []).filter(r => !r.imported);
@@ -787,9 +781,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 card.innerHTML = `<div class="race-card-date">${r.label}</div><div class="race-card-name">読み込み中...</div>`;
                 cards.appendChild(card);
             });
-            showSummary(todo.length, true);
-            register.onchange = wholeDay.onchange = () => showSummary(todo.length, false);
-            // 4レースずつ、レース名・この馬の着順・未登録の出走馬を確認する
+            showSummary(todo.length);
+            // 4レースずつ、レース名・この馬の着順を確認する
             for (let i = 0; i < todo.length; i += 4) {
                 const chunk = todo.slice(i, i + 4);
                 try {
@@ -797,13 +790,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     (res.races || []).forEach(p => {
                         const card = cards.querySelector(`.race-card[data-url="${CSS.escape(p.url)}"]`);
                         if (!card) return;
-                        p.unregistered.forEach(n => unregistered.add(n));
                         const place = /^\d+$/.test(p.place) ? `${p.place}着` : p.place;
                         card.innerHTML = `<div class="race-card-date">${p.date_label} ${p.venue_num}</div>`
                             + `<div class="race-card-name">${p.title_html}</div>`
                             + `<div class="race-card-line"><span class="race-card-course ${surfaceClass[p.surface] || ''}">${p.course}</span>`
-                            + (place ? ` <span class="race-card-place ${rankClass[p.place] || ''}">${place}</span>` : '') + '</div>'
-                            + `<div class="race-card-unregistered">未登録の出走馬：${p.unregistered.length}頭</div>`;
+                            + (place ? ` <span class="race-card-place ${rankClass[p.place] || ''}">${place}</span>` : '') + '</div>';
                     });
                     // 取得できなかったレース
                     chunk.forEach(r => {
@@ -819,7 +810,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 }
             }
-            showSummary(todo.length, false);
             startBtn.disabled = false;
         } catch (e) {
             status.style.color = '#c62828';
