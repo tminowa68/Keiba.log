@@ -2434,3 +2434,13 @@ td.col-last-race {
     opacity: 0.85;
     pointer-events: none;
 }
+/* 出走履歴のレース名：牝馬限定・ハンデのマーク */
+.race-mark {
+    display: inline-block;
+    font-size: 0.8em;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #fff;
+}
+.race-mark-filly { background: #e91e63; }
+.race-mark-handicap { background: #5e35b1; }

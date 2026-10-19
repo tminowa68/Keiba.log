@@ -2300,10 +2300,45 @@ def race_inline_html(text):
     place = f"{p['place']}着" if str(p['place']).isdigit() else p['place']
     return Markup(f"{escape(p['when'])} {escape(p['venue_num'])} {p['title_html']} {escape(place)}")
 
+def is_filly_only(marks):
+    """レースの記号が牝馬限定か（「牝」があり「牡」が無い。皐月賞などの「牡・牝」は牝馬限定ではない）"""
+    marks = str(marks or '')
+    return '牝' in marks and '牡' not in marks
+
 def history_race_title(r):
-    """出走履歴のレース名（race_detailへのリンクと格）"""
+    """出走履歴のレース名（race_detailへのリンク）と、格・牝馬限定・ハンデのマーク（この順）"""
+    from markupsafe import Markup
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'))
-    return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']))
+    html = str(race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num'])))
+    if is_filly_only(r.get('rule')):
+        html += ' <span class="race-mark race-mark-filly">牝</span>'
+    if r.get('weight_rule') == 'ハンデ':
+        html += ' <span class="race-mark race-mark-handicap">ハンデ</span>'
+    return Markup(html)
+
+def add_race_weight_rules(results):
+    """出走成績にレースシートの重量（馬齢・定量・別定・ハンデ）を付ける（成績シートには重量の列が無いため）"""
+    by_year = {}
+    for r in results:
+        if r.get('race_id') and not r.get('weight_rule'):
+            by_year.setdefault(r['date'].year, set()).add(r['race_id'])
+    w_idx, id_col = RACE_SHEET_COLUMNS.index('重量'), col_letter(0)
+    for year, ids in by_year.items():
+        book = get_result_book(year)
+        if not book:
+            continue
+        rules = {}
+        ids = sorted(ids)
+        for i in range(0, len(ids), 40):
+            chunk = set(ids[i:i + 40])
+            for row in query_sheet_rows(book, RACE_SHEET, RACE_SHEET_COLUMNS,
+                                        [f"{id_col} = {_gviz_quote(x)}" for x in chunk], lambda row: row[0] in chunk):
+                if len(row) > w_idx:
+                    rules[row[0]] = str(row[w_idx]).strip()
+        for r in results:
+            if r.get('race_id') in rules:
+                r['weight_rule'] = rules[r['race_id']]
+    return results
 
 app.jinja_env.filters['race_parts'] = race_parts
 app.jinja_env.filters['race_inline'] = race_inline_html
@@ -6511,6 +6546,10 @@ def horse_detail(name, active_tab):
         try:
             horse_id = RR.horse_id_from_url(horse[H_JRA_URL] if len(horse) > H_JRA_URL else '')
             race_results, race_summary_data = get_horse_race_results(horse[H_NAME], horse_id, base_birth_year)
+            try:
+                add_race_weight_rules(race_results)
+            except Exception as e:
+                print(f"レースの重量の読み込みエラー: {e}")
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
     race_history = build_race_history(race_results, changes_history, base_birth_year,
