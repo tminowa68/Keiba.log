@@ -72,10 +72,10 @@
                         <td class="col-details">
                             {% if race.name %}
                                 <span class="race-name">{{ race.name|short_race_name }}</span>
-                                {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule) }}
+                                {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule, race.name) }}
                                 <div class="race-condition">{{ race.condition }}</div>
                             {% else %}
-                                <div class="race-condition race-condition-only">{{ race.condition }}{{ race_marks(race.marks, race.weight_rule) }}</div>
+                                <div class="race-condition race-condition-only">{{ race.condition }}{{ race_marks(race.marks, race.weight_rule, race.name) }}</div>
                             {% endif %}
                         </td>
                         <td class="col-course"><span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(race.surface, '') }}">{{ race.course }}</span></td>

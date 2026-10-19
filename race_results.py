@@ -757,6 +757,10 @@ def parse_nar_race_page(html_or_soup, url=''):
         name = name[:gm.start()].strip()
     data = [nar_text(li) for li in title.select('ul.dataArea li')]
     first = data[0] if data else ''
+    # 九州産馬限定（「たんぽぽ賞３歳九州産」）：レース名の末尾の「九州産」は除き、記号に「九州産」を入れる
+    kyushu = '九州産' in first
+    if _nfkc(name).endswith('九州産') and len(name) > 3:
+        name, kyushu = name[:-3].strip(), True
     dm = re.search(r'(ダート|芝|障害)\s*([\d,]+)\s*[ｍm]', first)
     surface = {'ダート': 'ダ', '芝': '芝', '障害': '障'}.get(dm.group(1), '') if dm else ''
     wm = re.search(r'天候[:：]\s*(\S+)', first)
@@ -771,7 +775,9 @@ def parse_nar_race_page(html_or_soup, url=''):
         'baba_code': baba, 'date': race_date, 'kai': '', 'nichi': '', 'venue': venue, 'num': num,
         'name': name, 'grade': grade, 'jump': surface == '障',
         'category': cm.group(1) if cm else '', 'class': race_class,
-        'rule': '牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first) else '', 'weight_rule': rm.group(1) if rm else '',
+        'rule': ' '.join(x for x in ('牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first) else '',
+                                     '九州産' if kyushu else '') if x),
+        'weight_rule': rm.group(1) if rm else '',
         'distance': int(dm.group(2).replace(',', '')) if dm else '', 'surface': surface,
         'course_detail': '', 'time': '', 'weather': wm.group(1) if wm else '',
         'turf': gm2.group(1) if gm2 and surface == '芝' else '', 'dirt': gm2.group(1) if gm2 and surface != '芝' else '',
