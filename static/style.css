@@ -2364,3 +2364,59 @@ td.col-last-race {
 .next-race-none {
     color: #888;
 }
+/* 出走レースの取り込み前の確認：レースのカード */
+.race-import-preview {
+    margin-top: 10px;
+}
+.race-import-cards {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+}
+.race-card {
+    flex: 0 0 auto;
+    min-width: 150px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 10px;
+    background: #fff;
+    font-size: 0.85em;
+    line-height: 1.7;
+}
+.race-card-date {
+    color: #555;
+    white-space: nowrap;
+}
+.race-card-name {
+    font-weight: bold;
+    white-space: nowrap;
+}
+.race-card-course {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 3px;
+}
+.race-card-course.course-turf { background: #2e7d32; color: #fff; }
+.race-card-course.course-dirt { background: #8d6e63; color: #fff; }
+.race-card-course.course-jump { background: #9e9e9e; color: #fff; }
+.race-card-place {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-weight: bold;
+}
+.race-card-place.rank-1 { background: #fff176; }
+.race-card-place.rank-2 { background: #b3e5fc; }
+.race-card-place.rank-3 { background: #e0a370; }
+.race-card-unregistered {
+    color: #c62828;
+}
+.race-import-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 0.9em;
+}

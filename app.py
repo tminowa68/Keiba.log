@@ -2029,13 +2029,23 @@ def fetch_jra_html(url, cname=None):
     resp.raise_for_status()
     return resp.content.decode('cp932', errors='replace')
 
+_race_page_cache = {}   # レース結果のURL → (読み取った時刻, 読み取った結果)（取り込み前の確認と取り込みで同じページを取得し直さない）
+RACE_PAGE_CACHE_TTL = 600
+
 def fetch_race_results(urls):
     """レース結果のURLの一覧を取得して読み取る。(読み取った結果, 失敗の一覧) を返す"""
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(url):
+        cached = _race_page_cache.get(url)
+        if cached and time.time() - cached[0] < RACE_PAGE_CACHE_TTL:
+            return cached[1], None
         try:
-            return RR.parse_race_result_page(fetch_jra_html(url), url=url), None
+            parsed = RR.parse_race_result_page(fetch_jra_html(url), url=url)
+            if len(_race_page_cache) > 500:
+                _race_page_cache.clear()
+            _race_page_cache[url] = (time.time(), parsed)
+            return parsed, None
         except Exception as e:
             return None, f"{url}（{e}）"
 
@@ -2962,6 +2972,30 @@ def api_race_results_horse_races():
     except Exception as e:
         return jsonify({'error': f'競走馬のページを読み取れませんでした: {e}'}), 400
     return jsonify({'races': races})
+
+@app.route('/api/race_results/preview', methods=['POST'])
+@login_required
+def api_race_results_preview():
+    """取り込む前の確認用：レース結果のページを取得し、レース名・この馬の着順・未登録の出走馬を返す（数レースずつ）"""
+    data = request.get_json(silent=True) or {}
+    urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:8]
+    horse_id = str(data.get('horse_id') or '')
+    try:
+        fetched, failed = fetch_race_results(urls)
+        races = []
+        for p in fetched:
+            race = p['race']
+            mine = next((r for r in p['runners'] if horse_id and r.get('horse_id') == horse_id), None)
+            title, rank = race_title(race['name'], race['grade'], race['class'], race['jump'])
+            place = str(mine['place']) if mine else ''
+            races.append({'url': race['url'], 'date_label': format_month_day(race['date']),
+                          'venue_num': f"{race['venue']}{race['num']}R",
+                          'title_html': str(race_title_html(title, rank)),
+                          'course': f"{race['surface']}{race['distance']}", 'surface': race['surface'],
+                          'place': place, 'unregistered': [u['name'] for u in safe_unregistered_runners([p])]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'races': races, 'failed': failed})
 
 @app.route('/api/race_results/import_races', methods=['POST'])
 @login_required
