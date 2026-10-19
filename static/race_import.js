@@ -133,6 +133,14 @@
                                                              recheck: !!opts.recheck }));
             }
         }
+        // この馬のクラス・最新レース・収得賞金・主な実績・総本賞金を計算し直す（取り込むレースが無かった場合も）
+        try {
+            log('クラス・最新レースなどを更新しています...');
+            await post('/api/race_results/update_horse', { url: horseUrl });
+        } catch (e) {
+            if (isFatalError(e.message)) throw e;
+            result.errors.push(`クラス・最新レースの更新：${e.message}`);
+        }
         // 出走馬のうち未登録の馬を登録する
         if (opts.register && result.unregistered.length) {
             const reg = await registerHorses(result.unregistered, { log: log, deferSort: opts.deferSort });
