@@ -4126,9 +4126,18 @@ def import_horses():
             reg_m = str(reg_parts[1]) if reg_parts and reg_parts[1] else ''
 
         added = updated = skipped = 0
+        changes_rows, change_msgs, other_horses = [], [], []
+        change_date = registration_str or today8()
 
         for h in parsed_horses:
             name = h['name']
+            same = same_horse_judgement(rows[name_to_index[name]], h['birth'], h['sire'], h['dam']) \
+                if name in name_to_index else None
+            if same is False:
+                # 同じ馬名の別の馬（生年月日・父・母が違う）：Horsesシートの馬は書き換えない
+                other_horses.append(name)
+                skipped += 1
+                continue
 
             if name not in name_to_index:
                 # 新規登録：状態・URLは空欄のまま（早期登録の時期に該当する場合のみ状態を「早期」にする）
@@ -4165,6 +4174,28 @@ def import_horses():
                     H_REGION: h['region'], H_DETAIL: h['detail'], H_BREEDER: h['breeder'],
                 }
                 changed = False
+                if same:
+                    # 生年月日・父・母から同じ馬と判定できた場合：馬主・拠点・厩舎が変わっていれば書き換えてChangesに記録する
+                    if h['owner'] and not _blank(row[H_OWNER]) and row[H_OWNER].strip() != h['owner']:
+                        changes_rows.append(changes_row(change_date, name, '馬主変更', row[H_OWNER], h['owner']))
+                        change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{h['owner']}")
+                        row[H_OWNER] = h['owner']
+                        changed = True
+                    if h['stable'] and not _blank(row[H_STABLE]) and (
+                            _trainer_key(row[H_STABLE]) != _trainer_key(h['stable'])
+                            or (h['area'] and row[H_AREA].strip() and row[H_AREA].strip() != h['area'])):
+                        old_full = f"{row[H_AREA]}・{row[H_STABLE]}" if row[H_AREA] else row[H_STABLE]
+                        new_full = f"{h['area']}・{h['stable']}" if h['area'] else h['stable']
+                        changes_rows.append(changes_row(change_date, name, '転厩', old_full, new_full))
+                        change_msgs.append(f"{name}：転厩 {old_full}→{new_full}")
+                        row[H_AREA], row[H_STABLE] = h['area'] or row[H_AREA], h['stable']
+                        changed = True
+                    # 既に競走馬登録日がある馬は、登録日は書き換えずに再登録としてChangesに記録する
+                    if not _blank(row[H_REGISTRATION]) and registration_str and \
+                            re.sub(r'\D', '', str(row[H_REGISTRATION])) != registration_str:
+                        changes_rows.append(changes_row(change_date, name, '再登録', row[H_REGISTRATION], registration_str))
+                        change_msgs.append(f"{name}：再登録（前回の登録 {row[H_REGISTRATION]}）")
+                        changed = True
                 for col_idx, new_val in field_map.items():
                     if _blank(row[col_idx]) and new_val:
                         row[col_idx] = new_val
@@ -4189,12 +4220,19 @@ def import_horses():
         rows.sort(key=lambda r: display_name_of_row(r))
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
+        if changes_rows:
+            migrate_changes_sheet()
+            get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS).append_rows(changes_rows)
 
         record_import_date('import_registration', registration_str)
         msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
         if registration_str:
             msg += f"（登録日：{format_date_jp(registration_str)}）"
         flash(msg)
+        if change_msgs:
+            flash("変更：" + "、".join(change_msgs))
+        if other_horses:
+            flash("同じ馬名の別の馬（生年月日・父・母が違う）のため取り込んでいません：" + "、".join(other_horses))
         return redirect('/import_horses')
     except Exception as e:
         flash(f'登録処理中にエラーが発生しました: {e}')
@@ -5209,6 +5247,19 @@ def ensure_parent_header(ws, header=None):
     ensure_columns(ws, len(PARENT_COLUMNS))
     ws.update(range_name=f"{col_letter(P_REGISTRATION)}1:{col_letter(len(PARENT_COLUMNS) - 1)}1",
               values=[PARENT_COLUMNS[P_REGISTRATION:]])
+
+def same_horse_judgement(h_row, birth, sire, dam):
+    """Horsesシートの行と、同じ馬名の馬（生年月日・父・母）が同じ馬か：True（同じ）／False（別の馬）／
+    None（生年月日が無いなどで判定できない）。生年月日が一致し、父・母に食い違いが無ければ同じ馬とする"""
+    if horse_matches_parent(h_row, birth, sire, dam):
+        return True
+    cell = lambda i: str(h_row[i]).strip() if len(h_row) > i and h_row[i] else ''
+    if cell(H_BIRTH) and birth:
+        return False   # 生年月日が違う（または父・母が違う）
+    for h_val, p_val in ((cell(H_SIRE), str(sire or '').strip()), (cell(H_DAM), str(dam or '').strip())):
+        if h_val and p_val and is_english_name(h_val) == is_english_name(p_val) and not _same_name(h_val, p_val):
+            return False
+    return None
 
 def horse_matches_parent(h_row, birth, sire, dam):
     """Horsesシートの馬が、Sire・Damシートに登録する馬と同じ馬か（生年月日・父・母で照合する）。
