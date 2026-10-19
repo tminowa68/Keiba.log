@@ -1879,6 +1879,7 @@ def save_race_results(parsed_list, overwrite=False):
         if runner_rows:
             with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in runner_rows],
                               value_input_option='RAW')
+        remember_recent_runner_rows(year, [[str(v) for v in row] for row in runner_rows], replace_ids)
         _imported_ids_cache[year] = (time.time(), existing)
     if saved_ids:
         # 出走した登録馬のクラス・最新レースを計算し直す
@@ -2092,6 +2093,24 @@ def query_sheet_rows(book, sheet, columns, conds, keep):
             return []
         return [r for r in ws.get_all_values()[1:] if r and r[0] and keep(r)]
 
+# 少し前に保存した成績シートの行（年 → [(保存した時刻, 行)]）。Googleのクエリ機能の結果には、書き込んだ直後の行が
+# しばらく反映されないことがあるため、取り込んだ直後のクラス・最新レースなどの計算ではこの行も合わせて使う
+_recent_runner_rows = {}
+RECENT_RUNNER_ROWS_TTL = 900
+
+def remember_recent_runner_rows(year, rows, replaced_ids=()):
+    now = time.time()
+    kept = [(t, r) for t, r in _recent_runner_rows.get(int(year), [])
+            if now - t < RECENT_RUNNER_ROWS_TTL and r[0] not in replaced_ids]
+    _recent_runner_rows[int(year)] = kept + [(now, list(r)) for r in rows]
+
+def _book_year(book):
+    year = next((y for y, k in _result_book_keys.items() if k == getattr(book, 'id', None)), None)
+    if year is None:
+        m = re.match(r'(\d{4})_', str(getattr(book, 'title', '') or ''))
+        year = int(m.group(1)) if m else None
+    return year
+
 def query_runner_rows(book, horse_ids, horse_names):
     """成績シートから、馬IDまたは馬名が一致する行だけを取り出す"""
     horse_ids = sorted({i for i in horse_ids if i})
@@ -2101,9 +2120,16 @@ def query_runner_rows(book, horse_ids, horse_names):
     id_col, name_col = col_letter(RUNNER_COL['馬ID']), col_letter(RUNNER_COL['馬名'])
     conds = [f"{id_col} = {_gviz_quote(i)}" for i in horse_ids] + [f"{name_col} = {_gviz_quote(n)}" for n in horse_names]
     ids, names = set(horse_ids), set(horse_names)
-    return query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, conds,
-                            lambda r: (len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] in ids)
-                            or (len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] in names))
+    keep = lambda r: (len(r) > RUNNER_COL['馬ID'] and r[RUNNER_COL['馬ID']] in ids) \
+        or (len(r) > RUNNER_COL['馬名'] and r[RUNNER_COL['馬名']] in names)
+    rows = query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, conds, keep)
+    recent = _recent_runner_rows.get(_book_year(book)) or []
+    if recent:
+        # 保存した直後でクエリの結果にまだ無い行を足す（同じレース・同じ馬の行は保存した行で置き換える）
+        key = lambda r: (r[0], r[RUNNER_COL['馬名']] if len(r) > RUNNER_COL['馬名'] else '')
+        fresh = {key(r): r for t, r in recent if time.time() - t < RECENT_RUNNER_ROWS_TTL and keep(r)}
+        rows = [r for r in rows if key(r) not in fresh] + list(fresh.values())
+    return rows
 
 def runner_row_to_result(r):
     """成績シートの1行を出走成績（表示・収得賞金の計算用）にする"""
@@ -2927,16 +2953,16 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
         remember_sheet_values("Horses")
     return total, updated
 
-def update_parent_class_columns(title, offset=0, limit=None):
+def update_parent_class_columns(title, offset=0, limit=None, match=None):
     """Sire・Damシートの馬（JRAのURLか最新レースがある馬）のクラス・最新レース・収得賞金・主な実績・総本賞金を、
-    取り込んだレース結果から計算し直す。(対象の頭数, 更新した頭数) を返す"""
+    取り込んだレース結果から計算し直す（match：対象を絞る関数）。(対象の頭数, 更新した頭数) を返す"""
     ws = gc.open(horse_data).worksheet(title)
     data = horse_sheet_values(title)
     targets = []
     for i, r in enumerate(data[1:]):
         name = display_name_of_row(r)
         cell = lambda c: str(r[c]).strip() if len(r) > c else ''
-        if name and (RR.horse_id_from_url(cell(P_JRA_URL)) or cell(P_LAST_RACE)):
+        if name and (RR.horse_id_from_url(cell(P_JRA_URL)) or cell(P_LAST_RACE)) and (not match or match(r, P_JRA_URL)):
             targets.append((i, r, name))
     total = len(targets)
     targets = targets[offset:offset + limit] if limit else targets[offset:]
@@ -2976,13 +3002,24 @@ def update_class_for_runners(parsed_list):
                 names.add(r['name'])
     if not ids and not names:
         return
-    def _match(row):
-        hid = RR.horse_id_from_url(row[H_JRA_URL] if len(row) > H_JRA_URL else '')
-        return (hid and hid in ids) or display_name_of_row(row) in names
+    update_class_for_horses(ids, names)
+
+def update_class_for_horses(ids, names):
+    """馬ID・馬名が一致するHorses・Sire・Damシートの馬のクラス・最新レース・収得賞金・主な実績・総本賞金を計算し直す"""
+    def _match(row, url_col=H_JRA_URL):
+        hid = RR.horse_id_from_url(row[url_col] if len(row) > url_col else '')
+        return bool((hid and hid in ids) or display_name_of_row(row) in names)
     try:
         update_horse_class_columns(_match)
     except Exception as e:
         print(f"クラス・最新レースの更新に失敗しました: {e}")
+    for title in ('Sire', 'Dam'):
+        try:
+            update_parent_class_columns(title, match=_match)
+        except gspread.WorksheetNotFound:
+            pass
+        except Exception as e:
+            print(f"{title}シートのクラス・最新レースの更新に失敗しました: {e}")
 
 def imported_race_ids(year):
     """その年のレースシートに取り込み済みのレースIDの集合（しばらくの間は覚えておいた結果を返す）"""
@@ -3754,6 +3791,21 @@ def api_program_upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify(program_result_message(saved, failed))
+
+@app.route('/api/race_results/update_horse', methods=['POST'])
+@login_required
+def api_race_results_update_horse():
+    """出走レースを取り込んだ後に、その馬（JRAの競走馬情報のURL）のクラス・最新レース・収得賞金・主な実績・総本賞金を
+    計算し直す（Horses・Sire・Damシート）"""
+    data = request.get_json(silent=True) or {}
+    horse_id = RR.horse_id_from_url(str(data.get('url') or ''))
+    if not horse_id:
+        return jsonify({'error': 'JRAの競走馬情報のURLではありません。'}), 400
+    try:
+        update_class_for_horses({horse_id}, set())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'ok': True})
 
 @app.route('/api/race_results/update_classes', methods=['POST'])
 @login_required
