@@ -88,6 +88,8 @@
     //   opts.overwrite：取り込み済みのレースも取得し直す
     //   opts.doneDays：この実行で取り込んだ開催日（同じ開催日を何度も取得しないよう、複数の馬で共有する）
     //   opts.log(text)：進み具合の表示
+    //   opts.registerEach：未登録の出走馬を、開催日（レース）ごとの取り込みの後に登録する（opts.register のとき）
+    //   opts.onDone(urls)：取り込み（registerEach なら出走馬の登録も）が終わったレースのURLの一覧
     async function importHorse(horseUrl, opts) {
         opts = opts || {};
         const log = opts.log || function() {};
@@ -99,29 +101,48 @@
         const result = { races: races.length, todo: todo.length, saved: 0, failed: 0 };
         result.errors = [];
         result.unregistered = [];
+        const registerEach = opts.register && opts.registerEach;
+        const registered = new Set();
+        result.registered = result.registerFailed = 0;
+        result.registerMessages = [];
         // 1つの開催日（レース）で失敗しても、残りは続けて取り込む（続けても同じエラーになるものは中断）
-        async function attempt(label, count, request) {
+        //   urls：このときに取り込むレース（取り込み・登録が終わったら opts.onDone に渡す）
+        async function attempt(label, count, request, urls) {
+            let res;
             try {
-                const res = await request();
-                (res.unregistered || []).forEach(u => {
-                    if (!result.unregistered.some(x => x.name === u.name)) result.unregistered.push(u);
-                });
-                result.saved += res.saved || 0;
-                result.failed += (res.failed || []).length;
-                return !(res.failed || []).length;
+                res = await request();
             } catch (e) {
                 if (isFatalError(e.message)) throw e;
                 result.failed += count;
                 result.errors.push(`${label}：${e.message}`);
                 return false;
             }
+            const fresh = [];
+            (res.unregistered || []).forEach(u => {
+                if (!result.unregistered.some(x => x.name === u.name)) result.unregistered.push(u);
+                if (!registered.has(u.name)) { registered.add(u.name); fresh.push(u); }
+            });
+            result.saved += res.saved || 0;
+            result.failed += (res.failed || []).length;
+            if (registerEach && fresh.length) {
+                const reg = await registerHorses(fresh, { log: log, deferSort: true });
+                result.registered += reg.registered;
+                result.registerFailed += reg.failed;
+                result.registerMessages.push(...reg.messages);
+            }
+            if (opts.onDone) {
+                const failedText = (res.failed || []).join(' ');
+                opts.onDone((urls || []).filter(u => !failedText.includes(u)));
+            }
+            return !(res.failed || []).length;
         }
         if (opts.wholeDay) {
             for (const r of todo) {
                 if (doneDays.has(r.day_key)) continue;
                 log(`${r.label} の開催日の全レースを取得しています...`);
                 const ok = await attempt(r.label, 1, () =>
-                    post('/api/race_results/import_day', { url: r.url, overwrite: !!opts.overwrite, recheck: !!opts.recheck }));
+                    post('/api/race_results/import_day', { url: r.url, overwrite: !!opts.overwrite, recheck: !!opts.recheck }),
+                    todo.filter(x => x.day_key === r.day_key).map(x => x.url));
                 if (ok) doneDays.add(r.day_key);
             }
         } else {
@@ -130,7 +151,7 @@
                 log(`${chunk[0].label} ほか${chunk.length}レースを取得しています...`);
                 await attempt(chunk[0].label, chunk.length, () =>
                     post('/api/race_results/import_races', { urls: chunk.map(r => r.url), overwrite: !!opts.overwrite,
-                                                             recheck: !!opts.recheck }));
+                                                             recheck: !!opts.recheck }), chunk.map(r => r.url));
             }
         }
         // この馬のクラス・最新レース・収得賞金・主な実績・総本賞金を計算し直す（取り込むレースが無かった場合も）
@@ -142,7 +163,9 @@
             result.errors.push(`クラス・最新レースの更新：${e.message}`);
         }
         // 出走馬のうち未登録の馬を登録する
-        if (opts.register && result.unregistered.length) {
+        if (registerEach) {
+            if (result.registered && !opts.deferSort) await finishRegistration();
+        } else if (opts.register && result.unregistered.length) {
             const reg = await registerHorses(result.unregistered, { log: log, deferSort: opts.deferSort });
             result.registered = reg.registered;
             result.registerFailed = reg.failed;

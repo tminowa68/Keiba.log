@@ -2471,3 +2471,9 @@ td.col-last-race {
     vertical-align: 0.1em;
 }
 .race-mark-kyushu { background: #ef6c00; }
+/* 出走レースの取り込み：カードの下のオプション（段落ごと）と、取り込みが終わったカードのフェードアウト */
+.race-import-option { margin: 8px 0 0; font-size: 0.9em; }
+.race-import-preview .race-import-status { display: block; margin: 8px 0 0; }
+.race-import-preview .race-import-status:empty { display: none; }
+.race-card { transition: opacity 0.6s ease; }
+.race-card.race-card-done { opacity: 0; }

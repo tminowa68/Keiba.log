@@ -362,6 +362,7 @@
         <div class="race-summary-box">
             <div class="race-summary-title">{{ title }}</div>
             <div>クラス：<span class="status-highlight">{{ sm['class'] }}</span></div>
+            <div>現クラス：{{ sm.class_starts or 0 }}戦（{{ (sm.class_record or [0, 0, 0, 0])|join('-') }}）</div>
             <div>出走：{{ sm.starts }}戦（{{ sm.record|join('-') }}）</div>
             <div>本賞金：{{ "{:,}".format(sm.total_prize) }}万円</div>
             <div>収得賞金：{{ "{:,}".format(sm.shutoku) }}万円</div>
@@ -370,11 +371,13 @@
     <div class="race-summary-container">
         {# 簡易プロフィール #}
         <div class="race-summary-box">
-            <div class="race-summary-title">プロフィール</div>
-            <div>性齢：{{ brief_profile.sex_age }}</div>
+            <div class="race-summary-title">簡易プロフィール</div>
+            {# 牝馬の性齢の「牝」と、母は赤字にする #}
+            <div>性齢：{% if brief_profile.sex_age.startswith('牝') %}<span class="female-text">牝</span>{{ brief_profile.sex_age[1:] }}{% else %}{{ brief_profile.sex_age }}{% endif %}</div>
             <div>厩舎：{{ brief_profile.stable }}</div>
             <div>父：{{ brief_profile.sire }}</div>
-            <div>母：{{ brief_profile.dam }}{% if brief_profile.bms %}（{{ brief_profile.bms }}）{% endif %}</div>
+            <div>母：<span class="female-text">{{ brief_profile.dam }}</span></div>
+            {% if brief_profile.bms %}<div>母の父：{{ brief_profile.bms }}</div>{% endif %}
         </div>
         {{ race_summary('平地', race_summary_data.flat) }}
         {% if race_summary_data.jump.starts %}{{ race_summary('障害', race_summary_data.jump) }}{% endif %}
@@ -409,13 +412,13 @@
     {% if jra_url %}
     <div class="race-import-box">
         <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}" data-name="{{ horse[0] }}">出走レースを取り込む（JRA・地方）</button>
-        <label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label>
-        <label><input type="checkbox" id="race-import-register" checked> 未登録の出走馬を登録する</label>
-        <span id="race-import-status" class="race-import-status"></span>
     </div>
-    {# 取り込む前の確認：まだ取り込んでいないレースのカードと、取り込み開始のボタン #}
+    {# 取り込む前の確認：まだ取り込んでいないレースのカード、その下にオプション・メッセージ・取り込み開始のボタン #}
     <div id="race-import-preview" class="race-import-preview" style="display: none;">
         <div id="race-import-cards" class="race-import-cards"></div>
+        <p class="race-import-option"><label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label></p>
+        <p class="race-import-option"><label><input type="checkbox" id="race-import-register" checked> 未登録の出走馬を登録する</label></p>
+        <p id="race-import-status" class="race-import-status"></p>
         <div class="race-import-actions">
             <span id="race-import-summary"></span>
             <button type="button" id="race-import-start" class="btn-entry-toggle" disabled>取り込み開始</button>
@@ -764,6 +767,7 @@ document.addEventListener('DOMContentLoaded', function() {
         status.style.color = '';
         status.textContent = 'JRAの競走馬情報（地方のレースがあれば地方競馬情報サイト）を読み込んでいます...';
         cards.innerHTML = '';
+        preview.style.display = '';
         try {
             const data = await RaceImport.post('/api/race_results/horse_races', { url: btn.dataset.url });
             const todo = (data.races || []).filter(r => !r.imported);
@@ -771,12 +775,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const notes = (data.transfers || []).length ? '　' + data.transfers.join('／') : '';
             if (!todo.length) {
                 status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。` + notes;
-                preview.style.display = 'none';
                 btn.disabled = false;
                 return;
             }
             status.textContent = notes.trim();
-            preview.style.display = '';
             todo.forEach(r => {
                 const card = document.createElement('div');
                 card.className = 'race-card';
@@ -831,7 +833,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const res = await RaceImport.importHorse(btn.dataset.url, {
                 wholeDay: wholeDay.checked,
                 register: register.checked,
-                log: text => { status.textContent = text; }
+                registerEach: true,
+                log: text => { status.textContent = text; },
+                // 取り込み（と出走馬の登録）が終わったレースのカードはフェードアウトして消す
+                onDone: urls => urls.forEach(u => {
+                    const card = cards.querySelector(`.race-card[data-url="${CSS.escape(u)}"]`);
+                    if (!card) return;
+                    card.classList.add('race-card-done');
+                    setTimeout(() => card.remove(), 700);
+                })
             });
             if (!res.todo) {
                 status.textContent = `出走${res.races}レースはすべて取り込み済みです。`;
@@ -842,7 +852,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 + (res.errors.length ? res.errors[0] : '');
             if (res.saved) {
                 status.textContent += '表示を更新しています...';
-                location.reload();
+                setTimeout(() => location.reload(), 800);   // カードのフェードアウトが終わってから
                 return;
             }
             status.style.color = '#c62828';

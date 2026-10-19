@@ -456,10 +456,15 @@ def summarize_results(results, birth_year=None, today=None):
         total_prize = prize_sum(r.get('prize') for r in rows)
         shutoku = 0
         kokyu = None
+        class_at = []   # 各レースに出走した時点のクラス（現クラスの成績用）
+        has_run = False
         for r in rows:
             if not jump and kokyu_date and not kokyu and r.get('date') and r['date'] >= kokyu_date:
                 kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
                 shutoku //= 2
+            class_at.append(class_from_shutoku(shutoku, has_run, jump, birth_year, r.get('date') or today))
+            if r.get('place') not in ('取消', '除外', ''):
+                has_run = True
             place = int(r['place']) if str(r.get('place', '')).isdigit() else None
             r['shutoku'] = shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
                                           r.get('grade', ''), r.get('name', ''), r.get('rule', ''),
@@ -469,12 +474,22 @@ def summarize_results(results, birth_year=None, today=None):
         if not jump and kokyu_date and not kokyu and today >= kokyu_date and shutoku:
             kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
             shutoku //= 2
-        places = [str(r.get('place', '')) for r in started]
-        record = [places.count('1'), places.count('2'), places.count('3')]
-        record.append(len(started) - sum(record))   # 4着以下（競走中止・失格なども含む）
-        summary[kind] = {'starts': len(started), 'record': record, 'total_prize': total_prize, 'shutoku': shutoku,
-                         'class': class_from_shutoku(shutoku, bool(started), jump, birth_year, today),
-                         'kokyu': kokyu}
+        def _record(runs):
+            places = [str(r.get('place', '')) for r in runs]
+            rec = [places.count('1'), places.count('2'), places.count('3')]
+            rec.append(len(runs) - sum(rec))   # 4着以下（競走中止・失格なども含む）
+            return rec
+        current = class_from_shutoku(shutoku, bool(started), jump, birth_year, today)
+        # 現クラスの成績：最後に現在のクラスになってから（続けて現在のクラスで出走したレース）
+        in_class = []
+        for r, cls in reversed(list(zip(rows, class_at))):
+            if cls != current:
+                break
+            if r.get('place') not in ('取消', '除外', ''):
+                in_class.append(r)
+        summary[kind] = {'starts': len(started), 'record': _record(started), 'total_prize': total_prize,
+                         'shutoku': shutoku, 'class': current, 'kokyu': kokyu,
+                         'class_starts': len(in_class), 'class_record': _record(in_class)}
     return summary
 
 
