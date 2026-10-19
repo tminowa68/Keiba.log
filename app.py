@@ -2158,7 +2158,7 @@ def runner_row_to_result(r):
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': prize, 'nar': nar, 'affiliation': affiliation,
         # JRA所属馬が地方の交流競走（重賞以外）で1着の場合の、地方のクラスに当たるJRAのクラス（収得賞金の計算用）
-        'nar_jra_class': nar_koryu_jra_class(c('場'), c('クラス')) if nar and affiliation == 'JRA'
+        'nar_jra_class': nar_koryu_jra_class(c('場'), c('クラス'), c('レース名')) if nar and affiliation == 'JRA'
         and c('着順') == '1' and not c('グレード') else '',
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
         'entry': c('登録') or '確定', 'is_result': not is_entry_row_id(c('レースID')),
@@ -3311,7 +3311,8 @@ def record_horse_transfers(horse_url, transfers):
 NAR_PEOPLE_SHEET = "騎手調教師"
 NAR_PEOPLE_COLUMNS = ["区分", "免許番号", "氏名", "所属"]
 # JRA所属馬が出走できる地方の指定交流競走の、開催地所属馬の出走条件（地方のクラス）とJRAのクラスの対応表
-# （競馬場が空欄の行はすべての競馬場に当てはめる。地方のクラスは前方一致：「B1」は「Ｂ１」「Ｂ１二」に当てはまる）
+# （競馬場が空欄の行はすべての競馬場に当てはめる。地方のクラスは前方一致：「B1」は「Ｂ１」「Ｂ１二」に当てはまる。
+#  格組が記載されていないレースは、地方のクラスの欄にレース名（またはその一部）を書く）
 NAR_KORYU_SHEET = "交流競走クラス"
 NAR_KORYU_COLUMNS = ["競馬場", "地方のクラス", "JRAのクラス", "備考"]
 NAR_HORSE_SEARCH_URL = RR.NAR_BASE + 'DataRoom/RaceHorseList'
@@ -3404,18 +3405,22 @@ def nar_koryu_classes():
             rows.append((_nfkc(r[0]), _nfkc(r[1]), r[2].strip()))
     return rows
 
-def nar_koryu_jra_class(venue, nar_class):
-    """地方のクラスに当たるJRAのクラス（交流競走クラスのシートから。分からなければ空文字）"""
-    cls = _nfkc(nar_class)
-    if not cls:
-        return ''
-    best = None
-    for v, c, jra in nar_koryu_classes():
-        if (not v or v == _nfkc(venue)) and cls.startswith(c):
-            score = (len(c), bool(v))
-            if best is None or score > best[0]:
-                best = (score, jra)
-    return best[1] if best else ''
+def nar_koryu_jra_class(venue, nar_class, race_name=''):
+    """地方のクラスに当たるJRAのクラス（交流競走クラスのシートから。分からなければ空文字）。
+    地方のクラスの欄は格組の前方一致で探し、当てはまる行が無ければ（格組が記載されていないレースなど）、
+    地方のクラスの欄にレース名（またはその一部）を書いた行をレース名で探す"""
+    cls, name, here = _nfkc(nar_class), _nfkc(race_name), _nfkc(venue)
+    rows = [(v, c, jra) for v, c, jra in nar_koryu_classes() if not v or v == here]
+    for match in ((lambda c: cls and cls.startswith(c)), (lambda c: name and c in name)):
+        best = None
+        for v, c, jra in rows:
+            if match(c):
+                score = (len(c), bool(v))
+                if best is None or score > best[0]:
+                    best = (score, jra)
+        if best:
+            return best[1]
+    return ''
 
 def nar_license_no(url):
     """騎手・調教師のページのURLから (区分, 免許番号)"""
