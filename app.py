@@ -1806,8 +1806,12 @@ def race_sheet_row(race):
 def runner_sheet_row(race, r):
     going = race['turf'] if race['surface'] == '芝' else (race['dirt'] if race['surface'] == 'ダ'
                                                          else '/'.join(x for x in (race['turf'], race['dirt']) if x))
+    rule = race['rule']
+    if race.get('nar'):
+        # 地方のレースは、記号の列にレース時の所属（「所属:JRA」「所属:川崎」）も記録する
+        rule = ' '.join(x for x in (rule, f"所属:{r.get('affiliation', '')}" if r.get('affiliation') else '') if x)
     return [race['race_id'], race['date'].strftime('%Y%m%d'), race['venue'], race['num'], race['name'], race['grade'],
-            '障害' if race['jump'] else '平地', race['category'], race['class'], race['rule'], race['distance'],
+            '障害' if race['jump'] else '平地', race['category'], race['class'], rule, race['distance'],
             race['surface'], going, race['runners_count'], r['place'], r['waku'], r['num'], r['name'], r['horse_id'],
             '確定', r['sex'], r['age'], r['weight'], r['mark'], r['jockey'], r['time'], r['margin'], r['corners'], r['last'],
             r['body_weight'], r['body_diff'], r['trainer'], r['pop'], r['prize']]
@@ -1816,6 +1820,7 @@ def save_race_results(parsed_list, overwrite=False):
     """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
     (取り込んだレース, 飛ばしたレース) のラベル一覧を返す"""
     saved, skipped, saved_ids = [], [], set()
+    prepare_nar_results(parsed_list)   # 地方のレースの騎手・調教師のフルネーム、登録馬の馬ID
     by_year = {}
     for parsed in parsed_list:
         by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
@@ -2041,7 +2046,10 @@ def fetch_race_results(urls):
         if cached and time.time() - cached[0] < RACE_PAGE_CACHE_TTL:
             return cached[1], None
         try:
-            parsed = RR.parse_race_result_page(fetch_jra_html(url), url=url)
+            if RR.parse_nar_race_url(url):
+                parsed = RR.parse_nar_race_page(fetch_nar_html(url), url=url)
+            else:
+                parsed = RR.parse_race_result_page(fetch_jra_html(url), url=url)
             if len(_race_page_cache) > 500:
                 _race_page_cache.clear()
             _race_page_cache[url] = (time.time(), parsed)
@@ -2105,15 +2113,27 @@ def runner_row_to_result(r):
     if not race_date:
         return None
     prize = c('本賞金').replace(',', '')
+    try:
+        prize = float(prize) if prize else 0
+        prize = int(prize) if prize == int(prize) else prize
+    except ValueError:
+        prize = 0
+    nar = c('レースID').startswith('N')
+    am = re.search(r'所属:(\S+)', c('記号'))
+    affiliation = am.group(1) if am else ('' if nar else 'JRA')
+    rule = re.sub(r'\s*所属:\S+', '', c('記号')).strip()
     return {
         'race_id': c('レースID'), 'date': race_date, 'date_label': format_date_jp(race_date, weekday=True),
         'venue': c('場'), 'num': c('R'), 'name': c('レース名'), 'grade': c('グレード'),
-        'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': c('記号'),
+        'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': rule,
         'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
         'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
         'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
-        'prize': int(prize) if prize.isdigit() else 0,
+        'prize': prize, 'nar': nar, 'affiliation': affiliation,
+        # JRA所属馬が地方の交流競走（重賞以外）で1着の場合の、地方のクラスに当たるJRAのクラス（収得賞金の計算用）
+        'nar_jra_class': nar_koryu_jra_class(c('場'), c('クラス')) if nar and affiliation == 'JRA'
+        and c('着順') == '1' and not c('グレード') else '',
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
         'entry': c('登録') or '確定', 'is_result': not is_entry_row_id(c('レースID')),
     }
@@ -2133,12 +2153,15 @@ def collect_race_results(horses, until_year=None):
     found = {h['key']: {} for h in horses}
     # 馬IDで探し、馬IDが分からない馬は馬名で探す（年ごとのファイルを並行して検索する）
     ids = [h['horse_id'] for h in horses if h.get('horse_id')]
-    names = [h['name'] for h in horses if not h.get('horse_id') and h.get('name')]
+    # 馬名でも探す（地方のレースの行は、取り込んだときに未登録だった馬には馬IDが無いため）
+    names = sorted({h['name'] for h in horses if h.get('name')})
+    id_keys = {h['key'] for h in horses if h.get('horse_id')}
+    birth = {h['key']: h.get('birth_year') for h in horses}
     jobs = []
     for year in range(max(first_year, 2000), min(this_year, until_year or this_year) + 1):
         book = get_result_book(year)
         if book:
-            jobs += [(book, ids[i:i + 40], names[i:i + 40]) for i in range(0, max(len(ids), len(names)), 40)]
+            jobs += [(book, ids[i:i + 30], names[i:i + 30]) for i in range(0, max(len(ids), len(names)), 30)]
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=6) as pool:
         row_lists = list(pool.map(lambda job: query_runner_rows(*job), jobs))
@@ -2147,7 +2170,15 @@ def collect_race_results(horses, until_year=None):
             res = runner_row_to_result(row)
             if not res or not res['is_result']:
                 continue   # 想定・特別登録などの記録はレース結果に含めない
-            keys = [by_id[res['horse_id']]] if res['horse_id'] in by_id else by_name.get(res['horse_name'], [])
+            if res['horse_id'] in by_id:
+                keys = [by_id[res['horse_id']]]
+            elif res['horse_id']:
+                keys = [k for k in by_name.get(res['horse_name'], []) if k not in id_keys]
+            else:
+                # 馬IDの無い行（地方のレース）：馬名が同じで、年齢から求めた生年が合う馬
+                age = int(res['age']) if str(res['age']).isdigit() else None
+                keys = [k for k in by_name.get(res['horse_name'], [])
+                        if not age or not birth[k] or res['date'].year - age == int(birth[k])]
             for key in keys:
                 found[key].setdefault(res['race_id'] or (res['date'], res['venue'], res['num']), res)
     order = lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0)
@@ -2246,7 +2277,7 @@ def best_race_label(results):
     return race_label(best) if best else ''
 
 def total_prize(results):
-    return sum(r.get('prize') or 0 for r in results)
+    return RR.prize_sum(r.get('prize') for r in results)
 
 _RACE_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s+(.+)\s+(\S+)$')
 _RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス)\)$')
@@ -2584,10 +2615,12 @@ def _same_change(change, row):
             _trainer_key(row[C_NEW]) == _trainer_key(change['new'])
     return True
 
-def record_race_changes(sh, horse_changes, stables):
+def record_race_changes(sh, horse_changes, stables, reg_dates=None):
     """レースの間の転厩・去勢をChangesシートに記録する。horse_changes：{馬名: race_changes の結果}。
     日付は変わった後のレースの週の木曜日。同じ記録があり、その日付が変わった後のレースより後なら木曜日に直す
     （前のレースと変わった後のレースの間の日付なら直さない）。
+    地方所属からJRA所属に変わった転厩は、競走馬登録日（転入日。reg_dates：{馬名: 日付}）が2つのレースの間なら
+    その日付にする（「仮」は付けない）。
     記録後の各馬の転厩・去勢の記録 {馬名: [(日付, 項目, 旧, 新), …]} を返す"""
     migrate_changes_sheet()   # 「仮」の列がまだ無ければ先に追加する
     ws = get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS)
@@ -2603,6 +2636,9 @@ def record_race_changes(sh, horse_changes, stables):
         for ch in changes:
             before_date, after_date = ch['before']['date'], ch['after']['date']
             thursday = thursday_of_race_week(after_date)
+            reg = (reg_dates or {}).get(name)
+            into_jra = ch['type'] == '転厩' and ch['before'].get('affiliation', 'JRA') != 'JRA' \
+                and ch['after'].get('affiliation', 'JRA') == 'JRA' and reg and before_date < reg <= after_date
             same = sorted([(parse_full_date(r[C_DATE]), i, r) for i, r in existing.get(name, [])
                            if i not in used and _same_change(ch, r) and parse_full_date(r[C_DATE])],
                           key=lambda x: x[0])
@@ -2610,14 +2646,19 @@ def record_race_changes(sh, horse_changes, stables):
             if match:
                 d, i, r = match
                 used.add(i)
-                if d > after_date and i is not None:
+                if into_jra and i is not None and (d != reg or r[C_TENTATIVE]):
+                    # 仮の日付で記録した地方からJRAへの転厩を、競走馬登録日（転入日）に直す
+                    r[C_DATE], r[C_TENTATIVE] = reg.strftime('%Y%m%d'), ''
+                    updates.append({'range': f"A{i}:B{i}", 'values': [[r[C_DATE], '']]})
+                elif d > after_date and i is not None:
                     # 記録されている日付が変わった後のレースより後なら、そのレースの週の木曜日に戻す（日付は「仮」）
                     r[C_DATE], r[C_TENTATIVE] = thursday.strftime('%Y%m%d'), '仮'
                     updates.append({'range': f"A{i}:B{i}", 'values': [[r[C_DATE], '仮']]})
                 continue
             if ch['type'] == '転厩':
-                row = changes_row(thursday.strftime('%Y%m%d'), name, '転厩', trainer_label(ch['old'], stables),
-                                  trainer_label(ch['new'], stables), tentative=True)
+                when = reg if into_jra else thursday
+                row = changes_row(when.strftime('%Y%m%d'), name, '転厩', trainer_label(ch['old'], stables),
+                                  trainer_label(ch['new'], stables), tentative=not into_jra)
             else:
                 row = changes_row(thursday.strftime('%Y%m%d'), name, '去勢', '牡', 'せん', tentative=True)
             new_rows.append(row)
@@ -2766,8 +2807,10 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
     # レースの間で調教師・性別が変わっていれば、転厩・去勢としてChangesシートに記録する
     stables = get_stables_list()
     try:
+        reg_dates = {h['name']: parse_full_date(rows[h['key']][H_REGISTRATION])
+                     for h in horses if len(rows[h['key']]) > H_REGISTRATION and rows[h['key']][H_REGISTRATION]}
         change_rows = record_race_changes(gc.open(horse_data), {h['name']: race_changes(results.get(h['key'], []))
-                                                               for h in horses}, stables)
+                                                               for h in horses}, stables, reg_dates)
     except Exception as e:
         print(f"転厩・去勢の記録に失敗しました: {e}")
         change_rows = None
@@ -2951,6 +2994,8 @@ def import_result_day(url='', via='', key='', overwrite=False, recheck=False):
     """1開催日（1競馬場）の全レースの結果を取得して保存する。
     url が無い場合は、同じ週の別の日のレース結果のページ（via）から、その日へのリンクを探す。
     recheck=True なら、取り込み済みのレースも取得して（保存はしない）、未登録の出走馬を探す"""
+    if RR.parse_nar_race_url(url):
+        return import_nar_result_day(url, overwrite=overwrite, recheck=recheck)
     discovered = {}
 
     def _discover(html):
@@ -2983,6 +3028,30 @@ def import_result_day(url='', via='', key='', overwrite=False, recheck=False):
             'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
             'discovered': discovered, 'unregistered': unregistered}
 
+def import_nar_result_day(url, overwrite=False, recheck=False):
+    """地方の1開催日（1競馬場）の全レースの結果を取得して保存する（import_result_day の地方版）"""
+    first = RR.parse_nar_race_page(fetch_nar_html(url), url=url)
+    race = first['race']
+    key = nar_day_key(race['date'], race['baba_code'])
+    day_urls = first['day_urls'] or [race['url']]
+    existing = imported_race_ids(race['date'].year)
+    rid = lambda u: RR.nar_race_id(*RR.parse_nar_race_url(u))
+    todo = [u for u in day_urls if rid(u) != race['race_id'] and (overwrite or recheck or rid(u) not in existing)]
+    fetched, failed = fetch_race_results(todo)
+    fetched.insert(0, first)
+    parsed = [p for p in fetched if overwrite or p['race']['race_id'] not in existing]
+    already = len([u for u in day_urls if rid(u) in existing]) if not overwrite else 0
+    unregistered = safe_unregistered_runners(fetched if recheck else parsed)
+    saved, skipped = save_race_results(parsed, overwrite=overwrite)
+    d = race['date']
+    return {'found': True, 'key': key, 'label': f"{d.year}年{d.month}月{d.day}日 {race['venue']}",
+            'races': len(day_urls), 'saved': len(saved), 'already': already, 'skipped': skipped, 'failed': failed,
+            'discovered': {}, 'unregistered': unregistered}
+
+def is_race_result_url(url):
+    """JRAまたは地方のレース結果のURLか"""
+    return bool(RR.race_id_from_cname(url) or RR.parse_nar_race_url(url))
+
 def safe_unregistered_runners(parsed):
     try:
         return unregistered_runners(parsed) if parsed else []
@@ -2990,8 +3059,16 @@ def safe_unregistered_runners(parsed):
         print(f"未登録の出走馬の確認に失敗しました: {e}")
         return []
 
-def race_link_info(url):
-    """レース結果のURLから、表示用の情報と取り込み済みかどうかを返す"""
+def race_link_info(url, venue=''):
+    """レース結果のURLから、表示用の情報と取り込み済みかどうかを返す（地方のレースは venue に競馬場名を渡す）"""
+    nar = RR.parse_nar_race_url(url)
+    if nar:
+        d, num, baba = nar
+        rid = RR.nar_race_id(d, num, baba)
+        return {'url': RR.nar_race_url(d, num, baba), 'race_id': rid, 'day_key': nar_day_key(d, baba),
+                'date': d.isoformat(), 'nar': True,
+                'label': f"{d.year}年{d.month}月{d.day}日 {venue or '地方'}{num}R",
+                'imported': rid in imported_race_ids(d.year)}
     rid = RR.race_id_from_cname(url)
     info = RR.parse_race_id(rid)
     if not info:
@@ -3047,6 +3124,15 @@ def api_race_results_horse_races():
         transfers = record_horse_transfers(str(data.get('url') or ''), RR.parse_horse_transfers(html))
     except Exception as e:
         print(f"転出・転入の記録に失敗しました: {e}")
+    # リンクの無い地方競馬のレースがあれば、地方競馬情報サイトで馬を探して地方のレースも取り込む
+    if RR.parse_horse_nar_rows(html):
+        try:
+            nar = nar_horse_races(str(data.get('url') or ''))
+            races += [r for r in nar['races'] if r['race_id'] not in {x['race_id'] for x in races}]
+            transfers += nar['messages']
+        except Exception as e:
+            transfers.append(f"地方競馬のレースを探せませんでした（{e}）")
+    races.sort(key=lambda r: r['date'], reverse=True)
     return jsonify({'races': races, 'transfers': transfers})
 
 def record_horse_transfers(horse_url, transfers):
@@ -3097,19 +3183,283 @@ def record_horse_transfers(horse_url, transfers):
         ws_changes.append_rows(new_changes)
     return messages
 
+# --- 地方競馬（地方競馬情報サイト）のレース結果・出走履歴 ---
+# 騎手・調教師のフルネーム（地方競馬情報サイトの騎手・調教師のページから取得したものを覚えておくシート）
+NAR_PEOPLE_SHEET = "騎手調教師"
+NAR_PEOPLE_COLUMNS = ["区分", "免許番号", "氏名", "所属"]
+# JRA所属馬が出走できる地方の指定交流競走の、開催地所属馬の出走条件（地方のクラス）とJRAのクラスの対応表
+# （競馬場が空欄の行はすべての競馬場に当てはめる。地方のクラスは前方一致：「B1」は「Ｂ１」「Ｂ１二」に当てはまる）
+NAR_KORYU_SHEET = "交流競走クラス"
+NAR_KORYU_COLUMNS = ["競馬場", "地方のクラス", "JRAのクラス", "備考"]
+NAR_HORSE_SEARCH_URL = RR.NAR_BASE + 'DataRoom/RaceHorseList'
+NAR_HORSE_INFO_URL = RR.NAR_BASE + 'DataRoom/RaceHorseInfo'
+NAR_NO_HORSE_TEXT = 'ご指定の競走馬データベース画面の情報がありません'
+
+def nar_get(url, params=None):
+    """地方競馬情報サイトのページを取得する（keiba.go.jp 以外のURLは取得しない）"""
+    if not is_nar_url(url):
+        raise ValueError(f"地方競馬情報サイトのURLではありません: {url}")
+    resp = requests.get(url, params=params, headers=_JBIS_HEADERS, timeout=25)
+    resp.raise_for_status()
+    return resp
+
+def fetch_nar_html(url):
+    return nar_get(url).content
+
+def nar_day_key(race_date, baba_code):
+    """地方のレースの開催日（競馬場）のキー（レースIDの先頭の「N年月日・競馬場コード」）"""
+    return f"N{race_date.strftime('%Y%m%d')}{int(baba_code):02d}"
+
+def _nfkc(text):
+    import unicodedata
+    return unicodedata.normalize('NFKC', str(text or '')).replace(' ', '').strip()
+
+def nar_koryu_classes():
+    """交流競走クラスのシートの行 [(競馬場, 地方のクラス, JRAのクラス)]（シートが無ければ空のシートを作る）"""
+    from flask import has_request_context
+    cache = g.__dict__.setdefault('_sheet_values', {}) if has_request_context() else {}
+    if NAR_KORYU_SHEET not in cache:
+        try:
+            values = horse_sheet_values(NAR_KORYU_SHEET)
+        except gspread.WorksheetNotFound:
+            try:
+                get_or_create_worksheet(gc.open(horse_data), NAR_KORYU_SHEET, NAR_KORYU_COLUMNS)
+            except Exception as e:
+                print(f"{NAR_KORYU_SHEET}シートを作成できませんでした: {e}")
+            values = [NAR_KORYU_COLUMNS]
+        except Exception as e:
+            print(f"{NAR_KORYU_SHEET}シートを読み込めませんでした: {e}")
+            values = [NAR_KORYU_COLUMNS]
+        cache[NAR_KORYU_SHEET] = values
+    rows = []
+    for r in cache[NAR_KORYU_SHEET][1:]:
+        r = list(r) + [''] * 3
+        if _nfkc(r[1]) and r[2].strip():
+            rows.append((_nfkc(r[0]), _nfkc(r[1]), r[2].strip()))
+    return rows
+
+def nar_koryu_jra_class(venue, nar_class):
+    """地方のクラスに当たるJRAのクラス（交流競走クラスのシートから。分からなければ空文字）"""
+    cls = _nfkc(nar_class)
+    if not cls:
+        return ''
+    best = None
+    for v, c, jra in nar_koryu_classes():
+        if (not v or v == _nfkc(venue)) and cls.startswith(c):
+            score = (len(c), bool(v))
+            if best is None or score > best[0]:
+                best = (score, jra)
+    return best[1] if best else ''
+
+def nar_license_no(url):
+    """騎手・調教師のページのURLから (区分, 免許番号)"""
+    m = re.search(r'k_(rider|trainer)LicenseNo=(\w+)', url or '')
+    return (('騎手' if m.group(1) == 'rider' else '調教師'), m.group(2)) if m else (None, None)
+
+def nar_people(keys):
+    """騎手・調教師の (区分, 免許番号) から {(区分, 免許番号): {'name', 'affiliation'}}。
+    騎手調教師のシートに無い人は地方競馬情報サイトのページから取得し、シートに追加する"""
+    from concurrent.futures import ThreadPoolExecutor
+    sh = gc.open(horse_data)
+    ws = get_or_create_worksheet(sh, NAR_PEOPLE_SHEET, NAR_PEOPLE_COLUMNS)
+    known = {}
+    for r in with_sheets_retry(ws.get_all_values)[1:]:
+        r = list(r) + [''] * 4
+        if r[0] and r[1] and r[2]:
+            known[(r[0], r[1])] = {'name': r[2], 'affiliation': r[3]}
+    missing = [k for k in dict.fromkeys(keys) if k[1] and k not in known]
+
+    def _fetch(key):
+        kind, no = key
+        page = 'RiderMark?k_riderLicenseNo=' if kind == '騎手' else 'TrainerMark?k_trainerLicenseNo='
+        try:
+            info = RR.parse_nar_person_page(fetch_nar_html(f"{RR.NAR_BASE}DataRoom/{page}{no}"))
+            return key, info if info.get('name') else None
+        except Exception as e:
+            print(f"{kind}（{no}）のページを取得できませんでした: {e}")
+            return key, None
+
+    new_rows = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for key, info in pool.map(_fetch, missing):
+            if info:
+                known[key] = info
+                new_rows.append([key[0], key[1], info['name'], info['affiliation']])
+    if new_rows:
+        with_sheets_retry(ws.append_rows, new_rows, value_input_option='RAW')
+    return known
+
+def nar_horse_ids_by_name():
+    """Horses・Sire・Damシートの、JRAのURLがある馬の {馬名: [(生年, 馬ID)]}"""
+    out = {}
+    for title, url_col, birth_col in (('Horses', H_JRA_URL, H_BIRTH), ('Sire', P_JRA_URL, P_BIRTH),
+                                      ('Dam', P_JRA_URL, P_BIRTH)):
+        try:
+            rows = horse_sheet_values(title)[1:]
+        except Exception:
+            continue
+        for r in rows:
+            hid = RR.horse_id_from_url(r[url_col] if len(r) > url_col else '')
+            if not hid:
+                continue
+            for n in r[:2]:
+                if n and n.strip():
+                    out.setdefault(n.strip(), []).append((date_year(r[birth_col]) if len(r) > birth_col else None, hid))
+    return out
+
+def prepare_nar_results(parsed_list):
+    """地方のレース結果を保存する前に、騎手・調教師をフルネームにし（調教師は「川崎・山崎 裕也」、
+    JRAの調教師は美浦・栗東シートの表記の調教師名）、登録馬にはJRAの馬IDを付ける"""
+    items = [p for p in parsed_list if p['race'].get('nar') and not p.get('people_done')]
+    if not items:
+        return
+    keys = []
+    for p in items:
+        for r in p['runners']:
+            keys += [nar_license_no(r.get('jockey_url')), nar_license_no(r.get('trainer_url'))]
+    try:
+        people = nar_people([k for k in keys if k[0]])
+    except Exception as e:
+        print(f"騎手・調教師の氏名を取得できませんでした: {e}")
+        people = {}
+    nar_koryu_classes()   # 交流競走クラスのシートが無ければ作っておく（対応表は手で入力する）
+    stables = get_stables_list()
+    try:
+        ids = nar_horse_ids_by_name()
+    except Exception as e:
+        print(f"馬IDの照合に失敗しました: {e}")
+        ids = {}
+    for p in items:
+        year = p['race']['date'].year
+        for r in p['runners']:
+            jockey = people.get(nar_license_no(r.get('jockey_url')))
+            if jockey:
+                r['jockey'] = jockey['name']
+            trainer = people.get(nar_license_no(r.get('trainer_url')))
+            name = trainer['name'] if trainer else r.get('trainer', '')
+            if r.get('affiliation') == 'JRA' or (trainer and 'JRA' in trainer['affiliation']):
+                # JRAの調教師：美浦・栗東シートの調教師と一致すれば、その表記にする
+                s = find_stable_match(stables, '', name) if name else None
+                r['trainer'] = s['display_name'].split('・', 1)[-1] if s else name
+            elif name:
+                area = (trainer or {}).get('affiliation') or r.get('affiliation', '')
+                r['trainer'] = f"{area}・{name}" if area else name
+            # 登録馬（JRAのURLがある馬）なら、馬名と生年が合う馬の馬IDを付ける
+            cands = ids.get(r.get('name', '').strip(), [])
+            age = int(r['age']) if str(r.get('age', '')).isdigit() else None
+            match = [hid for by, hid in cands if not age or not by or by == year - age]
+            if len(set(match)) == 1:
+                r['horse_id'] = match[0]
+        p['people_done'] = True
+
+def search_nar_horse(row):
+    """Horsesシートの馬を地方競馬情報サイトの競走馬検索で探し、出走履歴のページ（HorseMarkInfo）の
+    (URL, HTML) を返す。見つからない・1頭に絞れない場合は (None, 理由)"""
+    name = str(row[H_NAME] if len(row) > H_NAME else '').strip()
+    if not name:
+        return None, '和名が無い馬は地方競馬情報サイトで検索できません'
+    nar_url = str(row[H_NAR_URL] if len(row) > H_NAR_URL else '').strip()
+    m = re.search(r'k_lineageLoginCode=(\d+)', nar_url)
+    if m:
+        url = f"{RR.NAR_BASE}DataRoom/HorseMarkInfo?k_lineageLoginCode={m.group(1)}&k_activeCode=2"
+        return url, fetch_nar_html(url)
+    birth_year = date_year(row[H_BIRTH]) if len(row) > H_BIRTH else None
+    sire = str(row[H_SIRE] if len(row) > H_SIRE else '').strip()
+    dam = str(row[H_DAM] if len(row) > H_DAM else '').strip()
+    params = {'k_horseName': name, 'k_horseNameCondition': 'start',
+              'k_fatherHorse': sire if _JAPANESE_CHAR_RE.search(sire) else '', 'k_fatherHorseCondition': 'start',
+              'k_motherHorse': dam if _JAPANESE_CHAR_RE.search(dam) else '', 'k_motherHorseCondition': 'start',
+              'k_dataKind': '*', 'k_birthYear': str(birth_year or '*'), 'k_horsebelong': '*', 'k_activeCode': '2'}
+    resp = nar_get(NAR_HORSE_SEARCH_URL, params=params)
+    html = resp.content
+    text = html.decode('utf-8', 'ignore')
+    if 'HorseMarkInfo_table' in text:
+        return resp.url, html   # 1頭だけ見つかった場合は出走履歴のページになる
+    if NAR_NO_HORSE_TEXT in text:
+        return None, '地方競馬情報サイトに見つかりませんでした'
+    cands = [c for c in RR.parse_nar_horse_list_page(html) if c['name'] == name
+             and (not birth_year or not c['birth_year'] or c['birth_year'] == birth_year)]
+    if len(cands) > 1:
+        cands = [c for c in cands if (not sire or c['sire'] == sire) and (not dam or c['dam'] == dam)]
+    if len(cands) != 1:
+        return None, ('地方競馬情報サイトに見つかりませんでした' if not cands
+                      else '地方競馬情報サイトで同じ馬名の馬を1頭に絞れませんでした')
+    return cands[0]['url'], fetch_nar_html(cands[0]['url'])
+
+def nar_horse_races(horse_url):
+    """JRAの競走馬（Horsesシートの馬）の地方競馬の出走レースを地方競馬情報サイトから探す。
+    地方競馬登録抹消の日をChangesシートに「地方抹消」として、地方競馬情報サイトの馬主が違えば
+    「馬主変更」（日付は地方抹消の日、仮）として記録する。{'races': [...], 'messages': [...]} を返す"""
+    horse_id = RR.horse_id_from_url(horse_url)
+    sh = gc.open(horse_data)
+    rows = horse_sheet_values("Horses")
+    row_no, row = next(((i, r) for i, r in enumerate(rows[1:], start=2)
+                        if horse_id and RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else '') == horse_id),
+                       (None, None))
+    if not row:
+        return {'races': [], 'messages': ['Horsesシートに無い馬は地方競馬のレースを探せません']}
+    name = display_name_of_row(row)
+    url, html = search_nar_horse(row)
+    if not url:
+        return {'races': [], 'messages': [f"{name}：{html}"]}
+    mark = RR.parse_nar_horse_mark_page(html)
+    races = []
+    for r in mark['races']:
+        info = race_link_info(r['url'], venue=r['venue'])
+        if info:
+            races.append(info)
+    messages = []
+    lm = re.search(r'k_lineageLoginCode=(\d+)', url)
+    profile_url = f"{NAR_HORSE_INFO_URL}?k_lineageLoginCode={lm.group(1)}&k_activeCode=1" if lm else ''
+    if profile_url and not str(row[H_NAR_URL] if len(row) > H_NAR_URL else '').strip():
+        try:
+            sh.worksheet("Horses").update(range_name=f"{col_letter(H_NAR_URL)}{row_no}", values=[[profile_url]])
+        except Exception as e:
+            print(f"NARのURLを記録できませんでした: {e}")
+    migrate_changes_sheet()
+    ws_changes = get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS)
+    change_rows = [list(c) + [''] * len(CHANGES_COLUMNS) for c in with_sheets_retry(ws_changes.get_all_values)[1:]]
+    mine = [c for c in change_rows if c[C_NAME].strip() == name]
+    new_rows = []
+    cancel = mark.get('cancel_date')
+    if cancel:
+        d8 = cancel.strftime('%Y%m%d')
+        if not any(c[C_TYPE].strip() == '地方抹消' and re.sub(r'\D', '', c[C_DATE]) == d8 for c in mine):
+            new_rows.append(changes_row(d8, name, '地方抹消'))
+            messages.append(f"{name}：地方競馬登録抹消（{format_date_jp(cancel)}）をChangesシートに記録")
+        if profile_url:
+            try:
+                nar_owner = fetch_nar_horse_info(profile_url).get('owner', '')
+            except Exception as e:
+                nar_owner = ''
+                print(f"地方競馬情報サイトの馬主を取得できませんでした: {e}")
+            owner = str(row[H_OWNER] if len(row) > H_OWNER else '').strip()
+            key = lambda t: re.sub(r'[\s　]', '', t)
+            if nar_owner and owner and key(nar_owner) != key(owner) and not any(
+                    c[C_TYPE].strip() == '馬主変更' and key(c[C_OLD]) == key(nar_owner) and key(c[C_NEW]) == key(owner)
+                    for c in mine):
+                new_rows.append(changes_row(d8, name, '馬主変更', nar_owner, owner, tentative=True))
+                messages.append(f"{name}：馬主変更（{nar_owner}→{owner}）をChangesシートに記録（日付は地方抹消の日・仮）")
+    if new_rows:
+        with_sheets_retry(ws_changes.append_rows, new_rows)
+        remember_sheet_values("Changes")
+    return {'races': races, 'messages': messages}
+
 @app.route('/api/race_results/preview', methods=['POST'])
 @login_required
 def api_race_results_preview():
     """取り込む前の確認用：レース結果のページを取得し、レース名・この馬の着順を返す（数レースずつ）"""
     data = request.get_json(silent=True) or {}
-    urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:8]
+    urls = [u for u in (data.get('urls') or []) if is_race_result_url(u)][:8]
     horse_id = str(data.get('horse_id') or '')
+    horse_name = str(data.get('horse_name') or '').strip()
     try:
         fetched, failed = fetch_race_results(urls)
         races = []
         for p in fetched:
             race = p['race']
-            mine = next((r for r in p['runners'] if horse_id and r.get('horse_id') == horse_id), None)
+            mine = next((r for r in p['runners'] if (horse_id and r.get('horse_id') == horse_id)
+                         or (race.get('nar') and horse_name and r.get('name') == horse_name)), None)
             title, rank = race_title(race['name'], race['grade'], race['class'], race['jump'])
             place = str(mine['place']) if mine else ''
             races.append({'url': race['url'], 'date_label': format_month_day(race['date']),
@@ -3126,7 +3476,7 @@ def api_race_results_preview():
 def api_race_results_import_races():
     """指定したレースだけの結果を取得して保存する（同じ日の他のレースは取り込まない）"""
     data = request.get_json(silent=True) or {}
-    urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:20]
+    urls = [u for u in (data.get('urls') or []) if is_race_result_url(u)][:20]
     overwrite, recheck = bool(data.get('overwrite')), bool(data.get('recheck'))
     try:
         if not overwrite and not recheck:
@@ -3841,6 +4191,13 @@ def unregistered_runners(parsed_list):
     for parsed in parsed_list:
         for r in parsed['runners']:
             name = r.get('name', '').strip()
+            if parsed['race'].get('nar'):
+                # 地方のレース：JRA所属の馬だけ（JRAの競走馬検索で探す）
+                if not name or name in names or name in seen or r.get('affiliation') != 'JRA':
+                    continue
+                seen.add(name)
+                items.append({'name': name, 'url': ''})
+                continue
             if not name or name in names or name in seen or not r.get('horse_url'):
                 continue
             if any(i in JRA_KAKU_ICONS for i in r.get('icons', [])):
