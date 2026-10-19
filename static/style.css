@@ -2420,3 +2420,17 @@ td.col-last-race {
     margin-top: 8px;
     font-size: 0.9em;
 }
+/* 処理中のスリープ防止の表示 */
+.keep-awake-badge {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 2000;
+    background: #37474f;
+    color: #fff;
+    font-size: 0.8em;
+    padding: 4px 10px;
+    border-radius: 12px;
+    opacity: 0.85;
+    pointer-events: none;
+}
