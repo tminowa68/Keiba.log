@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}{{ horse[0] }} - keiba.log{% endblock %}
 {% block content %}
-<h1>馬名：{{ horse[0] }}</h1>
+<h1>馬名：{{ chiho_mark(horse[0]) }}{{ horse[0] }}</h1>
 <div class="entry-tabs mt-20">
     <a href="/horse/{{ horse[0] }}/profile" class="tab-btn {% if active_tab == 'profile' %}active{% endif %}">プロフィール</a>
     <a href="/horse/{{ horse[0] }}/races" class="tab-btn {% if active_tab == 'races' %}active{% endif %}">出走レース</a>
@@ -458,7 +458,8 @@
                 {% if r.kind in ('change', 'rest', 'cancel') %}
                 <tr class="{{ {'rest': 'rest-row', 'cancel': 'cancel-row'}.get(r.kind, 'transfer-row') }}{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
-                    <td class="nowrap">{{ r.date_label }}</td>
+                    {# 同じ日の記録は日付の欄を1つにまとめる #}
+                    {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
                     <td class="bl" colspan="17">{{ r.text }}</td>
                 </tr>
                 {% else %}

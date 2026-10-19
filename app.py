@@ -2223,7 +2223,10 @@ def race_label(r):
     「2026/11/1 東京11R 天皇賞（秋）(G1) 1着」「2026/10/4 東京5R 2歳未勝利 1着」（特別戦はレース名の後に格を付ける）"""
     d = r['date']
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
-    if r['name']:
+    if r.get('nar'):
+        rank = r.get('grade') or nar_class_mark(r.get('class'))   # 地方のレースはすべてクラスを付ける
+        name = (r['name'] or rank) + (f"({rank})" if rank and r['name'] else '')
+    elif r['name']:
         rank = race_rank(r['name'], r.get('grade'), r.get('class'))
         name = r['name'] + (f"({rank})" if rank else '')
     else:
@@ -2280,13 +2283,24 @@ def total_prize(results):
     return RR.prize_sum(r.get('prize') for r in results)
 
 _RACE_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s+(.+)\s+(\S+)$')
-_RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス)\)$')
+# 格：G1〜G3・L・OP・〇勝クラス、地方のレースはクラス（「3歳2」「C1」など）
+_RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス|[^()\s]{1,12})\)$')
 _CONDITION_RACE_RE = re.compile(r'^(障害)?\d歳(以上)?(.+)$')
 
-def race_title(name, grade='', race_class='', jump=False):
+def nar_class_mark(race_class):
+    """地方のレースのクラスのマーク（全角を半角にする。「３歳２」→「3歳2」、オープンはOP）"""
+    import unicodedata
+    cls = unicodedata.normalize('NFKC', str(race_class or '')).replace(' ', '').strip()
+    return 'OP' if cls in ('オープン', 'OP') else cls
+
+def race_title(name, grade='', race_class='', jump=False, nar=False):
     """レース名の表示（index・出走履歴・週間レポートで共通）：(表示名, 格)。
     特別戦は冠を除いてステークスなどを略し、格（G1〜G3・L・OP・〇勝クラス）を付ける。
-    条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする"""
+    条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする。
+    地方のレース（nar=True）は、すべてのレースにクラス（重賞はグレード）を付ける"""
+    if nar:
+        rank = grade or nar_class_mark(race_class)
+        return (short_race_name(name), rank) if name else (rank, '')
     if name:
         cond = _CONDITION_RACE_RE.match(name)
         if cond and not grade:
@@ -2376,7 +2390,7 @@ def is_filly_only(marks):
 
 def history_race_title(r):
     """出走履歴などのレース名（race_detailへのリンク）と、格・牝馬限定・別定・ハンデのマーク（この順）"""
-    title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'))
+    title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
     return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']),
                            race_mark_list(r.get('rule'), r.get('weight_rule')))
 
@@ -2403,6 +2417,45 @@ def add_race_weight_rules(results):
             if r.get('race_id') in rules:
                 r['weight_rule'] = rules[r['race_id']]
     return results
+
+# --- マル地（地方の厩舎に所属したことがあり、現在はJRAの厩舎の馬）：馬名の先頭に「地」を丸で囲んだマークを付ける ---
+JRA_AREAS = ('美浦', '栗東')
+
+def chiho_horse_names():
+    """マル地の馬名の集合：Changesシートに地方抹消・再転入、または地方の厩舎（「川崎・〇〇」など）からの転厩の記録があり、
+    Horsesシートの拠点が美浦・栗東の馬（1回の画面の処理の中では覚えておく）"""
+    from flask import has_request_context
+    if has_request_context() and '_chiho_names' in g.__dict__:
+        return g._chiho_names
+    names = set()
+    try:
+        nar = set()
+        for c in horse_sheet_values("Changes")[1:]:
+            c = list(c) + [''] * len(CHANGES_COLUMNS)
+            kind, old = c[C_TYPE].strip(), c[C_OLD].strip()
+            area = old.split('・', 1)[0] if '・' in old else ''
+            if kind in ('地方抹消', '再転入') or (kind == '転厩' and area and area not in JRA_AREAS):
+                nar.add(c[C_NAME].strip())
+        if nar:
+            for r in horse_sheet_values("Horses")[1:]:
+                name = display_name_of_row(r)
+                if name in nar and len(r) > H_AREA and str(r[H_AREA]).strip() in JRA_AREAS:
+                    names.add(name)
+    except Exception as e:
+        print(f"マル地の馬の確認に失敗しました: {e}")
+    if has_request_context():
+        g._chiho_names = names
+    return names
+
+def chiho_mark(name):
+    """マル地の馬なら、馬名の前に付けるマーク"""
+    from markupsafe import Markup
+    if str(name or '').strip() in chiho_horse_names():
+        return Markup('<span class="chiho-mark" title="地方競馬出身">地</span>')
+    return Markup('')
+
+app.jinja_env.globals['chiho_mark'] = chiho_mark
+app.jinja_env.globals['is_chiho'] = lambda name: str(name or '').strip() in chiho_horse_names()
 
 app.jinja_env.filters['race_parts'] = race_parts
 app.jinja_env.filters['race_inline'] = race_inline_html
@@ -2483,16 +2536,22 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     items = []
     for r in race_results:
         items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0), dict(r, kind='race')))
+    # 同じ日の記録は上から JRA・地方抹消、去勢、転厩、馬主変更の順（新しい順に並べるため、上に出すものほど大きい値）
+    order = {'去勢': 3, '転厩': 2, '馬主変更': 1}
     for c in changes_history:
         kind = str(c.get('項目', '')).strip()
         d = parse_full_date(str(c.get('年月日', '')))
-        if kind not in ('転厩', '去勢') or not d:
+        if kind not in ('転厩', '去勢', '馬主変更', '地方抹消') or not d:
             continue
-        text = f"{kind}：{c.get('旧', '')}→{c.get('新', '')}"
         # 「仮」の記録（レースの結果から推定した日付）は日付を表示しない
         tentative = str(c.get('仮', '')).strip() == '仮'
-        items.append(((d, 0, 0), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
-                                  'date_label': '' if tentative else format_date_jp(d, weekday=True), 'text': text}))
+        if kind == '地方抹消':
+            items.append(((d, 2, 1), {'kind': 'cancel', 'date': d, 'tentative': tentative, 'date_label': '',
+                                      'text': '地方競馬登録を抹消'}))
+            continue
+        text = f"{kind}：{c.get('旧', '')}→{c.get('新', '')}"
+        items.append(((d, 0, order[kind]), {'kind': 'change', 'type': kind, 'date': d, 'tentative': tentative,
+                                            'date_label': '', 'text': text}))
     # レースの間が中8週以上空いていれば「休養：2ヶ月」の行を入れる
     chrono = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
     for before, after in zip(chrono, chrono[1:]):
@@ -2509,7 +2568,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
                                                'date_label': '', 'text': text}))
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
-        items.append(((d, 2, 0), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
+        items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -2517,6 +2576,19 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
             item['date_label'] = format_month_day(item['date'])
         elif not item.get('tentative'):
             item['date_label'] = format_month_day(item['date'])
+    # 同じ日の抹消・去勢・転厩・馬主変更の行は、日付の欄を1つにまとめる（「仮」の行だけなら日付は表示しない）
+    i = 0
+    while i < len(history):
+        j = i
+        while j < len(history) and history[j]['kind'] in ('change', 'cancel') \
+                and history[i]['kind'] in ('change', 'cancel') and history[j]['date'] == history[i]['date']:
+            j += 1
+        if j - i > 1:
+            label = next((x['date_label'] for x in history[i:j] if x['date_label']), '')
+            history[i]['date_label'], history[i]['date_rowspan'] = label, j - i
+            for x in history[i + 1:j]:
+                x['date_merged'] = True
+        i = max(j, i + 1)
     i = 0
     while i < len(history):
         year = history[i]['date'].year
@@ -3472,7 +3544,7 @@ def api_race_results_preview():
             race = p['race']
             mine = next((r for r in p['runners'] if (horse_id and r.get('horse_id') == horse_id)
                          or (race.get('nar') and horse_name and r.get('name') == horse_name)), None)
-            title, rank = race_title(race['name'], race['grade'], race['class'], race['jump'])
+            title, rank = race_title(race['name'], race['grade'], race['class'], race['jump'], race.get('nar'))
             place = str(mine['place']) if mine else ''
             races.append({'url': race['url'], 'date_label': format_month_day(race['date']),
                           'venue_num': f"{race['venue']}{race['num']}R",
@@ -7218,7 +7290,7 @@ def next_race_entries(horse_name, horse_id=''):
             rank = ENTRY_RANK.get(e['entry'], 0)
             if any(x['is_result'] for x in same) or any(ENTRY_RANK.get(x['entry'], 0) > rank for x in same):
                 continue
-            title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'])
+            title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'], e.get('nar'))
             prog = find_program_race(e['date'], e['venue'], e['num']) if str(e['num']).isdigit() else None
             marks = race_mark_list(e['rule'] or (prog or {}).get('marks'), (prog or {}).get('weight_rule'))
             out.append({'sort_key': (e['date'], int(e['num']) if str(e['num']).isdigit() else 0),
@@ -7262,7 +7334,9 @@ def read_race_result(race_date, venue, num):
                                                   c('記号'), c('重量')) if x),
                 'course': course_label(c('コース'), detail, dist, jump),
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
-                'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース')}
+                'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース'),
+                # 地方のレースは、グレードの無いレースにもクラスのマークを付ける
+                'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード') else ''}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
 
     def _order(x):

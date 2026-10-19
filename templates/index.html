@@ -88,7 +88,7 @@
                     </td>
                     <td class="col-name">
                         {% if has_alert %}<span class="alert-mark">!</span>{% endif %}
-                        <a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a>
+                        {{ chiho_mark(horse[0]) }}<a href="/horse/{{ horse[0] }}">{{ horse[0] }}</a>
                     </td>
                     <td class="col-gender {% if horse[2] == '牝' %}female-text{% endif %}">{{ horse[2] }}</td>
                     <td class="col-age">
@@ -116,6 +116,7 @@ const allHorsesData = [
                 {% if horse|length > 12 and (horse[12] is none or horse[12]|string|trim == '') %}{% set has_alert = true %}{% endif %}
     {
         name: "{{ horse[0] }}",
+        chiho: {{ 'true' if is_chiho(horse[0]) else 'false' }},
         gender: "{{ horse[2] }}",
         age: {% if horse[3] %}{{ current_year - horse[3].year }}{% else %}null{% endif %},
         sire: "{{ horse[4] }}",
@@ -517,7 +518,7 @@ function renderAgeTables() {
                             <td class="col-status">${renderStatusCell(h)}</td>
                             <td class="col-name">
                                 ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
-                                <a href="/horse/${h.name}">${h.name}</a>
+                                ${h.chiho ? '<span class="chiho-mark" title="地方競馬出身">地</span>' : ''}<a href="/horse/${h.name}">${h.name}</a>
                             </td>
                             <td class="col-gender ${genderClass}">${h.gender}</td>
                             <td class="col-age">${h.age || '-'}歳</td>
@@ -576,7 +577,7 @@ function renderAgeTables() {
                                 <td class="col-status">${renderStatusCell(h)}</td>
                                 <td class="col-name">
                                     ${h.hasAlert ? '<span class="alert-mark">!</span>' : ''}
-                                    <a href="/horse/${h.name}">${h.name}</a>
+                                    ${h.chiho ? '<span class="chiho-mark" title="地方競馬出身">地</span>' : ''}<a href="/horse/${h.name}">${h.name}</a>
                                 </td>
                                 <td class="col-gender ${genderClass}">${h.gender}</td>
                                 ${label === '5歳以上' ? `<td class="col-age">${h.age}歳</td>` : ''}
