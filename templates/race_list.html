@@ -58,7 +58,6 @@
                     <th class="col-num">レース<br>番号</th>
                     <th class="col-details">レース名<br>出走条件</th>
                     <th class="col-course">コース</th>
-                    <th class="col-note">備考</th>
                 </tr>
             </thead>
             <tbody>
@@ -73,16 +72,13 @@
                         <td class="col-details">
                             {% if race.name %}
                                 <span class="race-name">{{ race.name|short_race_name }}</span>
-                                {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}
-                                <div class="race-condition">{{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</div>
+                                {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule) }}
+                                <div class="race-condition">{{ race.condition }}</div>
                             {% else %}
-                                <div class="race-condition race-condition-only">{{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</div>
+                                <div class="race-condition race-condition-only">{{ race.condition }}{{ race_marks(race.marks, race.weight_rule) }}</div>
                             {% endif %}
                         </td>
-                        <td class="col-course">{{ race.course }}</td>
-                        <td class="col-note" style="text-align: center; font-weight: bold;">
-                            {% if race.note == '牝' %}<span class="female-text">牝</span>{% endif %}
-                        </td>
+                        <td class="col-course"><span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(race.surface, '') }}">{{ race.course }}</span></td>
                     </tr>
                     {% endif %}
                 {% endfor %}
