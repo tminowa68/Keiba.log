@@ -2251,7 +2251,8 @@ def race_label(r):
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
     if r.get('nar'):
         # 地方のレースは、レース名にクラスの表記が無ければクラスを付ける
-        rank = r.get('grade') or ('' if RR.nar_name_has_class(r['name'], r.get('class')) else nar_class_mark(r.get('class')))
+        rank = nar_grade_label(r.get('grade')) or ('' if RR.nar_name_has_class(r['name'], r.get('class'))
+                                                   else nar_class_mark(r.get('class')))
         name = (r['name'] or rank) + (f"({rank})" if rank and r['name'] else '')
     elif r['name']:
         rank = race_rank(r['name'], r.get('grade'), r.get('class'))
@@ -2317,6 +2318,10 @@ _RACE_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s+(.+)
 _RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス|[^()\s]{1,12})\)$')
 _CONDITION_RACE_RE = re.compile(r'^(障害)?\d歳(以上)?(.+)$')
 
+def nar_grade_label(grade):
+    """地方の重賞の格付けの表示（G1〜G3として記録したものを Jpn1〜Jpn3 にする）"""
+    return f"Jpn{grade[1:]}" if re.fullmatch(r'G[1-3]', str(grade or '')) else str(grade or '')
+
 def nar_class_mark(race_class):
     """地方のレースのクラスのマーク（全角を半角にする。「３歳２」→「3歳2」、オープンはOP）"""
     import unicodedata
@@ -2332,7 +2337,7 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
         name = re.sub(r'\s*九州産$', '', str(name or '')) or name   # 九州産は「九州」のマークで表す
         name = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
         # 地方のレースは、レース名にクラスの表記が無い場合だけクラスを付ける（重賞はグレード）
-        rank = grade or ('' if RR.nar_name_has_class(name, race_class) else nar_class_mark(race_class))
+        rank = nar_grade_label(grade) or ('' if RR.nar_name_has_class(name, race_class) else nar_class_mark(race_class))
         return (short_race_name(name), rank) if name else (rank, '')
     if name:
         cond = _CONDITION_RACE_RE.match(name)
@@ -2383,7 +2388,7 @@ def race_title_html(title, rank='', url='', marks=()):
     from markupsafe import Markup, escape
     html = f'<a href="{escape(url)}">{escape(title)}</a>' if url else str(escape(title))
     if rank:
-        key = rank.replace('J・', '').lower()
+        key = re.sub(r'^jpn', 'g', rank.replace('J・', '').lower())   # 地方の重賞（Jpn1〜3）はG1〜G3と同じ色
         cls = f"grade-{key}" if re.fullmatch(r'g\d|l|op', key) else 'grade-class'
         html += f' <span class="grade-badge {cls}">{escape(rank)}</span>'
     if marks:
@@ -7478,6 +7483,7 @@ def read_race_result(race_date, venue, num):
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
                 'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース'),
                 # 地方のレースは、グレードの無いレースにもクラスのマークを付ける
+                'grade_text': nar_grade_label(c('グレード')) if c('レースID').startswith('N') else c('グレード'),
                 'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード')
                 and not RR.nar_name_has_class(c('レース名'), c('クラス')) else ''}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
