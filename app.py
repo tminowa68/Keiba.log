@@ -1650,7 +1650,7 @@ RUNNER_SHEET_COLUMNS = ["レースID", "年月日", "場", "R", "レース名", 
                         "年齢", "斤量", "減量", "騎手", "タイム", "着差", "通過順", "上り", "馬体重", "増減",
                         "調教師", "人気", "本賞金"]
 RUNNER_COL = {name: i for i, name in enumerate(RUNNER_SHEET_COLUMNS)}
-# 成績シートの「登録」：想定・特別（特別レース登録馬）・確定。レース結果の行は確定。
+# 成績シートの「登録」：想定・特別（特別レース登録馬）・確定。レース結果の行は確定（空欄も確定として読む）。
 # 想定・特別・確定（枠順確定前）の記録の行は、レースIDの代わりに「E年月日場R」（例：E20261025京都11）を入れる
 ENTRY_RANK = {'想定': 1, '特別': 2, '確定': 3}
 
@@ -1665,8 +1665,15 @@ RESULT_BOOK_MISSING_TTL = 600
 
 _runner_columns_ready = set()   # 「登録」の列を確認した成績シート（ファイルのID）
 
+def _blank_header(text):
+    """列を追加した時に付く仮の見出し（空欄・Googleスプレッドシートの表の「Column 35」など）か"""
+    text = str(text or '').strip()
+    return not text or bool(re.fullmatch(r'Column\s*\d*', text))
+
 def ensure_runner_entry_column(book):
-    """成績シートの馬IDの右に「登録」の列が無ければ追加し、記録されている行は全て「確定」にする（1回だけ）"""
+    """成績シートの馬IDの右に「登録」の列が無ければ追加する（1回だけ）。値が空欄の行は「確定」として読むため、
+    全行に値は書き込まない（行数が多いと時間がかかるため）。
+    以前の追加の途中で止まって残った列（馬IDと性別の間の余分な列・本賞金の右の空の列）も整理する"""
     if not book or book.id in _runner_columns_ready:
         return
     try:
@@ -1675,15 +1682,29 @@ def ensure_runner_entry_column(book):
         _runner_columns_ready.add(book.id)
         return
     header = with_sheets_retry(ws.row_values, 1)
-    idx = RUNNER_COL['登録']
-    if len(header) > idx and header[idx] == '登録':
+    if '馬ID' not in header or '性別' not in header:
         _runner_columns_ready.add(book.id)
         return
-    if len(header) > idx - 1 and header[idx - 1] == '馬ID':
-        rows = len(with_sheets_retry(ws.col_values, 1))
-        ensure_columns(ws, len(header) + 1)
-        with_sheets_retry(ws.insert_cols, [['登録'] + ['確定'] * max(rows - 1, 0)], col=idx + 1,
-                          value_input_option='RAW')
+    i_id, i_sex = header.index('馬ID'), header.index('性別')
+    between = header[i_id + 1:i_sex]
+    if between == ['登録']:
+        pass
+    elif not between:
+        with_sheets_retry(ws.insert_cols, [['登録']], col=i_id + 2, value_input_option='RAW')
+        header = header[:i_id + 1] + ['登録'] + header[i_id + 1:]
+    elif all(_blank_header(h) or h == '登録' for h in between):
+        # 余分な列を消して1列にし、見出しを「登録」にする
+        if len(between) > 1:
+            with_sheets_retry(ws.delete_columns, i_id + 3, i_id + 1 + len(between))
+            header = header[:i_id + 2] + header[i_sex:]
+        with_sheets_retry(ws.update, range_name=f"{col_letter(i_id + 1)}1", values=[['登録']])
+        header[i_id + 1] = '登録'
+    # 本賞金より右の空の列（以前の追加で増えた列）を消す
+    if '本賞金' in header:
+        last = header.index('本賞金')
+        extra = len(header) - last - 1
+        if extra > 0 and all(_blank_header(h) for h in header[last + 1:]):
+            with_sheets_retry(ws.delete_columns, last + 2, len(header))
     _runner_columns_ready.add(book.id)
 
 def get_result_book(year, create=False):
