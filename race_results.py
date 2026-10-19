@@ -330,14 +330,15 @@ def _age_group(category):
 NAR_KORYU_SHUTOKU = {'オープン': 1000, '3勝クラス': 900, '2勝クラス': 600, '1勝クラス': 500, '未勝利': 400}
 
 
-def nar_shutoku_amount(place, prize, grade, affiliation, jra_class=''):
+def nar_shutoku_amount(place, prize, grade, affiliation, jra_class='', race_class=''):
     """地方競馬のレースの収得賞金（万円。JRAの番組 一般事項の「本会以外の競走」の取扱い）。
     1着：本賞金（B）が1,200万円以上なら1/2、400万円以上なら400万円、10万円以上ならB、10万円未満なら10万円。
     JRA所属馬が指定交流競走（重賞以外）で1着なら、地方のクラスに当たるJRAのクラス（jra_class）の額。
     2着：地方の重賞か、地方所属の期間で本賞金（S）が100万円以上なら、Sが480万円以上なら1/2、160万円以上なら160万円、
     それ未満ならS。いずれも10万円未満は切り捨て"""
     prize = prize or 0
-    graded = grade in ('G1', 'G2', 'G3')
+    # 地方の重賞：Jpn1〜3（G1〜G3として記録）か、格組が「重賞」のレース
+    graded = grade in ('G1', 'G2', 'G3') or _nfkc(race_class) == '重賞'
     jra = affiliation == 'JRA'
     if place == 1:
         if jra and not graded and jra_class in NAR_KORYU_SHUTOKU:
@@ -361,7 +362,7 @@ def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule
     if place not in (1, 2):
         return 0
     if nar:
-        return nar_shutoku_amount(place, prize, grade, affiliation, jra_class)
+        return nar_shutoku_amount(place, prize, grade, affiliation, jra_class, race_class)
     graded = grade in ('G1', 'G2', 'G3')
     if place == 2 and not graded:
         return 0
@@ -680,7 +681,9 @@ NAR_VENUES = ('帯広', '門別', '札幌', '旭川', '岩見沢', '北見', '�
               '高知', '佐賀', '荒尾', '中津')
 NAR_RACE_RESULT_URL = NAR_BASE + 'TodayRaceInfo/RaceMarkTable'
 _NAR_RACE_URL_RE = re.compile(r'RaceMarkTable\?k_raceDate=(\d{4})(?:%2F|/)(\d{1,2})(?:%2F|/)(\d{1,2})&(?:amp;)?k_raceNo=(\d+)&(?:amp;)?k_babaCode=(\d+)')
-_NAR_GRADE_RE = re.compile(r'(Jpn|ＪＰＮ|Ｊｐｎ)\s*([ⅠⅡⅢＩIｌ1-3１-３]+)')
+# 地方の重賞の格付け「JpnＩ」「JpnII」「JpnⅢ」など。直後に「２歳」などが続いても（「JpnII２歳」）、
+# 格付けの部分だけを取るように長いものから順に試す
+_NAR_GRADE_RE = re.compile(r'(Jpn|JPN|ＪＰＮ|Ｊｐｎ)\s*(Ⅲ|Ⅱ|Ⅰ|III|II|I|ＩＩＩ|ＩＩ|Ｉ|lll|ll|l|[1-3１-３](?![0-9０-９]))')
 
 
 def nar_text(el):
@@ -721,7 +724,7 @@ def nar_grade(text):
     m = _NAR_GRADE_RE.search(text or '')
     if not m:
         return ''
-    roman = m.group(2).translate(str.maketrans('ＩIｌ１２３', 'ⅠⅠⅠ123'))
+    roman = m.group(2).translate(str.maketrans('ＩIlｌ１２３', 'ⅠⅠⅠⅠ123'))
     roman = {'ⅠⅠⅠ': '3', 'ⅠⅠ': '2', 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3'}.get(roman, roman)
     return f"G{roman}" if roman in ('1', '2', '3') else ''
 
@@ -769,7 +772,11 @@ def parse_nar_race_page(html_or_soup, url=''):
     race_class = ''
     gm = _NAR_GRADE_RE.search(name)
     if gm:
-        name = name[:gm.start()].strip()
+        # 格付けの部分だけを除く（「全日本２歳優駿【国際交流JpnＩ】」→「全日本２歳優駿【国際交流】」）。
+        # 後ろに続く条件・格組（「兵庫ジュニアグランプリJpnII２歳」の「２歳」、「JpnＩオープン」の「オープン」）は除き、
+        # 閉じかっこだけ残す
+        rest = re.match(r'[\s】）)〕」]*', name[gm.end():]).group(0)
+        name = (name[:gm.start()] + rest).strip()
     data = [nar_text(li) for li in title.select('ul.dataArea li')]
     first = data[0] if data else ''
     # 九州産馬限定（「たんぽぽ賞３歳九州産」）：レース名の末尾の「九州産」は除き、記号に「九州産」を入れる

@@ -48,7 +48,7 @@
 
     {% if race %}
     <section class="race-header-card">
-        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% elif race.nar_class %} <span class="grade-badge {{ 'grade-op' if race.nar_class == 'OP' else 'grade-class' }}">{{ race.nar_class }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule, race.name) }}</h1>
+        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade_text or race.grade }}</span>{% elif race.nar_class %} <span class="grade-badge {{ 'grade-op' if race.nar_class == 'OP' else 'grade-class' }}">{{ race.nar_class }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule, race.name) }}</h1>
         <div class="race-info-main">
             {{ date|jpdate(weekday=True) }} ／ {{ heading }} ／ {{ race.num }}
         </div>
