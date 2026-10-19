@@ -3037,11 +3037,65 @@ def api_race_results_horse_races():
     """JRAの競走馬情報のページの「出走レース」から、各レースのレース結果のURLと取り込み済みかどうかを返す"""
     data = request.get_json(silent=True) or {}
     try:
-        urls = RR.parse_horse_race_urls(fetch_jra_html(str(data.get('url') or '')))
+        html = fetch_jra_html(str(data.get('url') or ''))
+        urls = RR.parse_horse_race_urls(html)
         races = [info for info in (race_link_info(u) for u in urls) if info]
     except Exception as e:
         return jsonify({'error': f'競走馬のページを読み取れませんでした: {e}'}), 400
-    return jsonify({'races': races})
+    transfers = []
+    try:
+        transfers = record_horse_transfers(str(data.get('url') or ''), RR.parse_horse_transfers(html))
+    except Exception as e:
+        print(f"転出・転入の記録に失敗しました: {e}")
+    return jsonify({'races': races, 'transfers': transfers})
+
+def record_horse_transfers(horse_url, transfers):
+    """JRAの競走馬情報の「JRAから転出」「JRAへ転入」を記録する。転出は抹消日として抹消シートに、
+    転入は競走馬登録日としてHorsesシートに（既に登録日があれば書き換えず、Changesシートに再転入として）記録する。
+    記録した内容の文の一覧を返す"""
+    if not transfers:
+        return []
+    horse_id = RR.horse_id_from_url(horse_url)
+    sh = gc.open(horse_data)
+    ws_h = sh.worksheet("Horses")
+    rows = ws_h.get_all_values()
+    row_no, row = next(((i, r) for i, r in enumerate(rows[1:], start=2)
+                        if horse_id and RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else '') == horse_id),
+                       (None, None))
+    if not row:
+        return []
+    name = display_name_of_row(row)
+    messages = []
+    ws_cancel = get_or_create_worksheet(sh, "抹消", ["年月日", "馬名"])
+    cancel_rows = ws_cancel.get_all_values()[1:]
+    cancelled = {(re.sub(r'\D', '', r[0]), r[1].strip()) for r in cancel_rows if len(r) > 1}
+    migrate_changes_sheet()
+    ws_changes = sh.worksheet("Changes")
+    change_rows = ws_changes.get_all_values()[1:]
+    reg = str(row[H_REGISTRATION]).strip() if len(row) > H_REGISTRATION else ''
+    new_cancel, new_changes = [], []
+    for t in sorted(transfers, key=lambda t: t['date']):
+        d8 = t['date'].strftime('%Y%m%d')
+        if t['type'] == '転出':
+            if (d8, name) not in cancelled:
+                new_cancel.append([d8, name])
+                cancelled.add((d8, name))
+                messages.append(f"{name}：JRAから転出（{format_date_jp(t['date'])}）を抹消シートに記録")
+        elif not reg:
+            reg = d8
+            ensure_columns(ws_h, len(HORSE_COLUMNS))
+            ws_h.update(range_name=f"{col_letter(H_REGISTRATION)}{row_no}", values=[[d8]])
+            messages.append(f"{name}：JRAへ転入（{format_date_jp(t['date'])}）を競走馬登録日に記録")
+        elif re.sub(r'\D', '', reg) != d8 and not any(
+                len(c) > C_NEW and c[C_NAME].strip() == name and c[C_TYPE].strip() == '再転入'
+                and re.sub(r'\D', '', c[C_NEW]) == d8 for c in change_rows):
+            new_changes.append(changes_row(d8, name, '再転入', reg, d8))
+            messages.append(f"{name}：JRAへ再転入（{format_date_jp(t['date'])}）をChangesシートに記録")
+    if new_cancel:
+        ws_cancel.append_rows(new_cancel)
+    if new_changes:
+        ws_changes.append_rows(new_changes)
+    return messages
 
 @app.route('/api/race_results/preview', methods=['POST'])
 @login_required
@@ -4659,7 +4713,7 @@ def import_trainer_page(html_text):
         reregistered = []  # 再登録した馬（Changesに再登録の記録がある。抹消の記録は残す）
         try:
             reregistered_names = {r[C_NAME].strip() for r in horse_sheet_values("Changes")[1:]
-                                  if len(r) > C_TYPE and r[C_TYPE].strip() == '再登録'}
+                                  if len(r) > C_TYPE and r[C_TYPE].strip() in ('再登録', '再転入')}
         except Exception:
             reregistered_names = set()
 

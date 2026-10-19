@@ -596,3 +596,23 @@ def parse_special_race_page(html_or_soup):
             race['grade'] = g
             break
     return {'race': race, 'horses': horses}
+
+
+def parse_horse_transfers(html_or_soup):
+    """JRAの競走馬情報のページの「出走レース」の表から、リンクの無い「JRAから転出」「JRAへ転入」の行を
+    [{'type': '転出'／'転入', 'date': 日付}] で返す"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '出走レース' not in _text(caption):
+            continue
+        for tr in table.find_all('tr'):
+            text = _text(tr)
+            kind = '転出' if 'JRAから転出' in text else ('転入' if 'JRAへ転入' in text else '')
+            m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
+            if kind and m:
+                item = {'type': kind, 'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3)))}
+                if item not in out:
+                    out.append(item)
+    return out

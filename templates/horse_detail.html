@@ -766,13 +766,15 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const data = await RaceImport.post('/api/race_results/horse_races', { url: btn.dataset.url });
             const todo = (data.races || []).filter(r => !r.imported);
+            // JRAからの転出・JRAへの転入を記録した場合は、その内容も表示する
+            const notes = (data.transfers || []).length ? '　' + data.transfers.join('／') : '';
             if (!todo.length) {
-                status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。`;
+                status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。` + notes;
                 preview.style.display = 'none';
                 btn.disabled = false;
                 return;
             }
-            status.textContent = '';
+            status.textContent = notes.trim();
             preview.style.display = '';
             todo.forEach(r => {
                 const card = document.createElement('div');
