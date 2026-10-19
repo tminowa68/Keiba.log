@@ -59,7 +59,7 @@
 {# 日付・馬名・性別・馬齢（data-col は並び順で選んだ列の背景色を変えるための目印） #}
 {% macro horse_cells(h) %}
             <td class="num nowrap" data-col="date">{{ h.date_label }}</td>
-            <td class="bl" data-col="name">{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+            <td class="bl" data-col="name">{{ chiho_mark(h.name) }}{% if h.linkable %}<a href="/horse/{{ h.name }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
             <td class="col-gender {{ 'female-text' if h.gender == '牝' }}">{{ h.gender }}</td>
             <td class="col-age" data-col="age">{{ h.age }}</td>
 {%- endmacro %}

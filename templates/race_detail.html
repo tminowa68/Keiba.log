@@ -48,7 +48,7 @@
 
     {% if race %}
     <section class="race-header-card">
-        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule) }}</h1>
+        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% elif race.nar_class %} <span class="grade-badge {{ 'grade-op' if race.nar_class == 'OP' else 'grade-class' }}">{{ race.nar_class }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule) }}</h1>
         <div class="race-info-main">
             {{ date|jpdate(weekday=True) }} ／ {{ heading }} ／ {{ race.num }}
         </div>
@@ -136,7 +136,7 @@
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
                     <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
-                    <td class="nowrap">{% if r.registered %}<a href="/horse/{{ r.horse_name|urlencode }}"><strong>{{ r.horse_name }}</strong></a>{% else %}{{ r.horse_name }}{% endif %}</td>
+                    <td class="nowrap">{{ chiho_mark(r.horse_name) }}{% if r.registered %}<a href="/horse/{{ r.horse_name|urlencode }}"><strong>{{ r.horse_name }}</strong></a>{% else %}{{ r.horse_name }}{% endif %}</td>
                     <td class="nowrap">{{ r.sex }}{{ r.age }}</td>
                     <td>{{ r.weight }}</td>
                     <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
@@ -168,7 +168,7 @@
             <tbody>
                 {% for h in t.horses %}
                 <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }}>
-                    <td class="nowrap">{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+                    <td class="nowrap">{{ chiho_mark(h.name) }}{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
                     <td class="nowrap">{{ h.gender }}{{ h.age }}</td>
                     <td>{{ h.weight }}</td>
                     <td class="nowrap">{{ h['class'] }}</td>
