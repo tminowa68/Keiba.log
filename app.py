@@ -2250,7 +2250,8 @@ def race_label(r):
     d = r['date']
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
     if r.get('nar'):
-        rank = r.get('grade') or nar_class_mark(r.get('class'))   # 地方のレースはすべてクラスを付ける
+        # 地方のレースは、レース名にクラスの表記が無ければクラスを付ける
+        rank = r.get('grade') or ('' if RR.nar_name_has_class(r['name'], r.get('class')) else nar_class_mark(r.get('class')))
         name = (r['name'] or rank) + (f"({rank})" if rank and r['name'] else '')
     elif r['name']:
         rank = race_rank(r['name'], r.get('grade'), r.get('class'))
@@ -2325,7 +2326,8 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
     条件戦は〇歳・〇歳以上を除いたクラス（未勝利・1勝クラスなど。障害は「障害未勝利」など）だけにする。
     地方のレース（nar=True）は、すべてのレースにクラス（重賞はグレード）を付ける"""
     if nar:
-        rank = grade or nar_class_mark(race_class)
+        # 地方のレースは、レース名にクラスの表記が無い場合だけクラスを付ける（重賞はグレード）
+        rank = grade or ('' if RR.nar_name_has_class(name, race_class) else nar_class_mark(race_class))
         return (short_race_name(name), rank) if name else (rank, '')
     if name:
         cond = _CONDITION_RACE_RE.match(name)
@@ -3304,6 +3306,49 @@ NAR_HORSE_SEARCH_URL = RR.NAR_BASE + 'DataRoom/RaceHorseList'
 NAR_HORSE_INFO_URL = RR.NAR_BASE + 'DataRoom/RaceHorseInfo'
 NAR_NO_HORSE_TEXT = 'ご指定の競走馬データベース画面の情報がありません'
 
+# 地方のレースのクラス（格組）：レースID → 格組（馬の出走履歴のページ HorseMarkInfo の格組の列から）
+_nar_class_cache = {}
+
+def nar_mark_url(lineage_code):
+    return f"{RR.NAR_BASE}DataRoom/HorseMarkInfo?k_lineageLoginCode={lineage_code}&k_activeCode=2"
+
+def remember_nar_classes(mark):
+    """出走履歴のページから読み取ったレースの格組を覚えておく"""
+    if len(_nar_class_cache) > 20000:
+        _nar_class_cache.clear()
+    for r in mark.get('races', []):
+        if r.get('race_id') and r.get('class'):
+            _nar_class_cache[r['race_id']] = r['class']
+
+def apply_nar_classes(parsed_list, fetch=True):
+    """地方のレースのクラスに、出走履歴のページ（ActiveCode=2）の格組の列を入れる（レース名の末尾の格組は除く）。
+    覚えている格組が無いレースは、fetch=True なら出走馬の出走履歴のページを取得して調べる"""
+    from concurrent.futures import ThreadPoolExecutor
+    items = [p for p in parsed_list if p['race'].get('nar') and not p.get('class_done')]
+
+    def _lookup(p):
+        rid = p['race']['race_id']
+        if rid in _nar_class_cache or not fetch:
+            return
+        for r in [r for r in p['runners'] if r.get('nar_id')][:3]:
+            try:
+                remember_nar_classes(RR.parse_nar_horse_mark_page(fetch_nar_html(nar_mark_url(r['nar_id']))))
+            except Exception as e:
+                print(f"{r.get('name')}の出走履歴のページを取得できませんでした: {e}")
+            if rid in _nar_class_cache:
+                return
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(_lookup, items))
+    for p in items:
+        cls = _nar_class_cache.get(p['race']['race_id'])
+        if cls is not None:
+            RR.apply_nar_class(p['race'], cls)
+            p['class_done'] = True
+        elif fetch:
+            p['race']['class'] = ''
+            p['class_done'] = True
+
 def nar_get(url, params=None):
     """地方競馬情報サイトのページを取得する（keiba.go.jp 以外のURLは取得しない）"""
     if not is_nar_url(url):
@@ -3419,6 +3464,7 @@ def nar_horse_ids_by_name():
 def prepare_nar_results(parsed_list):
     """地方のレース結果を保存する前に、騎手・調教師をフルネームにし（調教師は「川崎・山崎 裕也」、
     JRAの調教師は美浦・栗東シートの表記の調教師名）、登録馬にはJRAの馬IDを付ける"""
+    apply_nar_classes(parsed_list)   # クラスは出走履歴のページの格組
     items = [p for p in parsed_list if p['race'].get('nar') and not p.get('people_done')]
     if not items:
         return
@@ -3470,7 +3516,7 @@ def search_nar_horse(row):
     nar_url = str(row[H_NAR_URL] if len(row) > H_NAR_URL else '').strip()
     m = re.search(r'k_lineageLoginCode=(\d+)', nar_url)
     if m:
-        url = f"{RR.NAR_BASE}DataRoom/HorseMarkInfo?k_lineageLoginCode={m.group(1)}&k_activeCode=2"
+        url = nar_mark_url(m.group(1))
         return url, fetch_nar_html(url)
     birth_year = date_year(row[H_BIRTH]) if len(row) > H_BIRTH else None
     sire = str(row[H_SIRE] if len(row) > H_SIRE else '').strip()
@@ -3521,6 +3567,7 @@ def nar_horse_races(horse_url):
     if not url:
         return {'races': [], 'messages': [f"{name}：{html}"]}
     mark = RR.parse_nar_horse_mark_page(html)
+    remember_nar_classes(mark)
     races = []
     for r in mark['races']:
         info = race_link_info(r['url'], venue=r['venue'])
@@ -3576,6 +3623,7 @@ def api_race_results_preview():
     horse_name = str(data.get('horse_name') or '').strip()
     try:
         fetched, failed = fetch_race_results(urls)
+        apply_nar_classes(fetched, fetch=False)
         races = []
         for p in fetched:
             race = p['race']
@@ -3791,6 +3839,31 @@ def api_program_upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify(program_result_message(saved, failed))
+
+@app.route('/api/race_results/repair_nar', methods=['POST'])
+@login_required
+def api_race_results_repair_nar():
+    """取り込み済みの地方のレース（year 年のファイル）を取得し直して入れ替え、レース名・クラス（格組）などを修復する
+    （offset から数レースずつ）。{'total', 'next', 'saved', 'failed'} を返す"""
+    data = request.get_json(silent=True) or {}
+    year, offset = int(data.get('year') or datetime.now().year), int(data.get('offset') or 0)
+    limit = min(int(data.get('limit') or 4), 10)
+    try:
+        sheets = result_sheets(year)
+        if not sheets:
+            return jsonify({'total': 0, 'next': 0, 'saved': 0, 'failed': []})
+        url_idx = RACE_SHEET_COLUMNS.index('JRAのURL')
+        rows = with_sheets_retry(sheets[0].get_all_values)[1:]
+        urls = sorted({r[url_idx] for r in rows if r and str(r[0]).startswith('N') and len(r) > url_idx
+                       and RR.parse_nar_race_url(r[url_idx])})
+        chunk = urls[offset:offset + limit]
+        for u in chunk:
+            _race_page_cache.pop(u, None)   # 覚えているページではなく、取得し直したページで修復する
+        fetched, failed = fetch_race_results(chunk)
+        saved, _ = save_race_results(fetched, overwrite=True) if fetched else ([], [])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'total': len(urls), 'next': offset + limit, 'saved': len(saved), 'failed': failed})
 
 @app.route('/api/race_results/update_horse', methods=['POST'])
 @login_required
@@ -7388,7 +7461,8 @@ def read_race_result(race_date, venue, num):
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
                 'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース'),
                 # 地方のレースは、グレードの無いレースにもクラスのマークを付ける
-                'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード') else ''}
+                'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード')
+                and not RR.nar_name_has_class(c('レース名'), c('クラス')) else ''}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
 
     def _order(x):
