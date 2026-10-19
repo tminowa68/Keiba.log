@@ -665,9 +665,6 @@ NAR_VENUES = ('帯広', '門別', '札幌', '旭川', '岩見沢', '北見', '�
               '高知', '佐賀', '荒尾', '中津')
 NAR_RACE_RESULT_URL = NAR_BASE + 'TodayRaceInfo/RaceMarkTable'
 _NAR_RACE_URL_RE = re.compile(r'RaceMarkTable\?k_raceDate=(\d{4})(?:%2F|/)(\d{1,2})(?:%2F|/)(\d{1,2})&(?:amp;)?k_raceNo=(\d+)&(?:amp;)?k_babaCode=(\d+)')
-# 地方競馬の格組（レース名の後ろに付く「３歳２」「Ｃ１」「Ａ２一」「新２歳６イ」「オープン」など）
-_NAR_CLASS_RE = re.compile(r'((?:新)?(?:[２３４2-4]歳(?:以上)?)?(?:[ＡＢＣA-C][０-９\d]*[一二三四五六七八九十]*[イロハニホヘト]?'
-                           r'|[０-９\d]+[組]?[一二三四五六七八九十]*[イロハニホヘト]?|オープン|ＯＰ|新馬|未格付|選抜))$')
 _NAR_GRADE_RE = re.compile(r'(Jpn|ＪＰＮ|Ｊｐｎ)\s*([ⅠⅡⅢＩIｌ1-3１-３]+)')
 
 
@@ -752,16 +749,12 @@ def parse_nar_race_page(html_or_soup, url=''):
     # レース名：「第３９回」と、グレード・格組（「JpnＩオープン」「３歳２」など）を除く
     name = re.sub(r'^第\s*[\d０-９]+\s*回\s*', '', name_text)
     name = re.sub(r'\s*〔[^〕]*〕\s*', ' ', name).strip()   # 「〔Ｒｏａｄ ｔｏ ＪＢＣ〕」などの副題を除く
+    # クラス（格組）はレース名からは判定しない（馬の出走履歴のページ HorseMarkInfo の格組の列を使う：
+    # apply_nar_class）。グレード（JpnＩなど）から後ろはレース名に含めない
     race_class = ''
     gm = _NAR_GRADE_RE.search(name)
     if gm:
-        race_class = name[gm.end():].strip()
         name = name[:gm.start()].strip()
-    else:
-        cm2 = _NAR_CLASS_RE.search(name)
-        if cm2 and cm2.start() > 0:
-            race_class = cm2.group(1)
-            name = name[:cm2.start()].strip()
     data = [nar_text(li) for li in title.select('ul.dataArea li')]
     first = data[0] if data else ''
     dm = re.search(r'(ダート|芝|障害)\s*([\d,]+)\s*[ｍm]', first)
@@ -851,13 +844,36 @@ def parse_nar_horse_mark_page(html_or_soup):
         url = a.get('href', '') if a else ''
         if not dm or not parse_nar_race_url(url):
             continue
+        info = parse_nar_race_url(url)
         races.append({'date': date(int(dm.group(1)), int(dm.group(2)), int(dm.group(3))), 'venue': nar_text(tds[1]),
-                      'num': nar_text(tds[2]), 'name': nar_text(tds[3]), 'url': urljoin(NAR_BASE, url)})
+                      'num': nar_text(tds[2]), 'name': nar_text(tds[3]), 'url': urljoin(NAR_BASE, url),
+                      'race_id': nar_race_id(*info), 'class': nar_text(tds[4]) if len(tds) > 4 else ''})
     text = nar_text(soup.body or soup)
     cm = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*地方競馬登録抹消', text)
     name_el = soup.find('h4', class_='odd_title') or soup.find('h3')
     return {'name': nar_text(name_el), 'races': races,
             'cancel_date': date(int(cm.group(1)), int(cm.group(2)), int(cm.group(3))) if cm else None}
+
+
+def _nfkc(text):
+    import unicodedata
+    return unicodedata.normalize('NFKC', str(text or '')).replace(' ', '')
+
+
+def nar_name_has_class(name, race_class):
+    """レース名にクラス（格組）の表記が含まれているか（全角・半角は区別しない）"""
+    return bool(_nfkc(race_class)) and _nfkc(race_class) in _nfkc(name)
+
+
+def apply_nar_class(race, race_class):
+    """地方のレースのクラスに格組を入れ、レース名の末尾に格組が付いていれば除く
+    （「頬白（ほおじろ）賞３歳２」→「頬白（ほおじろ）賞」。レース名が格組だけなら、そのまま残す）"""
+    race_class = (race_class or '').strip()
+    race['class'] = race_class
+    name, n = race.get('name', ''), len(race_class)
+    if n and len(name) > n and _nfkc(name[-n:]) == _nfkc(race_class):
+        race['name'] = name[:-n].strip()
+    return race
 
 
 def parse_nar_horse_list_page(html_or_soup):

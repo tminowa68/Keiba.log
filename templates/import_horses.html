@@ -504,6 +504,51 @@
 </script>
 
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>地方のレースの修復</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        取り込み済みの地方のレースを地方競馬情報サイトから取得し直して、成績のレース名・クラス（出走履歴のページの格組）・騎手・調教師などを入れ替えます。
+        出走した登録馬のクラス・最新レースなども計算し直します。
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+        <label>年：<input type="number" id="nr-from" style="width:6em;"> 〜 <input type="number" id="nr-to" style="width:6em;"></label>
+        <button type="button" id="nr-btn" class="rr-btn">修復する</button>
+    </div>
+    <div id="nr-message" style="margin-top:10px; font-size:0.9em;"></div>
+</section>
+
+<script>
+(function() {
+    const btn = document.getElementById('nr-btn'), msg = document.getElementById('nr-message');
+    const thisYear = new Date().getFullYear();
+    document.getElementById('nr-from').value = thisYear - 3;
+    document.getElementById('nr-to').value = thisYear;
+    btn.addEventListener('click', async () => {
+        const from = parseInt(document.getElementById('nr-from').value, 10) || thisYear;
+        const to = parseInt(document.getElementById('nr-to').value, 10) || thisYear;
+        btn.disabled = true;
+        msg.style.color = '';
+        let saved = 0, failed = 0;
+        try {
+            for (let year = Math.max(from, to); year >= Math.min(from, to); year--) {
+                let offset = 0, total = null;
+                do {
+                    msg.textContent = `${year}年：` + (total === null ? '地方のレースを確認しています...' : `取得し直しています（${Math.min(offset, total)}／${total}レース）...`);
+                    const res = await RaceImport.post('/api/race_results/repair_nar', { year: year, offset: offset, limit: 4 });
+                    total = res.total; offset = res.next; saved += res.saved; failed += (res.failed || []).length;
+                } while (offset < total);
+            }
+            msg.textContent = `完了しました（${saved}レースを修復` + (failed ? `、${failed}レースは取得に失敗` : '') + '）。';
+        } catch (e) {
+            msg.style.color = '#c62828';
+            msg.textContent = e.message;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+})();
+</script>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>クラス・最新レースの再計算</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         Horsesシートの「クラス」「最新レース」「主な実績」「総本賞金」などの列を、取り込んだレース結果から計算し直します（競走馬一覧・週間レポートに表示します）。
