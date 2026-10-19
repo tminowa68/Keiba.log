@@ -48,14 +48,14 @@
 
     {% if race %}
     <section class="race-header-card">
-        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}</h1>
+        <h1>{{ race.name if race.name else race.condition }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule) }}</h1>
         <div class="race-info-main">
             {{ date|jpdate(weekday=True) }} ／ {{ heading }} ／ {{ race.num }}
         </div>
         <div class="race-info-sub">
             {% if race.time %}<span><strong>発走時刻:</strong> {{ race.time }}</span>{% endif %}
             <span><strong>出走条件:</strong> {{ race.condition }}{% if race.weight_rule %} {{ race.weight_rule }}{% endif %}</span>
-            <span><strong>コース:</strong> {{ race.course }}</span>
+            <span><strong>コース:</strong> <span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(race.surface, '') }}">{{ race.course }}</span></span>
             {% if result_race %}
                 {% if result_race.weather %}<span><strong>天候:</strong> {{ result_race.weather }}</span>{% endif %}
                 {% if result_race.going %}<span><strong>馬場:</strong> {{ result_race.going }}</span>{% endif %}

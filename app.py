@@ -2197,19 +2197,53 @@ def race_label(r):
         name = r['name'] + (f"({rank})" if rank else '')
     else:
         name = ('障害' if r.get('jump') else '') + f"{r['category']}{r['class']}"
+    # 牝馬限定・別定・ハンデのマーク（例：天皇賞（秋）(G1)[ハンデ]）
+    name += ''.join(f"[{m}]" for m in race_mark_list(r.get('rule'), r.get('weight_rule')))
     return f"{d.year}/{d.month}/{d.day} {r['venue']}{r['num']}R {name} {place}".strip()
+
+def race_mark_list(marks, weight_rule):
+    """レース名に付けるマーク：牝馬限定なら「牝」、重量が別定・ハンデならその重量（定量・馬齢は付けない）"""
+    out = ['牝'] if is_filly_only(marks) else []
+    if str(weight_rule or '').strip() in ('別定', 'ハンデ'):
+        out.append(str(weight_rule).strip())
+    return out
+
+def race_marks_html(marks, weight_rule=''):
+    """牝馬限定・別定・ハンデのマーク（marks がマークの一覧ならそのまま使う）"""
+    from markupsafe import Markup
+    items = marks if isinstance(marks, list) else race_mark_list(marks, weight_rule)
+    cls = {'牝': 'race-mark-filly', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
+    return Markup(''.join(f' <span class="race-mark {cls.get(m, "")}">{m}</span>' for m in items))
+
+app.jinja_env.globals['race_marks'] = race_marks_html
 
 def last_race_label(results):
     """Horsesシートに記録する最新レース"""
     return race_label(results[0]) if results else ''
 
-def best_race_label(results):
-    """Horsesシートに記録する主な実績：本賞金が最も高かったレースと着順（同じ金額なら新しいレース）。
-    本賞金を得たレースが無ければ空欄"""
+def best_race_result(results):
+    """本賞金が最も高かったレース（同じ金額なら新しいレース）。本賞金を得たレースが無ければ None"""
     earned = [r for r in results if r.get('prize')]
-    if not earned:
-        return ''
-    return race_label(max(earned, key=lambda r: (r['prize'], r['date'])))
+    return max(earned, key=lambda r: (r['prize'], r['date'])) if earned else None
+
+def add_label_weight_rules(result_lists):
+    """Horsesシートなどに記録する最新レース・主な実績のレースに、レースシートの重量（別定・ハンデのマーク用）を付ける"""
+    picked = []
+    for res in result_lists:
+        if res:
+            picked.append(res[0])
+            best = best_race_result(res)
+            if best is not None:
+                picked.append(best)
+    try:
+        add_race_weight_rules(picked)
+    except Exception as e:
+        print(f"レースの重量の読み込みエラー: {e}")
+
+def best_race_label(results):
+    """Horsesシートに記録する主な実績：本賞金が最も高かったレースと着順。本賞金を得たレースが無ければ空欄"""
+    best = best_race_result(results)
+    return race_label(best) if best else ''
 
 def total_prize(results):
     return sum(r.get('prize') or 0 for r in results)
@@ -2248,6 +2282,8 @@ def parse_race_label(text):
             return None
         y, race_date, venue, num = parts[0], None, '', ''
     rank = ''
+    mm = re.match(r'^(.*?)((?:\[(?:牝|別定|ハンデ)\])*)$', name)
+    name, marks = mm.group(1), re.findall(r'\[(牝|別定|ハンデ)\]', mm.group(2))
     m = _RANK_SUFFIX_RE.match(name)
     if m:
         name, rank = m.group(1), m.group(2)
@@ -2259,19 +2295,21 @@ def parse_race_label(text):
     else:
         title = short_race_name(name)
     return {'date': race_date, 'year': int(y), 'venue': venue, 'num': num, 'title': title, 'rank': rank,
-            'place': place[:-1] if place.endswith('着') else place}
+            'marks': marks, 'place': place[:-1] if place.endswith('着') else place}
 
 def race_detail_url(race_date, venue, num):
     return f"/race_detail?date={race_date.isoformat()}&venue={quote(venue)}&num={num}"
 
-def race_title_html(title, rank='', url=''):
-    """レース名（race_detailへのリンク）と格のバッジ"""
+def race_title_html(title, rank='', url='', marks=()):
+    """レース名（race_detailへのリンク）と格のバッジ、牝馬限定・別定・ハンデのマーク（この順）"""
     from markupsafe import Markup, escape
     html = f'<a href="{escape(url)}">{escape(title)}</a>' if url else str(escape(title))
     if rank:
         key = rank.replace('J・', '').lower()
         cls = f"grade-{key}" if re.fullmatch(r'g\d|l|op', key) else 'grade-class'
         html += f' <span class="grade-badge {cls}">{escape(rank)}</span>'
+    if marks:
+        html += str(race_marks_html(list(marks)))
     return Markup(html)
 
 def race_parts(text, year_only=False):
@@ -2286,7 +2324,7 @@ def race_parts(text, year_only=False):
     else:
         when = f"{p['date'].year}/{p['date'].month}/{p['date'].day}"
     url = race_detail_url(p['date'], p['venue'], p['num']) if p['date'] else ''
-    return {'when': when, 'title_html': race_title_html(p['title'], p['rank'], url), 'place': p['place'],
+    return {'when': when, 'title_html': race_title_html(p['title'], p['rank'], url, p['marks']), 'place': p['place'],
             'venue_num': f"{p['venue']}{p['num']}R" if p['venue'] else ''}
 
 def race_inline_html(text):
@@ -2306,15 +2344,10 @@ def is_filly_only(marks):
     return '牝' in marks and '牡' not in marks
 
 def history_race_title(r):
-    """出走履歴のレース名（race_detailへのリンク）と、格・牝馬限定・ハンデのマーク（この順）"""
-    from markupsafe import Markup
+    """出走履歴などのレース名（race_detailへのリンク）と、格・牝馬限定・別定・ハンデのマーク（この順）"""
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'))
-    html = str(race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num'])))
-    if is_filly_only(r.get('rule')):
-        html += ' <span class="race-mark race-mark-filly">牝</span>'
-    if r.get('weight_rule') == 'ハンデ':
-        html += ' <span class="race-mark race-mark-handicap">ハンデ</span>'
-    return Markup(html)
+    return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']),
+                           race_mark_list(r.get('rule'), r.get('weight_rule')))
 
 def add_race_weight_rules(results):
     """出走成績にレースシートの重量（馬齢・定量・別定・ハンデ）を付ける（成績シートには重量の列が無いため）"""
@@ -2729,6 +2762,7 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
                        'horse_id': RR.horse_id_from_url(r[H_JRA_URL] if len(r) > H_JRA_URL else ''),
                        'birth_year': date_year(r[H_BIRTH]) if len(r) > H_BIRTH else None})
     results = collect_race_results(horses)
+    add_label_weight_rules(results.values())
     # レースの間で調教師・性別が変わっていれば、転厩・去勢としてChangesシートに記録する
     stables = get_stables_list()
     try:
@@ -2796,6 +2830,7 @@ def update_parent_class_columns(title, offset=0, limit=None):
     horses = [{'key': i, 'name': name, 'horse_id': RR.horse_id_from_url(r[P_JRA_URL] if len(r) > P_JRA_URL else ''),
                'birth_year': date_year(r[P_BIRTH]) if len(r) > P_BIRTH else None} for i, r, name in targets]
     results = collect_race_results(horses)
+    add_label_weight_rules(results.values())
     updates = []
     for h in horses:
         res = results.get(h['key'], [])
@@ -5084,6 +5119,7 @@ def weekly():
     if missing:
         try:
             found = collect_race_results(list(missing.values()))
+            add_label_weight_rules(found.values())
             for h in cancelled + pasture + changes:
                 if h['name'] in found:
                     if not _RACE_LABEL_RE.match(h['best']):
@@ -6691,6 +6727,11 @@ def previous_race_info(horses, race_date, jump=False):
             birth_year = int(str(horse_id)[:4])
         targets.append({'key': name, 'name': name, 'horse_id': horse_id or '', 'birth_year': birth_year})
     found = collect_race_results(targets, until_year=race_date.year)
+    try:
+        add_race_weight_rules([next(r for r in found.get(t['key'], []) if r['date'] < race_date)
+                               for t in targets if any(r['date'] < race_date for r in found.get(t['key'], []))])
+    except Exception as e:
+        print(f"レースの重量の読み込みエラー: {e}")
     out = {}
     for t in targets:
         res = [r for r in found.get(t['key'], []) if r['date'] < race_date]
@@ -6740,10 +6781,12 @@ def next_race_entries(horse_name, horse_id=''):
             if any(x['is_result'] for x in same) or any(ENTRY_RANK.get(x['entry'], 0) > rank for x in same):
                 continue
             title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'])
+            prog = find_program_race(e['date'], e['venue'], e['num']) if str(e['num']).isdigit() else None
+            marks = race_mark_list(e['rule'] or (prog or {}).get('marks'), (prog or {}).get('weight_rule'))
             out.append({'sort_key': (e['date'], int(e['num']) if str(e['num']).isdigit() else 0),
                         'date_label': format_month_day(e['date']), 'date': e['date'].isoformat(),
                         'venue': e['venue'], 'num': e['num'],
-                        'title_html': race_title_html(title, grade_rank, race_detail_url(e['date'], e['venue'], e['num'])),
+                        'title_html': race_title_html(title, grade_rank, race_detail_url(e['date'], e['venue'], e['num']), marks),
                         'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class']) if x),
                         'course': f"{e['surface']}{e['distance']}" if e['distance'] else e['surface'],
                         'surface': e['surface'],
@@ -6781,7 +6824,8 @@ def read_race_result(race_date, venue, num):
                 'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
                                                   c('記号'), c('重量')) if x),
                 'course': f"障 {dist_label}（{detail}）" if jump and detail else f"{detail or c('コース')} {dist_label}".strip(),
-                'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数')}
+                'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
+                'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース')}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
 
     def _order(x):
@@ -6822,6 +6866,7 @@ def race_detail():
         e = runners[0]
         dist = str(e['distance'])
         race = {'name': e['name'], 'grade': e['grade'], 'num': f"{num}レース", 'race_num': num, 'jump': e['jump'],
+                'marks': e['rule'], 'surface': e['surface'],
                 'category': e['category'], 'class': e['class'], 'time': '',
                 'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class'], e['rule']) if x),
                 'course': f"{e['surface']} {int(dist):,}m" if dist.isdigit() else e['surface']}
@@ -6988,17 +7033,21 @@ def compute_relative_bests(horses, limit_seconds=12):
     last_year = max(reg.year for _, reg, _ in targets)
     results = collect_race_results([{'key': n, 'name': n, 'horse_id': ids.get(n, ''),
                                      'birth_year': names[n]['birth_year']} for n in names], until_year=last_year)
-    out = {}
+    chosen = {}
     for key, reg, rels in targets:
-        best = ('', 0, '')
+        best = ('', 0, None)
         for rel in rels:
             res = [r for r in results.get(rel['name'], []) if r['date'] <= reg]
             total = total_prize(res)
             if total > best[1]:
                 label = f"{rel['name']}（{rel['relation']}）" if rel['relation'] else rel['name']
-                best = (label, total, best_race_label(res))
-        out[key] = best
-    return out
+                best = (label, total, best_race_result(res))
+        chosen[key] = best
+    try:
+        add_race_weight_rules([b[2] for b in chosen.values() if b[2]])
+    except Exception as e:
+        print(f"レースの重量の読み込みエラー: {e}")
+    return {key: (label, total, race_label(r) if r else '') for key, (label, total, r) in chosen.items()}
 
 def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire_disp,
                            horse_status, horse_has_url, horse_has_alert,
