@@ -404,11 +404,11 @@
     {% if race_summary_data.flat.kokyu %}
     <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ "{:,}".format(race_summary_data.flat.kokyu.before) }}万円 → {{ "{:,}".format(race_summary_data.flat.kokyu.after) }}万円）</p>
     {% endif %}
-    <p class="race-summary-note">JRAのレース結果を取り込んだレースから計算しています（取り込みは「データ更新」の「レース結果 インポート」から）。</p>
+    <p class="race-summary-note">JRA・地方のレース結果を取り込んだレースから計算しています（取り込みは「データ更新」の「レース結果 インポート」から）。</p>
     {% set jra_url = horse[13] if horse|length > 13 and horse[13] and 'jra.go.jp' in horse[13] else '' %}
     {% if jra_url %}
     <div class="race-import-box">
-        <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}">JRAの出走レースを取り込む</button>
+        <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}" data-name="{{ horse[0] }}">出走レースを取り込む（JRA・地方）</button>
         <label><input type="checkbox" id="race-import-whole-day" checked> 同じ日の全レースも取り込む</label>
         <label><input type="checkbox" id="race-import-register" checked> 未登録の出走馬を登録する</label>
         <span id="race-import-status" class="race-import-status"></span>
@@ -529,7 +529,7 @@
                     <td>{{ '' if change.get('仮', '')|string|trim == '仮' else change.get('年月日', '')|jpdate }}</td>
                     <td>{{ change.get('項目', '') }}</td>
                     <td>{{ change.get('旧', '') }}</td>
-                    <td class="history-arrow">→</td>
+                    <td class="history-arrow">{{ '→' if change.get('旧', '') or change.get('新', '') else '' }}</td>
                     <td>{{ change.get('新', '') }}</td>
                 </tr>
                 {% endfor %}
@@ -761,18 +761,20 @@ document.addEventListener('DOMContentLoaded', function() {
         btn.disabled = true;
         startBtn.disabled = true;
         status.style.color = '';
-        status.textContent = 'JRAの競走馬情報を読み込んでいます...';
+        status.textContent = 'JRAの競走馬情報（地方のレースがあれば地方競馬情報サイト）を読み込んでいます...';
         cards.innerHTML = '';
         try {
             const data = await RaceImport.post('/api/race_results/horse_races', { url: btn.dataset.url });
             const todo = (data.races || []).filter(r => !r.imported);
+            // JRAからの転出・JRAへの転入を記録した場合は、その内容も表示する
+            const notes = (data.transfers || []).length ? '　' + data.transfers.join('／') : '';
             if (!todo.length) {
-                status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。`;
+                status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。` + notes;
                 preview.style.display = 'none';
                 btn.disabled = false;
                 return;
             }
-            status.textContent = '';
+            status.textContent = notes.trim();
             preview.style.display = '';
             todo.forEach(r => {
                 const card = document.createElement('div');
@@ -786,7 +788,8 @@ document.addEventListener('DOMContentLoaded', function() {
             for (let i = 0; i < todo.length; i += 4) {
                 const chunk = todo.slice(i, i + 4);
                 try {
-                    const res = await RaceImport.post('/api/race_results/preview', { urls: chunk.map(r => r.url), horse_id: horseId });
+                    const res = await RaceImport.post('/api/race_results/preview', { urls: chunk.map(r => r.url), horse_id: horseId,
+                                                                                       horse_name: btn.dataset.name || '' });
                     (res.races || []).forEach(p => {
                         const card = cards.querySelector(`.race-card[data-url="${CSS.escape(p.url)}"]`);
                         if (!card) return;

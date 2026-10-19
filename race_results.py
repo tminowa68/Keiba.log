@@ -304,6 +304,12 @@ def is_special_race_name(race_name):
     name = (race_name or '').strip()
     return bool(name) and not re.match(r'^(障害)?\d歳', name)
 
+def prize_sum(prizes):
+    """本賞金（万円）の合計。地方競馬の本賞金は1万円未満の端数があるため小数1桁にし、整数ならintで返す"""
+    total = round(sum(float(p or 0) for p in prizes), 1)
+    return int(total) if total == int(total) else total
+
+
 def _floor10(man):
     """10万円未満の端数を切り捨てる（単位は万円）"""
     return int(man) // 10 * 10
@@ -320,10 +326,42 @@ def _age_group(category):
     return '3以上'
 
 
-def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule, place, prize):
-    """1回の出走で収得賞金に算入する額（万円）。算入しない場合は0"""
+# JRA所属馬が地方の指定交流競走（重賞以外）で1着になったときの収得賞金（交流競走の地方のクラスに当たるJRAのクラス）
+NAR_KORYU_SHUTOKU = {'オープン': 1000, '3勝クラス': 900, '2勝クラス': 600, '1勝クラス': 500, '未勝利': 400}
+
+
+def nar_shutoku_amount(place, prize, grade, affiliation, jra_class=''):
+    """地方競馬のレースの収得賞金（万円。JRAの番組 一般事項の「本会以外の競走」の取扱い）。
+    1着：本賞金（B）が1,200万円以上なら1/2、400万円以上なら400万円、10万円以上ならB、10万円未満なら10万円。
+    JRA所属馬が指定交流競走（重賞以外）で1着なら、地方のクラスに当たるJRAのクラス（jra_class）の額。
+    2着：地方の重賞か、地方所属の期間で本賞金（S）が100万円以上なら、Sが480万円以上なら1/2、160万円以上なら160万円、
+    それ未満ならS。いずれも10万円未満は切り捨て"""
+    prize = prize or 0
+    graded = grade in ('G1', 'G2', 'G3')
+    jra = affiliation == 'JRA'
+    if place == 1:
+        if jra and not graded and jra_class in NAR_KORYU_SHUTOKU:
+            return NAR_KORYU_SHUTOKU[jra_class]
+        if prize >= 1200:
+            return _floor10(prize / 2)
+        if prize >= 400:
+            return 400
+        return _floor10(prize) if prize >= 10 else 10
+    if place == 2 and (graded or (not jra and prize >= 100)):
+        if prize >= 480:
+            return _floor10(prize / 2)
+        return 160 if prize >= 160 else _floor10(prize)
+    return 0
+
+
+def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule, place, prize,
+                   nar=False, affiliation='', jra_class=''):
+    """1回の出走で収得賞金に算入する額（万円）。算入しない場合は0。
+    地方競馬のレース（nar=True）は nar_shutoku_amount（2021年6月4日以前も同じ扱い）"""
     if place not in (1, 2):
         return 0
+    if nar:
+        return nar_shutoku_amount(place, prize, grade, affiliation, jra_class)
     graded = grade in ('G1', 'G2', 'G3')
     if place == 2 and not graded:
         return 0
@@ -415,7 +453,7 @@ def summarize_results(results, birth_year=None, today=None):
         rows = sorted([r for r in results if bool(r.get('jump')) == jump],
                       key=lambda r: (r.get('date') or date.min, str(r.get('num', '')).zfill(2)))
         started = [r for r in rows if r.get('place') not in ('取消', '除外', '')]
-        total_prize = sum(int(r.get('prize') or 0) for r in rows)
+        total_prize = prize_sum(r.get('prize') for r in rows)
         shutoku = 0
         kokyu = None
         for r in rows:
@@ -425,7 +463,8 @@ def summarize_results(results, birth_year=None, today=None):
             place = int(r['place']) if str(r.get('place', '')).isdigit() else None
             r['shutoku'] = shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
                                           r.get('grade', ''), r.get('name', ''), r.get('rule', ''),
-                                          place, int(r.get('prize') or 0))
+                                          place, r.get('prize') or 0, nar=bool(r.get('nar')),
+                                          affiliation=r.get('affiliation', ''), jra_class=r.get('nar_jra_class', ''))
             shutoku += r['shutoku']
         if not jump and kokyu_date and not kokyu and today >= kokyu_date and shutoku:
             kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
@@ -596,3 +635,278 @@ def parse_special_race_page(html_or_soup):
             race['grade'] = g
             break
     return {'race': race, 'horses': horses}
+
+
+def parse_horse_transfers(html_or_soup):
+    """JRAの競走馬情報のページの「出走レース」の表から、リンクの無い「JRAから転出」「JRAへ転入」の行を
+    [{'type': '転出'／'転入', 'date': 日付}] で返す"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '出走レース' not in _text(caption):
+            continue
+        for tr in table.find_all('tr'):
+            text = _text(tr)
+            kind = '転出' if 'JRAから転出' in text else ('転入' if 'JRAへ転入' in text else '')
+            m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
+            if kind and m:
+                item = {'type': kind, 'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3)))}
+                if item not in out:
+                    out.append(item)
+    return out
+
+
+# --- 地方競馬（地方競馬情報サイト keiba.go.jp） ---
+NAR_BASE = 'https://www.keiba.go.jp/KeibaWeb/'
+# JRAの出走レースの表で、リンクの無い行の競馬場がこれらなら地方競馬のレース（地方競馬情報サイトの所属場の地域）
+NAR_VENUES = ('帯広', '門別', '札幌', '旭川', '岩見沢', '北見', '盛岡', '水沢', '上山', '新潟', '三条', '足利', '宇都宮',
+              '高崎', '浦和', '船橋', '大井', '川崎', '金沢', '笠松', '名古屋', '中京', '園田', '姫路', '益田', '福山',
+              '高知', '佐賀', '荒尾', '中津')
+NAR_RACE_RESULT_URL = NAR_BASE + 'TodayRaceInfo/RaceMarkTable'
+_NAR_RACE_URL_RE = re.compile(r'RaceMarkTable\?k_raceDate=(\d{4})(?:%2F|/)(\d{1,2})(?:%2F|/)(\d{1,2})&(?:amp;)?k_raceNo=(\d+)&(?:amp;)?k_babaCode=(\d+)')
+# 地方競馬の格組（レース名の後ろに付く「３歳２」「Ｃ１」「Ａ２一」「新２歳６イ」「オープン」など）
+_NAR_CLASS_RE = re.compile(r'((?:新)?(?:[２３４2-4]歳(?:以上)?)?(?:[ＡＢＣA-C][０-９\d]*[一二三四五六七八九十]*[イロハニホヘト]?'
+                           r'|[０-９\d]+[組]?[一二三四五六七八九十]*[イロハニホヘト]?|オープン|ＯＰ|新馬|未格付|選抜))$')
+_NAR_GRADE_RE = re.compile(r'(Jpn|ＪＰＮ|Ｊｐｎ)\s*([ⅠⅡⅢＩIｌ1-3１-３]+)')
+
+
+def nar_text(el):
+    """地方競馬情報サイトの文字（全角スペースも詰める）"""
+    return re.sub(r'[\s　]+', ' ', el.get_text(' ') if el else '').strip()
+
+
+def nar_person_name(text):
+    """地方競馬情報サイトの人名（「山　崎　　裕　也」のように1文字ずつ全角スペースで区切り、姓と名の間は2つ）を
+    「山崎 裕也」にする"""
+    text = (text or '').strip()
+    text = re.sub(r'[（(][^）)]*[）)]\s*$', '', text).strip()   # 「（JRA）」「（退厩）」などの所属を除く
+    text = re.sub(r'　{2,}|\s{2,}', ' ', text)
+    return re.sub(r'[　]', '', text).strip()
+
+
+def nar_race_url(race_date, race_no, baba_code):
+    return (f"{NAR_RACE_RESULT_URL}?k_raceDate={race_date.year}%2F{race_date.month:02d}%2F{race_date.day:02d}"
+            f"&k_raceNo={int(race_no)}&k_babaCode={int(baba_code)}")
+
+
+def parse_nar_race_url(url):
+    """地方のレース結果のURLから (年月日, レース番号, 競馬場コード)。読み取れなければ None"""
+    m = _NAR_RACE_URL_RE.search(url or '')
+    if not m:
+        return None
+    y, mo, d, no, baba = m.groups()
+    return date(int(y), int(mo), int(d)), int(no), int(baba)
+
+
+def nar_race_id(race_date, race_no, baba_code):
+    """地方のレースのレースID（N年月日・競馬場コード2桁・レース番号2桁）"""
+    return f"N{race_date.strftime('%Y%m%d')}{int(baba_code):02d}{int(race_no):02d}"
+
+
+def nar_grade(text):
+    """「JpnＩ」「JpnⅡ」などをG1〜G3にそろえる（地方重賞の格付け。該当しなければ空文字）"""
+    m = _NAR_GRADE_RE.search(text or '')
+    if not m:
+        return ''
+    roman = m.group(2).translate(str.maketrans('ＩIｌ１２３', 'ⅠⅠⅠ123'))
+    roman = {'ⅠⅠⅠ': '3', 'ⅠⅠ': '2', 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3'}.get(roman, roman)
+    return f"G{roman}" if roman in ('1', '2', '3') else ''
+
+
+def _yen_to_man(text):
+    """円を万円にする（端数があれば小数）"""
+    m = re.search(r'([\d,]+)', text or '')
+    if not m:
+        return 0
+    yen = int(m.group(1).replace(',', ''))
+    man = yen / 10000
+    return int(man) if man == int(man) else round(man, 1)
+
+
+def parse_nar_race_page(html_or_soup, url=''):
+    """地方競馬のレース結果のページ（RaceMarkTable）から {'race': {...}, 'runners': [...], 'day_urls': [...]} を返す
+    （JRAのレース結果と同じ項目。地方のみの項目：runner の affiliation（所属）・jockey_url・trainer_url）"""
+    soup = _soup(html_or_soup)
+    head = next((h for h in soup.find_all('h4') if '競走' in h.get_text()), None)
+    title = soup.select_one('section.raceTitle')
+    table = soup.select_one('section.gradeTable table')
+    if head is None or title is None or table is None:
+        raise ValueError('地方競馬のレース結果のページではありません。')
+    head_text = nar_text(head).replace(' ', '')
+    m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日.*?[）)](.+?)第(\d+)競走', head_text)
+    if not m:
+        raise ValueError('レースの年月日・競馬場を読み取れませんでした。')
+    race_date = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    venue, num = m.group(4), int(m.group(5))
+    info = parse_nar_race_url(url)
+    if not info:
+        # 保存したページ：同じ競馬場のレース番号のボタンのリンクから競馬場コードを読む
+        for a in soup.select('div.raceNumNavi a[href]'):
+            info = parse_nar_race_url(a['href'])
+            if info:
+                break
+    baba = info[2] if info else 0
+    name_text = nar_text(title.select_one('h3'))
+    grade = nar_grade(name_text)
+    # レース名：「第３９回」と、グレード・格組（「JpnＩオープン」「３歳２」など）を除く
+    name = re.sub(r'^第\s*[\d０-９]+\s*回\s*', '', name_text)
+    name = re.sub(r'\s*〔[^〕]*〕\s*', ' ', name).strip()   # 「〔Ｒｏａｄ ｔｏ ＪＢＣ〕」などの副題を除く
+    race_class = ''
+    gm = _NAR_GRADE_RE.search(name)
+    if gm:
+        race_class = name[gm.end():].strip()
+        name = name[:gm.start()].strip()
+    else:
+        cm2 = _NAR_CLASS_RE.search(name)
+        if cm2 and cm2.start() > 0:
+            race_class = cm2.group(1)
+            name = name[:cm2.start()].strip()
+    data = [nar_text(li) for li in title.select('ul.dataArea li')]
+    first = data[0] if data else ''
+    dm = re.search(r'(ダート|芝|障害)\s*([\d,]+)\s*[ｍm]', first)
+    surface = {'ダート': 'ダ', '芝': '芝', '障害': '障'}.get(dm.group(1), '') if dm else ''
+    wm = re.search(r'天候[:：]\s*(\S+)', first)
+    gm2 = re.search(r'馬場[:：]\s*(\S+)', first)
+    cm = re.search(r'(\d歳(?:以上)?)', first)
+    rm = re.search(r'(馬齢|定量|別定|ハンデ)', first)
+    prizes = []
+    for pm in re.finditer(r'(\d)着\s*([\d,]+)円', ' '.join(data[1:])):
+        prizes.append(_yen_to_man(pm.group(2)))
+    race = {
+        'nar': True, 'race_id': nar_race_id(race_date, num, baba), 'url': nar_race_url(race_date, num, baba),
+        'baba_code': baba, 'date': race_date, 'kai': '', 'nichi': '', 'venue': venue, 'num': num,
+        'name': name, 'grade': grade, 'jump': surface == '障',
+        'category': cm.group(1) if cm else '', 'class': race_class,
+        'rule': '牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first) else '', 'weight_rule': rm.group(1) if rm else '',
+        'distance': int(dm.group(2).replace(',', '')) if dm else '', 'surface': surface,
+        'course_detail': '', 'time': '', 'weather': wm.group(1) if wm else '',
+        'turf': gm2.group(1) if gm2 and surface == '芝' else '', 'dirt': gm2.group(1) if gm2 and surface != '芝' else '',
+        'prizes': prizes,
+    }
+    runners = []
+    for tr in table.find_all('tr'):
+        tds = {(td.get('class') or [''])[0]: td for td in tr.find_all('td')}
+        if 'd' not in tds:
+            continue
+        place = nar_text(tds.get('a'))
+        horse_a = tds['d'].find('a')
+        sex_age = nar_text(tds.get('f')).replace(' ', '')
+        am = re.match(r'(牡|牝|せん|セン|騸)(\d+)', sex_age)
+        jockey_td, trainer_td = tds.get('h'), tds.get('i')
+        jockey_a = jockey_td.find('a') if jockey_td else None
+        trainer_a = trainer_td.find('a') if trainer_td else None
+        jspan = jockey_td.find('span') if jockey_td else None
+        jockey_aff = nar_text(jspan).strip('（）() ') if jspan else ''
+        jockey_short = nar_text(jockey_td).replace(nar_text(jspan), '').strip() if jockey_td else ''
+        hw = tds.get('j')
+        hw_span = hw.find('span') if hw else None
+        place_num = int(place) if place.isdigit() else None
+        runner = {
+            'place': place, 'waku': nar_text(tds.get('b')), 'num': nar_text(tds.get('c')),
+            'name': nar_text(horse_a or tds['d']), 'icons': [],
+            'horse_url': urljoin(NAR_BASE, horse_a.get('href', '')) if horse_a else '',
+            'affiliation': nar_text(tds.get('e')),
+            'sex': ('せん' if am and am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
+            'age': int(am.group(2)) if am else '',
+            'weight': nar_text(tds.get('g')), 'mark': '',
+            'jockey': jockey_short, 'jockey_affiliation': jockey_aff,
+            'jockey_url': urljoin(NAR_BASE, jockey_a.get('href', '')) if jockey_a else '',
+            'time': nar_text(tds.get('k')), 'margin': nar_text(tds.get('l')), 'last': nar_text(tds.get('m')),
+            'corners': nar_text(tds.get('n')).replace(' ', ''),
+            'body_weight': nar_text(hw).replace(nar_text(hw_span), '').strip() if hw else '',
+            'body_diff': nar_text(hw_span).strip('()（） ') if hw_span else '',
+            'trainer': nar_text(trainer_a or trainer_td),
+            'trainer_url': urljoin(NAR_BASE, trainer_a.get('href', '')) if trainer_a else '',
+            'pop': nar_text(tds.get('o')),
+            'prize': prizes[place_num - 1] if place_num and place_num <= len(prizes) else 0,
+        }
+        lm = re.search(r'k_lineageLoginCode=(\d+)', runner['horse_url'])
+        runner['horse_id'] = ''          # JRAの馬IDではないため空にする（馬名で照合する）
+        runner['nar_id'] = lm.group(1) if lm else ''
+        runners.append(runner)
+    race['runners_count'] = len([r for r in runners if r['place'] not in ('取消', '除外', '')])
+    day_urls = []
+    for a in soup.select('div.raceNumNavi a'):
+        href = urljoin(NAR_BASE, a.get('href', '')) if a.get('href') else race['url']
+        if parse_nar_race_url(href) and href not in day_urls:
+            day_urls.append(href)
+    if race['url'] not in day_urls:
+        day_urls.append(race['url'])
+    return {'race': race, 'runners': runners, 'day_urls': day_urls}
+
+
+def parse_nar_horse_mark_page(html_or_soup):
+    """地方競馬の馬出走履歴のページ（HorseMarkInfo）から、出走したレースの一覧と地方競馬登録抹消日を返す。
+    {'name', 'races': [{'date', 'venue', 'num', 'name', 'url'}], 'cancel_date'}"""
+    soup = _soup(html_or_soup)
+    table = soup.select_one('table.HorseMarkInfo_table')
+    races = []
+    for tr in (table.select('tbody tr') if table else []):
+        tds = tr.find_all('td')
+        if len(tds) < 4:
+            continue
+        dm = re.match(r'(\d{4})/(\d{1,2})/(\d{1,2})', nar_text(tds[0]))
+        a = tds[3].find('a')
+        url = a.get('href', '') if a else ''
+        if not dm or not parse_nar_race_url(url):
+            continue
+        races.append({'date': date(int(dm.group(1)), int(dm.group(2)), int(dm.group(3))), 'venue': nar_text(tds[1]),
+                      'num': nar_text(tds[2]), 'name': nar_text(tds[3]), 'url': urljoin(NAR_BASE, url)})
+    text = nar_text(soup.body or soup)
+    cm = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*地方競馬登録抹消', text)
+    name_el = soup.find('h4', class_='odd_title') or soup.find('h3')
+    return {'name': nar_text(name_el), 'races': races,
+            'cancel_date': date(int(cm.group(1)), int(cm.group(2)), int(cm.group(3))) if cm else None}
+
+
+def parse_nar_horse_list_page(html_or_soup):
+    """地方競馬の競走馬検索の結果の一覧（RaceHorseList）：[{'name', 'url', 'birth_year', 'affiliation', 'sire', 'dam'}]"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.select('table.RaceHorseList'):
+        for tr in table.find_all('tr'):
+            tds = tr.find_all('td')
+            if len(tds) < 7 or not tds[1].find('a'):
+                continue
+            by = nar_text(tds[3])
+            out.append({'name': nar_text(tds[1]), 'url': urljoin(NAR_BASE, tds[1].find('a').get('href', '')),
+                        'birth_year': int(by) if by.isdigit() else None, 'affiliation': nar_text(tds[4]),
+                        'sire': nar_text(tds[5]), 'dam': nar_text(tds[6])})
+    return out
+
+
+def parse_nar_person_page(html_or_soup):
+    """地方競馬の騎手・調教師のページ（RiderMark／TrainerMark）：{'name'（「山崎 裕也」）, 'affiliation'}"""
+    soup = _soup(html_or_soup)
+    name_el = soup.find('h4', class_='odd_title')
+    aff = ''
+    for td in soup.find_all('td'):
+        if td.get_text(strip=True) == '所属':
+            nxt = td.find_next_sibling('td')
+            aff = nar_text(nxt)
+            break
+    return {'name': nar_person_name(name_el.get_text('') if name_el else ''), 'affiliation': aff}
+
+
+def parse_horse_nar_rows(html_or_soup):
+    """JRAの競走馬情報のページの「出走レース」の表で、リンクの無い地方競馬のレースの行
+    [{'date', 'venue', 'name'}]（競馬場が地方競馬の競馬場の行だけ）"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '出走レース' not in _text(caption):
+            continue
+        for tr in table.find_all('tr'):
+            if tr.find('a', href=re.compile(r'pw01sde')):
+                continue
+            cells = [_text(td) for td in tr.find_all('td')]
+            if len(cells) < 3:
+                continue
+            m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', cells[0])
+            venue = cells[1].replace(' ', '')
+            if m and venue in NAR_VENUES:
+                out.append({'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3))), 'venue': venue,
+                            'name': cells[2]})
+    return out
