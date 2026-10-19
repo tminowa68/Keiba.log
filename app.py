@@ -6491,6 +6491,7 @@ def horse_detail(name, active_tab):
                            family_table1=family_table1,
                            family_table2=family_table2,
                            sire_info=sire_info, 
+                           brief_profile=brief_profile(horse, dam_info, base_birth_year),
                            dam_info=dam_info, 
                            current_year=datetime.now().year,
                            pedigree=pedigree_data,
@@ -6636,6 +6637,14 @@ def previous_race_info(horses, race_date, jump=False):
         out[t['key']] = info
     return out
 
+def brief_profile(horse, dam_info, birth_year):
+    """出走レースのタブの簡易プロフィール：性齢・厩舎・父・母（母父）"""
+    cell = lambda i: str(horse[i]).strip() if len(horse) > i and horse[i] else ''
+    age = datetime.now().year - birth_year if birth_year else ''
+    bms = (dam_info or {}).get('line3', '')
+    return {'sex_age': f"{cell(H_GENDER)}{age}", 'stable': '・'.join(x for x in (cell(H_AREA), cell(H_STABLE)) if x),
+            'sire': cell(H_SIRE), 'dam': cell(H_DAM), 'bms': '' if bms in ('', '不明') else bms}
+
 def next_race_entries(horse_name, horse_id=''):
     """次走予定：成績シートのこの馬の想定・特別・確定（枠順確定前）の記録。
     そのレースの結果が取り込まれるか、同じレースの他の馬が先の段階（特別→確定など）に進んだ場合は表示しない"""
@@ -6659,11 +6668,12 @@ def next_race_entries(horse_name, horse_id=''):
                 continue
             title, grade_rank = race_title(e['name'], e['grade'], e['class'], e['jump'])
             out.append({'sort_key': (e['date'], int(e['num']) if str(e['num']).isdigit() else 0),
-                        'date_label': format_date_jp(e['date'], weekday=True), 'date': e['date'].isoformat(),
+                        'date_label': format_month_day(e['date']), 'date': e['date'].isoformat(),
                         'venue': e['venue'], 'num': e['num'],
                         'title_html': race_title_html(title, grade_rank, race_detail_url(e['date'], e['venue'], e['num'])),
                         'condition': ' '.join(x for x in (('障害' if e['jump'] else '') + e['category'], e['class']) if x),
-                        'course': f"{e['surface']}{e['distance']}" if e['distance'] else '',
+                        'course': f"{e['surface']}{e['distance']}" if e['distance'] else e['surface'],
+                        'surface': e['surface'],
                         'status': entry_status_label(e['entry'])})
     out.sort(key=lambda r: r['sort_key'])
     return out
