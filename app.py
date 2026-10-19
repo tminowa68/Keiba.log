@@ -3046,7 +3046,7 @@ def api_race_results_horse_races():
 @app.route('/api/race_results/preview', methods=['POST'])
 @login_required
 def api_race_results_preview():
-    """取り込む前の確認用：レース結果のページを取得し、レース名・この馬の着順・未登録の出走馬を返す（数レースずつ）"""
+    """取り込む前の確認用：レース結果のページを取得し、レース名・この馬の着順を返す（数レースずつ）"""
     data = request.get_json(silent=True) or {}
     urls = [u for u in (data.get('urls') or []) if RR.race_id_from_cname(u)][:8]
     horse_id = str(data.get('horse_id') or '')
@@ -3062,7 +3062,7 @@ def api_race_results_preview():
                           'venue_num': f"{race['venue']}{race['num']}R",
                           'title_html': str(race_title_html(title, rank)),
                           'course': f"{race['surface']}{race['distance']}", 'surface': race['surface'],
-                          'place': place, 'unregistered': [u['name'] for u in safe_unregistered_runners([p])]})
+                          'place': place})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify({'races': races, 'failed': failed})
