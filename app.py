@@ -4126,9 +4126,18 @@ def import_horses():
             reg_m = str(reg_parts[1]) if reg_parts and reg_parts[1] else ''
 
         added = updated = skipped = 0
+        changes_rows, change_msgs, other_horses = [], [], []
+        change_date = registration_str or today8()
 
         for h in parsed_horses:
             name = h['name']
+            same = same_horse_judgement(rows[name_to_index[name]], h['birth'], h['sire'], h['dam']) \
+                if name in name_to_index else None
+            if same is False:
+                # 同じ馬名の別の馬（生年月日・父・母が違う）：Horsesシートの馬は書き換えない
+                other_horses.append(name)
+                skipped += 1
+                continue
 
             if name not in name_to_index:
                 # 新規登録：状態・URLは空欄のまま（早期登録の時期に該当する場合のみ状態を「早期」にする）
@@ -4165,6 +4174,28 @@ def import_horses():
                     H_REGION: h['region'], H_DETAIL: h['detail'], H_BREEDER: h['breeder'],
                 }
                 changed = False
+                if same:
+                    # 生年月日・父・母から同じ馬と判定できた場合：馬主・拠点・厩舎が変わっていれば書き換えてChangesに記録する
+                    if h['owner'] and not _blank(row[H_OWNER]) and row[H_OWNER].strip() != h['owner']:
+                        changes_rows.append(changes_row(change_date, name, '馬主変更', row[H_OWNER], h['owner']))
+                        change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{h['owner']}")
+                        row[H_OWNER] = h['owner']
+                        changed = True
+                    if h['stable'] and not _blank(row[H_STABLE]) and (
+                            _trainer_key(row[H_STABLE]) != _trainer_key(h['stable'])
+                            or (h['area'] and row[H_AREA].strip() and row[H_AREA].strip() != h['area'])):
+                        old_full = f"{row[H_AREA]}・{row[H_STABLE]}" if row[H_AREA] else row[H_STABLE]
+                        new_full = f"{h['area']}・{h['stable']}" if h['area'] else h['stable']
+                        changes_rows.append(changes_row(change_date, name, '転厩', old_full, new_full))
+                        change_msgs.append(f"{name}：転厩 {old_full}→{new_full}")
+                        row[H_AREA], row[H_STABLE] = h['area'] or row[H_AREA], h['stable']
+                        changed = True
+                    # 既に競走馬登録日がある馬は、登録日は書き換えずに再登録としてChangesに記録する
+                    if not _blank(row[H_REGISTRATION]) and registration_str and \
+                            re.sub(r'\D', '', str(row[H_REGISTRATION])) != registration_str:
+                        changes_rows.append(changes_row(change_date, name, '再登録', row[H_REGISTRATION], registration_str))
+                        change_msgs.append(f"{name}：再登録（前回の登録 {row[H_REGISTRATION]}）")
+                        changed = True
                 for col_idx, new_val in field_map.items():
                     if _blank(row[col_idx]) and new_val:
                         row[col_idx] = new_val
@@ -4189,12 +4220,19 @@ def import_horses():
         rows.sort(key=lambda r: display_name_of_row(r))
         ws.clear()
         ws.update(range_name='A1', values=[headers] + rows)
+        if changes_rows:
+            migrate_changes_sheet()
+            get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS).append_rows(changes_rows)
 
         record_import_date('import_registration', registration_str)
         msg = f"インポート完了：新規 {added}件／更新 {updated}件／スキップ {skipped}件"
         if registration_str:
             msg += f"（登録日：{format_date_jp(registration_str)}）"
         flash(msg)
+        if change_msgs:
+            flash("変更：" + "、".join(change_msgs))
+        if other_horses:
+            flash("同じ馬名の別の馬（生年月日・父・母が違う）のため取り込んでいません：" + "、".join(other_horses))
         return redirect('/import_horses')
     except Exception as e:
         flash(f'登録処理中にエラーが発生しました: {e}')
@@ -4477,7 +4515,13 @@ def import_trainer_page(html_text):
         added, status_changed, filled, failed = [], [], [], []
         pasture_changes = []
         changes_rows, change_msgs = [], []
-        restored = []  # 抹消になっていたが管理馬一覧に載っていた馬
+        restored = []  # 抹消になっていたが管理馬一覧に載っていた馬（抹消の記録が誤り）
+        reregistered = []  # 再登録した馬（Changesに再登録の記録がある。抹消の記録は残す）
+        try:
+            reregistered_names = {r[C_NAME].strip() for r in horse_sheet_values("Changes")[1:]
+                                  if len(r) > C_TYPE and r[C_TYPE].strip() == '再登録'}
+        except Exception:
+            reregistered_names = set()
 
         for h in parsed_horses:
             name = h['name']
@@ -4512,15 +4556,20 @@ def import_trainer_page(html_text):
             # 状態（I列）の更新
             current = row[H_STATUS].strip()
             if current == '抹消':
-                # 管理馬一覧に載っている＝現役なので、抹消は誤り。一覧の内容から状態を決め直す
+                # 管理馬一覧に載っている＝現役。再登録した馬は抹消の後に再び登録された馬、それ以外は抹消が誤り。
+                # 一覧の内容から状態を決め直す
                 new_status = resolve_trainer_page_status('', h)
-                restored.append(name)
+                if name in reregistered_names:
+                    reregistered.append(name)
+                else:
+                    restored.append(name)
             else:
                 new_status = resolve_trainer_page_status(current, h)
             if new_status != current:
                 row[H_STATUS] = new_status
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
-                pasture_changes.append((name, current, new_status))
+                if current != '抹消' or name in reregistered_names:
+                    pasture_changes.append((name, current, new_status))
 
             # 転厩：管理馬一覧の調教師（一致する厩舎が無ければリンク先の調教師名）と拠点・厩舎が異なる場合
             new_stable = None
@@ -4592,6 +4641,8 @@ def import_trainer_page(html_text):
             messages.append("状態更新：" + "、".join(status_changed))
         if restored:
             messages.append("抹消を解除（管理馬一覧に載っているため）：" + "、".join(restored))
+        if reregistered:
+            messages.append("再登録後の状態を設定：" + "、".join(reregistered))
         if change_msgs:
             messages.append("変更（Changesシートに記録）：" + "、".join(change_msgs))
         if filled:
@@ -4898,7 +4949,7 @@ def weekly():
                 if in_week(in_date) and cell(r, PS_IN_TENTATIVE) != '仮':
                     # 入厩は元の状態も表示する（入厩前の状態が無い記録は、放牧日がある行なら放牧から）
                     before = cell(r, PS_BEFORE) or ('放牧' if out_date else '')
-                    label = f"{before}→入厩" if before in ('放牧', '早期') else '入厩'
+                    label = f"{before}→入厩" if before in ('放牧', '早期', '抹消') else '入厩'
                     pasture.append({'date': in_date, 'name': cell(r, PS_NAME), 'type': label})
         except gspread.WorksheetNotFound:
             pass
@@ -5210,6 +5261,19 @@ def ensure_parent_header(ws, header=None):
     ws.update(range_name=f"{col_letter(P_REGISTRATION)}1:{col_letter(len(PARENT_COLUMNS) - 1)}1",
               values=[PARENT_COLUMNS[P_REGISTRATION:]])
 
+def same_horse_judgement(h_row, birth, sire, dam):
+    """Horsesシートの行と、同じ馬名の馬（生年月日・父・母）が同じ馬か：True（同じ）／False（別の馬）／
+    None（生年月日が無いなどで判定できない）。生年月日が一致し、父・母に食い違いが無ければ同じ馬とする"""
+    if horse_matches_parent(h_row, birth, sire, dam):
+        return True
+    cell = lambda i: str(h_row[i]).strip() if len(h_row) > i and h_row[i] else ''
+    if cell(H_BIRTH) and birth:
+        return False   # 生年月日が違う（または父・母が違う）
+    for h_val, p_val in ((cell(H_SIRE), str(sire or '').strip()), (cell(H_DAM), str(dam or '').strip())):
+        if h_val and p_val and is_english_name(h_val) == is_english_name(p_val) and not _same_name(h_val, p_val):
+            return False
+    return None
+
 def horse_matches_parent(h_row, birth, sire, dam):
     """Horsesシートの馬が、Sire・Damシートに登録する馬と同じ馬か（生年月日・父・母で照合する）。
     生年月日は両方に値がある場合に限り照合でき、父・母は値がある方だけ照合する（表記が和名と英字で違えば照合しない）"""
@@ -5277,8 +5341,9 @@ def record_pasture_changes(sh, changes, today_str):
     """複数頭の放牧／入厩の切り替えをまとめて放牧入厩シートに記録する。
     Googleの1分あたりの読み書き回数の上限にかからないよう、読み込み1回・書き込みは最大2回にまとめる。
     changes: [(馬名, 旧状態, 新状態), ...]"""
+    # 抹消→放牧／入厩は、再登録した馬（管理馬一覧に載っていた抹消の馬は、誤った抹消なら記録しない）
     changes = [(n, o, nw) for n, o, nw in changes
-               if o in ('放牧', '入厩', '早期') and nw in ('放牧', '入厩')]
+               if o in ('放牧', '入厩', '早期', '抹消') and nw in ('放牧', '入厩')]
     if not changes:
         return
     migrate_pasture_sheet()
@@ -5290,9 +5355,10 @@ def record_pasture_changes(sh, changes, today_str):
         if new_status == '放牧':
             append_rows.append([today_str, '', horse_name, '', '', ''])
             continue
-        # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）
+        # 入厩：入厩日が空欄の最新の放牧の行に入厩日を入れる（無ければ入厩日だけの行を追加）。
+        # 抹消からの入厩（再登録）は、抹消前の放牧の行には入れない
         open_row_idx = None
-        for idx in range(len(pasture_data) - 1, 0, -1):
+        for idx in range(len(pasture_data) - 1, 0, -1) if old_status != '抹消' else ():
             prow = pasture_data[idx]
             p_name = prow[PS_NAME] if len(prow) > PS_NAME else ''
             p_checkin = prow[PS_IN] if len(prow) > PS_IN else ''
