@@ -413,6 +413,14 @@
         <label><input type="checkbox" id="race-import-register" checked> 未登録の出走馬を登録する</label>
         <span id="race-import-status" class="race-import-status"></span>
     </div>
+    {# 取り込む前の確認：まだ取り込んでいないレースのカードと、取り込み開始のボタン #}
+    <div id="race-import-preview" class="race-import-preview" style="display: none;">
+        <div id="race-import-cards" class="race-import-cards"></div>
+        <div class="race-import-actions">
+            <span id="race-import-summary"></span>
+            <button type="button" id="race-import-start" class="btn-entry-toggle" disabled>取り込み開始</button>
+        </div>
+    </div>
     {% endif %}
     <hr>
     <div class="race-list-container">
@@ -728,18 +736,107 @@ function closeCandidateModal() {
 }
 
 // --- 出走レース：JRAの競走馬情報のページの「出走レース」から、まだ取り込んでいないレースを取り込む ---
+// ボタンを押すと、まず取り込んでいないレースをカードで並べ（未登録の出走馬の頭数も表示）、
+// 「取り込み開始」を押すと取り込む
 document.addEventListener('DOMContentLoaded', function() {
     const btn = document.getElementById('race-import-btn');
     if (!btn || !window.RaceImport) return;
     const status = document.getElementById('race-import-status');
+    const preview = document.getElementById('race-import-preview');
+    const cards = document.getElementById('race-import-cards');
+    const summary = document.getElementById('race-import-summary');
+    const startBtn = document.getElementById('race-import-start');
+    const wholeDay = document.getElementById('race-import-whole-day');
+    const register = document.getElementById('race-import-register');
+    const idMatch = (btn.dataset.url || '').match(/pw01dud\d*?(\d{10})(?:\/|$)/);
+    const horseId = idMatch ? idMatch[1] : '';
+    const surfaceClass = { '芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump' };
+    const rankClass = { '1': 'rank-1', '2': 'rank-2', '3': 'rank-3' };
+    let unregistered = new Set();
+
+    function showSummary(races, loading) {
+        const reg = register.checked;
+        document.querySelectorAll('.race-card-unregistered').forEach(el => el.style.display = reg ? '' : 'none');
+        summary.textContent = `取り込んでいないレース：${races}レース`
+            + (reg ? `／未登録の出走馬：${loading ? '確認中...' : unregistered.size + '頭'}` : '')
+            + (reg && wholeDay.checked ? '（同じ日の他のレースの未登録馬も取り込み時に登録します）' : '');
+    }
+
     btn.addEventListener('click', async function() {
         btn.disabled = true;
+        startBtn.disabled = true;
         status.style.color = '';
         status.textContent = 'JRAの競走馬情報を読み込んでいます...';
+        cards.innerHTML = '';
+        unregistered = new Set();
+        try {
+            const data = await RaceImport.post('/api/race_results/horse_races', { url: btn.dataset.url });
+            const todo = (data.races || []).filter(r => !r.imported);
+            if (!todo.length) {
+                status.textContent = `出走${(data.races || []).length}レースはすべて取り込み済みです。`;
+                preview.style.display = 'none';
+                btn.disabled = false;
+                return;
+            }
+            status.textContent = '';
+            preview.style.display = '';
+            todo.forEach(r => {
+                const card = document.createElement('div');
+                card.className = 'race-card';
+                card.dataset.url = r.url;
+                card.innerHTML = `<div class="race-card-date">${r.label}</div><div class="race-card-name">読み込み中...</div>`;
+                cards.appendChild(card);
+            });
+            showSummary(todo.length, true);
+            register.onchange = wholeDay.onchange = () => showSummary(todo.length, false);
+            // 4レースずつ、レース名・この馬の着順・未登録の出走馬を確認する
+            for (let i = 0; i < todo.length; i += 4) {
+                const chunk = todo.slice(i, i + 4);
+                try {
+                    const res = await RaceImport.post('/api/race_results/preview', { urls: chunk.map(r => r.url), horse_id: horseId });
+                    (res.races || []).forEach(p => {
+                        const card = cards.querySelector(`.race-card[data-url="${CSS.escape(p.url)}"]`);
+                        if (!card) return;
+                        p.unregistered.forEach(n => unregistered.add(n));
+                        const place = /^\d+$/.test(p.place) ? `${p.place}着` : p.place;
+                        card.innerHTML = `<div class="race-card-date">${p.date_label} ${p.venue_num}</div>`
+                            + `<div class="race-card-name">${p.title_html}</div>`
+                            + `<div class="race-card-line"><span class="race-card-course ${surfaceClass[p.surface] || ''}">${p.course}</span>`
+                            + (place ? ` <span class="race-card-place ${rankClass[p.place] || ''}">${place}</span>` : '') + '</div>'
+                            + `<div class="race-card-unregistered">未登録の出走馬：${p.unregistered.length}頭</div>`;
+                    });
+                    // 取得できなかったレース
+                    chunk.forEach(r => {
+                        const card = cards.querySelector(`.race-card[data-url="${CSS.escape(r.url)}"]`);
+                        const name = card && card.querySelector('.race-card-name');
+                        if (name && name.textContent === '読み込み中...') name.textContent = '確認できませんでした';
+                    });
+                } catch (e) {
+                    if (RaceImport.isFatalError(e.message)) throw e;
+                    chunk.forEach(r => {
+                        const card = cards.querySelector(`.race-card[data-url="${CSS.escape(r.url)}"]`);
+                        if (card) card.querySelector('.race-card-name').textContent = '確認できませんでした';
+                    });
+                }
+            }
+            showSummary(todo.length, false);
+            startBtn.disabled = false;
+        } catch (e) {
+            status.style.color = '#c62828';
+            status.textContent = e.message;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    startBtn.addEventListener('click', async function() {
+        btn.disabled = startBtn.disabled = true;
+        status.style.color = '';
+        status.textContent = '取り込みを始めます...';
         try {
             const res = await RaceImport.importHorse(btn.dataset.url, {
-                wholeDay: document.getElementById('race-import-whole-day').checked,
-                register: document.getElementById('race-import-register').checked,
+                wholeDay: wholeDay.checked,
+                register: register.checked,
                 log: text => { status.textContent = text; }
             });
             if (!res.todo) {
@@ -755,11 +852,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             status.style.color = '#c62828';
-            btn.disabled = false;
+            btn.disabled = startBtn.disabled = false;
         } catch (e) {
             status.style.color = '#c62828';
             status.textContent = e.message;
-            btn.disabled = false;
+            btn.disabled = startBtn.disabled = false;
         }
     });
 });
