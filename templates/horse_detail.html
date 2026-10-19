@@ -368,8 +368,38 @@
         </div>
     {% endmacro %}
     <div class="race-summary-container">
+        {# 簡易プロフィール #}
+        <div class="race-summary-box">
+            <div class="race-summary-title">プロフィール</div>
+            <div>性齢：{{ brief_profile.sex_age }}</div>
+            <div>厩舎：{{ brief_profile.stable }}</div>
+            <div>父：{{ brief_profile.sire }}</div>
+            <div>母：{{ brief_profile.dam }}{% if brief_profile.bms %}（{{ brief_profile.bms }}）{% endif %}</div>
+        </div>
         {{ race_summary('平地', race_summary_data.flat) }}
         {% if race_summary_data.jump.starts %}{{ race_summary('障害', race_summary_data.jump) }}{% endif %}
+        {# 次走予定 #}
+        <div class="race-summary-box next-race-box">
+            <div class="race-summary-title">次走予定</div>
+            {% if horse_races %}
+            <table class="race-result-table next-race-table">
+                <thead><tr><th>日付</th><th>開催</th><th>レース名</th><th>コース</th><th>登録</th></tr></thead>
+                <tbody>
+                {% for r in horse_races %}
+                <tr>
+                    <td class="nowrap">{{ r.date_label }}</td>
+                    <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
+                    <td class="nowrap">{{ r.title_html }}</td>
+                    <td class="nowrap {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') }}">{{ r.course }}</td>
+                    <td class="nowrap">{{ r.status }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="next-race-none">次走予定はありません。</div>
+            {% endif %}
+        </div>
     </div>
     {% if race_summary_data.flat.kokyu %}
     <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ "{:,}".format(race_summary_data.flat.kokyu.before) }}万円 → {{ "{:,}".format(race_summary_data.flat.kokyu.after) }}万円）</p>
@@ -397,15 +427,14 @@
                     <th>日付</th>
                     <th class="bl">開催</th>
                     <th>レース名</th>
-                    <th>条件</th>
                     <th>コース</th>
                     <th>馬場</th>
                     <th class="bl">頭数</th>
                     <th>枠</th>
                     <th>馬番</th>
-                    <th>人気</th>
+                    <th class="bl">人気</th>
                     <th>着順</th>
-                    <th>騎手</th>
+                    <th class="bl">騎手</th>
                     <th>斤量</th>
                     <th class="bl">タイム</th>
                     <th>通過</th>
@@ -422,7 +451,7 @@
                 <tr class="{{ {'rest': 'rest-row', 'cancel': 'cancel-row'}.get(r.kind, 'transfer-row') }}{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td class="bl" colspan="18">{{ r.text }}</td>
+                    <td class="bl" colspan="17">{{ r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -432,15 +461,14 @@
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="nowrap bl">{{ r.venue }}{{ r.num }}R</td>
                     <td class="nowrap">{{ r|history_race_title }}</td>
-                    <td class="nowrap">{% if r.jump %}障害{% endif %}{{ r.category|replace('以上', '上') }} {{ r['class']|replace('オープン', 'OP') }}</td>
                     <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
                     <td class="{{ {'稍重': 'going-yaya', '重': 'going-omo', '不良': 'going-furyo'}.get(r.going, '') }}">{{ r.going }}</td>
                     <td class="bl">{{ r.runners }}</td>
                     <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
-                    <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
+                    <td class="bl {{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
-                    <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
+                    <td class="nowrap bl">{{ r.mark }}{{ r.jockey }}</td>
                     <td>{{ r.weight }}</td>
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap corners">{{ r.corners }}</td>
@@ -452,49 +480,12 @@
                 {% endif %}
                 {% else %}
                 <tr>
-                    <td colspan="20" class="no-data-text">出走履歴がありません。</td>
+                    <td colspan="19" class="no-data-text">出走履歴がありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
         </div>
-    </div>
-
-    <div class="race-list-container mt-20">
-        <div class="race-list-header">
-            <h2>次走予定</h2>
-        </div>
-
-        <table class="race-list-table">
-            <thead>
-                <tr>
-                    <th>日付</th>
-                    <th>開催</th>
-                    <th>レース</th>
-                    <th>レース名</th>
-                    <th>条件</th>
-                    <th>コース</th>
-                    <th>登録</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in horse_races %}
-                <tr>
-                    <td>{{ r.date_label }}</td>
-                    <td>{{ r.venue }}</td>
-                    <td>{{ r.num }}R</td>
-                    <td class="nowrap">{{ r.title_html }}</td>
-                    <td>{{ r.condition }}</td>
-                    <td>{{ r.course }}</td>
-                    <td>{{ r.status }}</td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="7" class="no-data-text">次走予定はありません。</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
     </div>
 
 </section>

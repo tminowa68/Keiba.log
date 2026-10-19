@@ -2351,3 +2351,16 @@ td.col-last-race {
 .weekly-table th.sorted-col {
     background: #2e7d32;
 }
+/* 出走レースのタブ：次走予定（成績まとめの右） */
+.next-race-box {
+    font-weight: normal;
+}
+.next-race-box .race-summary-title {
+    font-weight: bold;
+}
+.next-race-table {
+    width: auto;
+}
+.next-race-none {
+    color: #888;
+}
