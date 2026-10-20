@@ -91,6 +91,24 @@
 </section>
 
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>転厩馬一覧 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの「〇月〇日付 転厩馬一覧」のPDF、または「引退調教師の管理馬の転厩」のお知らせのページを保存したファイル（.mhtml／.html。リンク先の転厩馬一覧のPDFを取得します）をアップロードすると、
+        登録済みの馬の転厩をChangesシートに記録します（年月日は「〇月〇日付」の転厩日）。ファイルは複数まとめて選べます。<br>
+        同じ転厩（旧・新の調教師が同じ）が記録されていれば、日付を転厩日に直して「仮」を外します。Horsesシートの厩舎が旧調教師のままなら新調教師にします。
+    </p>
+    <form method="POST" action="/import_transfers" enctype="multipart/form-data" style="margin-top:20px;">
+        <div style="margin-bottom:15px;">
+            <label>ファイル：</label><br>
+            <input type="file" name="transfer_file" accept=".pdf,.mhtml,.mht,.html,.htm" multiple required style="margin-top:5px;">
+        </div>
+        <div style="margin-top:20px;">
+            <button type="submit" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>
+        </div>
+    </form>
+</section>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>レース結果 インポート</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         JRAの「レース結果」のページから、出走した全馬の成績を年ごとのファイル（例：「2026_レース結果」）に記録します。<br>
