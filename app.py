@@ -2426,9 +2426,11 @@ def is_filly_only(marks):
     marks = str(marks or '')
     return '牝' in marks and '牡' not in marks
 
-def history_race_title(r):
+def history_race_title(r, short=False):
     """出走履歴などのレース名（race_detailへのリンク）と、格・牝馬限定・別定・ハンデのマーク（この順）"""
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
+    if short:
+        rank = re.sub(r'^(\d勝)クラス$', r'\1ク', rank)   # 出走履歴のマークは「3勝ク」のように短くする
     return race_title_html(title, rank, race_detail_url(r['date'], r['venue'], r['num']),
                            race_mark_list(r.get('rule'), r.get('weight_rule'), r.get('name')))
 
