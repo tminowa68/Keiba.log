@@ -2530,11 +2530,15 @@ def stable_at(results, changes_rows, when, stables):
     after = [e for e in events if e[0] > when]
     return min(after, key=lambda e: (e[0], e[1]))[2] if after else ''
 
+def interval_weeks_between(before, after):
+    """2つのレースの間隔（中○週）：7日以下は0（連闘）、8〜14日は中1週、15〜21日は中2週…"""
+    return ((after - before).days - 1) // 7
+
 def rest_label(before, after):
     """2つのレースの間隔が中8週以上なら「2ヶ月半」のような休養の期間を返す。中2週ごとに半月ずつ増やす
-    （中8・9週は2ヶ月、中10・11週は2ヶ月半、中12・13週は3ヶ月。1週に満たない日数は切り捨てる）。
+    （中8・9週は2ヶ月、中10・11週は2ヶ月半、中12・13週は3ヶ月。中○週は interval_weeks_between）。
     中8週未満なら空文字"""
-    interval_weeks = (after - before).days // 7 - 1   # 中○週
+    interval_weeks = interval_weeks_between(before, after)   # 中○週
     if interval_weeks < 8:
         return ''
     half_months = interval_weeks // 2
@@ -7396,7 +7400,7 @@ def previous_race_info(horses, race_date, jump=False):
                 'interval_weeks': '', 'shutoku': 0}
         if res:
             p = res[0]
-            weeks = (race_date - p['date']).days // 7 - 1
+            weeks = interval_weeks_between(p['date'], race_date)
             info.update({'prev_date': p['date'].isoformat(),
                          'prev_when': f"{p['date'].month}/{p['date'].day}" if p['date'].year == race_date.year
                                       else f"{p['date'].year}/{p['date'].month}/{p['date'].day}",
