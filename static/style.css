@@ -2495,3 +2495,17 @@ td.col-last-race {
 .area-other { background: #9e9e9e; }
 /* race_detailの出馬表の性齢（中央寄せ） */
 .race-result-table td.center { text-align: center; }
+/* 出走履歴の通過順：各コーナーの順位を正方形で囲む */
+.corner-box {
+    display: inline-block;
+    width: 1.6em;
+    height: 1.6em;
+    line-height: 1.6em;
+    margin-left: 2px;
+    border: 1px solid #888;
+    border-radius: 2px;
+    text-align: center;
+    font-size: 0.85em;
+    box-sizing: border-box;
+}
+.corner-box:first-child { margin-left: 0; }

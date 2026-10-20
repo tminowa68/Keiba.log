@@ -2529,6 +2529,13 @@ def area_marks_in_text(text):
     out.append(str(escape(text[pos:])))
     return Markup(''.join(out))
 
+def corners_html(text):
+    """通過順（「11-12-12-14」）の数字をそれぞれ四角で囲み、「-」は表示しない"""
+    from markupsafe import Markup, escape
+    parts = [p for p in re.split(r'[-－‐]', str(text or '')) if p.strip()]
+    return Markup(''.join(f'<span class="corner-box">{escape(p.strip())}</span>' for p in parts))
+
+app.jinja_env.filters['corners_html'] = corners_html
 app.jinja_env.filters['stable_html'] = stable_html
 app.jinja_env.filters['area_marks'] = area_marks_in_text
 app.jinja_env.globals['stable_html'] = stable_html
