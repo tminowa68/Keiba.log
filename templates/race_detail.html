@@ -142,7 +142,7 @@
                     <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap">{{ r.margin }}</td>
-                    <td class="nowrap corners">{{ r.corners }}</td>
+                    <td class="nowrap corners">{{ r.corners|corners_html }}</td>
                     <td>{{ r.last }}</td>
                     <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="nowrap bl">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
