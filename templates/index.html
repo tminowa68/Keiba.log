@@ -98,7 +98,7 @@
                     </td>
                     <td class="col-class">{{ horse[17] if horse|length > 17 else '' }}</td>
                     <td class="col-sire"><span class="text-10ch" title="{{ horse[4] }}">{{ horse[4] }}</span></td>
-                    <td>{{ horse[7] }}・{{ horse[8] }}</td>
+                    <td>{{ stable_html(horse[7], horse[8]) }}</td>
                     <td class="col-last-race">{{ (horse[18] if horse|length > 18 else '')|race_inline }}</td>
                 </tr>
                 {% endfor %}
@@ -435,6 +435,15 @@ function getRowRegex(char) {
 }
 
 // URLが未登録の馬は、状態欄に「URL」ボタンを表示してhorse_detailを経由せずedit_horseへ直接飛べるようにする
+// 所属（拠点）のマーク：美浦は青・栗東は赤・その他はグレー（「美浦・調教師名」→ マーク＋調教師名）
+function stableHtml(label) {
+    const esc = t => String(t || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const i = (label || '').indexOf('・');
+    const area = i >= 0 ? label.slice(0, i) : '', name = i >= 0 ? label.slice(i + 1) : (label || '');
+    const cls = { '美浦': 'area-miho', '栗東': 'area-ritto' }[area] || 'area-other';
+    return (area ? `<span class="area-mark ${cls}">${esc(area)}</span>` : '') + esc(name);
+}
+
 function renderStatusCell(h) {
     if (!h.url) {
         return `<a href="/edit_horse/${h.name}" class="btn-url">URL</a>`;
@@ -524,7 +533,7 @@ function renderAgeTables() {
                             <td class="col-age">${h.age || '-'}歳</td>
                             <td class="col-class">${escapeHtml(h.horseClass)}</td>
                             <td class="col-sire"><span class="text-10ch" title="${h.sire}">${h.sire}</span></td>
-                            <td>${h.stable}</td>
+                            <td>${stableHtml(h.stable)}</td>
                             <td class="col-last-race">${h.lastRace}</td>
                         </tr>
                         `;
