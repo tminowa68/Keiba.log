@@ -5464,6 +5464,196 @@ def parse_jra_cancel_page(html_text):
             names.append(name)
     return cancel_date_str, names
 
+# --- JRAの転厩馬一覧（PDF）・引退調教師の管理馬の転厩のお知らせ（mhtml／html）から転厩を記録する ---
+JRA_PDF_HOSTS = ("jra.jp", "jra.go.jp")
+
+def _nfkc_text(text):
+    import unicodedata
+    return unicodedata.normalize('NFKC', text or '')
+
+def parse_transfer_pdf(pdf_bytes, default_date=None):
+    """JRAの「〇月〇日付 転厩馬一覧」のPDFから {'date', 'old_trainer', 'old_area', 'horses': [{'name', 'sex', 'age', 'new'}]}。
+    転厩日は「〇月〇日付」（年は発表日の年。発表が12月で1月付なら翌年）、読み取れなければ default_date"""
+    import io
+    from pypdf import PdfReader
+    text = '\n'.join(_nfkc_text(page.extract_text() or '') for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    pub = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
+    dm = re.search(r'(\d{1,2})月(\d{1,2})日付', text)
+    when = None
+    if dm:
+        year = int(pub.group(1)) if pub else (default_date or datetime.now().date()).year
+        month, day = int(dm.group(1)), int(dm.group(2))
+        if pub and month < int(pub.group(2)) - 6:
+            year += 1
+        when = date(year, month, day)
+    om = re.search(r'^\s*(\S+?)\s*\((美浦|栗東)\)', text, re.M)
+    horses = []
+    for m in re.finditer(r'^\s*\d+\s+(\S+)\s+(牡|牝|セン|せん|騸)\s+(\d+)\s+(\S+)(?:\s+(\S+))?', text, re.M):
+        new = m.group(4) + (' ' + m.group(5) if m.group(5) and not m.group(5).startswith('【') else '')
+        horses.append({'name': m.group(1), 'sex': 'せん' if m.group(2) in ('セン', 'せん', '騸') else m.group(2),
+                       'age': int(m.group(3)), 'new': new.strip()})
+    return {'date': when or default_date, 'old_trainer': om.group(1) if om else '', 'old_area': om.group(2) if om else '',
+            'horses': horses}
+
+def parse_transfer_news(html_text):
+    """JRAニュースの「引退調教師の管理馬の転厩」のページから (転厩日, 転厩馬一覧のPDFのURLの一覧)"""
+    soup = BeautifulSoup(html_text, 'html.parser')
+    text = _nfkc_text(soup.get_text(' ', strip=True))
+    pub = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
+    # 「3月4日(火曜)付けで…引退することに伴い、3月5日(水曜)付けで、各調教師の管理馬が転厩」：転厩の前の最後の日付
+    head = text[:text.find('転厩し')] if '転厩し' in text else text
+    dates = list(re.finditer(r'(\d{1,2})月(\d{1,2})日\s*\([^)]*\)\s*付けで', head))
+    dm = dates[-1] if dates else None
+    when = None
+    if pub and dm:
+        year = int(pub.group(1)) + (1 if int(dm.group(1)) < int(pub.group(2)) - 6 else 0)
+        when = date(year, int(dm.group(1)), int(dm.group(2)))
+    urls = []
+    for a in soup.find_all('a', href=True):
+        href = a['href']
+        if href.lower().endswith('.pdf') and href.startswith('http') and href not in urls:
+            urls.append(href)
+    return when, urls
+
+def fetch_jra_pdf(url):
+    from urllib.parse import urlparse
+    host = urlparse(url).netloc
+    if not any(host == h or host.endswith('.' + h) for h in JRA_PDF_HOSTS):
+        raise ValueError(f"JRAのPDFではありません: {url}")
+    resp = requests.get(url, headers=_JBIS_HEADERS, timeout=25)
+    resp.raise_for_status()
+    return resp.content
+
+def record_jra_transfers(lists):
+    """転厩馬一覧（parse_transfer_pdf の結果の一覧）の転厩をChangesシートに記録する（Horsesシートに未登録の馬も）。
+    同じ転厩（旧・新の調教師が同じ）が記録されていれば日付を転厩日に直して「仮」を外し、無ければ新しく記録する。
+    {'added', 'fixed', 'moves': [{'name', 'old', 'new', 'birth_year'}], 'unregistered': [{'name', 'known'}]} を返す"""
+    sh = gc.open(horse_data)
+    stables = get_stables_list()
+    horses = {}
+    for r in horse_sheet_values("Horses")[1:]:
+        name = display_name_of_row(r)
+        if name:
+            horses.setdefault(name, []).append(r)
+    migrate_changes_sheet()
+    ws_c = get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS)
+    changes = [list(r) + [''] * len(CHANGES_COLUMNS) for r in ws_c.get_all_values()[1:]]
+    added, fixed, moves, unregistered = [], [], [], {}
+    change_updates = []
+    for lst in lists:
+        when = lst['date']
+        if not when:
+            continue
+        old_label = trainer_label(lst['old_trainer'], stables)
+        if '・' not in old_label and lst['old_area']:
+            old_label = f"{lst['old_area']}・{old_label}"
+        d8 = when.strftime('%Y%m%d')
+        for h in lst['horses']:
+            new_label = trainer_label(h['new'], stables)
+            same = [(abs((parse_full_date(c[C_DATE]) or when) - when).days, i, c) for i, c in enumerate(changes)
+                    if c[C_NAME].strip() == h['name'] and c[C_TYPE].strip() == '転厩'
+                    and _trainer_key(c[C_OLD]) == _trainer_key(old_label) and _trainer_key(c[C_NEW]) == _trainer_key(new_label)]
+            if same:
+                _, i, c = min(same, key=lambda x: x[0])
+                if re.sub(r'\D', '', c[C_DATE]) != d8 or c[C_TENTATIVE].strip():
+                    c[C_DATE], c[C_TENTATIVE] = d8, ''
+                    change_updates.append({'range': f"A{i + 2}:B{i + 2}", 'values': [[d8, '']]})
+                    fixed.append(h['name'])
+            else:
+                row_new = changes_row(d8, h['name'], '転厩', old_label, new_label)
+                changes.append(row_new)
+                added.append(row_new)
+            moves.append({'name': h['name'], 'old': old_label, 'new': new_label, 'birth_year': when.year - h['age']})
+            # 未登録の馬は、画面の側でJRAの競走馬検索から登録する（生年・性別で同名の馬と区別する）
+            registered = [r for r in horses.get(h['name'], [])
+                          if not date_year(r[H_BIRTH] if len(r) > H_BIRTH else '')
+                          or date_year(r[H_BIRTH]) == when.year - h['age']]
+            if not registered and h['name'] not in unregistered:
+                unregistered[h['name']] = {'name': h['name'],
+                                           'known': {'birth': str(when.year - h['age']), 'gender': h['sex']}}
+    if change_updates:
+        with_sheets_retry(ws_c.batch_update, change_updates)
+    if added:
+        with_sheets_retry(ws_c.append_rows, added)
+    if change_updates or added:
+        remember_sheet_values("Changes")
+    return {'added': len(added), 'fixed': len(fixed), 'moves': moves, 'unregistered': list(unregistered.values())}
+
+def apply_transfer_stables(moves):
+    """転厩馬一覧の馬で、Horsesシートの厩舎が旧調教師のままの馬を新調教師にする。更新した頭数を返す"""
+    ws_h = gc.open(horse_data).worksheet("Horses")
+    rows = with_sheets_retry(ws_h.get_all_values)
+    by_name = {}
+    for m in moves:
+        by_name.setdefault(m['name'], []).append(m)
+    updates = []
+    for i, r in enumerate(rows[1:], start=2):
+        by = date_year(r[H_BIRTH] if len(r) > H_BIRTH else '')
+        for m in by_name.get(display_name_of_row(r), []):
+            if by and m.get('birth_year') and by != int(m['birth_year']):
+                continue
+            cur = str(r[H_STABLE]).strip() if len(r) > H_STABLE else ''
+            if _trainer_key(cur) == _trainer_key(m['old']):
+                new = m['new']
+                area, stable = new.split('・', 1) if '・' in new else (r[H_AREA] if len(r) > H_AREA else '', new)
+                updates.append({'range': f"{col_letter(H_AREA)}{i}:{col_letter(H_STABLE)}{i}", 'values': [[area, stable]]})
+            break
+    if updates:
+        with_sheets_retry(ws_h.batch_update, updates)
+        remember_sheet_values("Horses")
+    return len(updates)
+
+@app.route('/api/import_transfers', methods=['POST'])
+@login_required
+def api_import_transfers():
+    """JRAの転厩馬一覧のPDF、または「引退調教師の管理馬の転厩」のお知らせのページ（mhtml／html。リンク先のPDFを取得する）を
+    アップロードして、転厩をChangesシートに記録する。未登録の馬は unregistered として返す（画面の側で登録する）"""
+    files = [f for f in request.files.getlist('transfer_file') if f and f.filename]
+    if not files:
+        return jsonify({'error': 'ファイルが選択されていません。'}), 400
+    lists, notes = [], []
+    for f in files:
+        data = f.read()
+        try:
+            if data[:5] == b'%PDF-':
+                lists.append(parse_transfer_pdf(data))
+                continue
+            when, urls = parse_transfer_news(_extract_html_from_upload(data))
+            if not urls:
+                notes.append(f"{f.filename}：転厩馬一覧のPDFへのリンクが見つかりませんでした。")
+                continue
+            for url in urls:
+                try:
+                    lists.append(parse_transfer_pdf(fetch_jra_pdf(url), default_date=when))
+                except Exception as e:
+                    notes.append(f"{f.filename}：{url} を読み取れませんでした（{e}）")
+        except Exception as e:
+            notes.append(f"{f.filename}：ファイルの解析に失敗しました: {e}")
+    lists = [l for l in lists if l['horses']]
+    if not lists:
+        return jsonify({'error': '転厩馬が見つかりませんでした。ファイルの形式をご確認ください。' + ''.join(notes)}), 400
+    summaries = [f"{format_date_jp(l['date']) if l['date'] else '日付不明'} {l['old_trainer']}厩舎 {len(l['horses'])}頭"
+                 for l in lists]
+    try:
+        result = record_jra_transfers(lists)
+        moved = apply_transfer_stables(result['moves'])
+    except Exception as e:
+        return jsonify({'error': f'転厩の記録に失敗しました: {e}'}), 400
+    message = (f"転厩馬一覧（{'、'.join(summaries)}）：転厩を{result['added']}件記録、{result['fixed']}件の日付を確定"
+               + (f"、厩舎を{moved}頭更新" if moved else ''))
+    return jsonify({'message': message, 'notes': notes, 'moves': result['moves'], 'unregistered': result['unregistered']})
+
+@app.route('/api/import_transfers/stables', methods=['POST'])
+@login_required
+def api_import_transfers_stables():
+    """転厩馬一覧から新しく登録した馬の厩舎を、旧調教師のままなら新調教師にする"""
+    data = request.get_json(silent=True) or {}
+    try:
+        moved = apply_transfer_stables(data.get('moves') or [])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'moved': moved})
+
 @app.route('/import_cancel_horses', methods=['POST'])
 @login_required
 def import_cancel_horses():

@@ -91,6 +91,60 @@
 </section>
 
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>転厩馬一覧 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの「〇月〇日付 転厩馬一覧」のPDF、または「引退調教師の管理馬の転厩」のお知らせのページを保存したファイル（.mhtml／.html。リンク先の転厩馬一覧のPDFを取得します）をアップロードすると、
+        転厩をChangesシートに記録します（年月日は「〇月〇日付」の転厩日）。ファイルは複数まとめて選べます。<br>
+        同じ転厩（旧・新の調教師が同じ）が記録されていれば、日付を転厩日に直して「仮」を外します。Horsesシートの厩舎が旧調教師のままなら新調教師にします。<br>
+        Horsesシートに未登録の馬も転厩を記録し、JRAの競走馬検索から登録します（生年・性別で同名の馬と区別します）。
+    </p>
+    <div style="margin-top:20px;">
+        <label>ファイル：</label><br>
+        <input type="file" id="tf-file" accept=".pdf,.mhtml,.mht,.html,.htm" multiple style="margin-top:5px;">
+    </div>
+    <div style="margin-top:20px;">
+        <button type="button" id="tf-btn" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>
+    </div>
+    <div id="tf-message" style="margin-top:10px; font-size:0.9em; line-height:1.6;"></div>
+    <script>
+    (function() {
+        const btn = document.getElementById('tf-btn'), msg = document.getElementById('tf-message');
+        const show = (lines, error) => { msg.style.color = error ? '#c62828' : ''; msg.innerHTML = '';
+            lines.forEach(t => { const d = document.createElement('div'); d.textContent = t; msg.appendChild(d); }); };
+        btn.addEventListener('click', async () => {
+            const files = document.getElementById('tf-file').files;
+            if (!files.length) { show(['ファイルが選択されていません。'], true); return; }
+            btn.disabled = true;
+            show(['転厩馬一覧を読み取っています...']);
+            try {
+                const form = new FormData();
+                Array.from(files).forEach(f => form.append('transfer_file', f));
+                const res = await fetch('/api/import_transfers', { method: 'POST', body: form });
+                let data;
+                try { data = await res.json(); } catch (e) { throw new Error(`インポートに失敗しました（HTTP ${res.status}）`); }
+                if (!res.ok || data.error) throw new Error(data.error || `インポートに失敗しました（HTTP ${res.status}）`);
+                const lines = [data.message, ...(data.notes || [])];
+                // 未登録の馬を登録してから、その馬の厩舎も新調教師にする
+                if ((data.unregistered || []).length) {
+                    const reg = await RaceImport.registerHorses(data.unregistered, { log: t => show([...lines, t]) });
+                    const st = await RaceImport.post('/api/import_transfers/stables', { moves: data.moves });
+                    lines.push(`未登録の馬${data.unregistered.length}頭：${reg.registered}頭を登録` +
+                               (reg.skipped ? `、${reg.skipped}頭はスキップ` : '') + (reg.failed ? `、${reg.failed}頭は失敗` : '') +
+                               (st.moved ? `（厩舎を${st.moved}頭更新）` : ''));
+                    reg.messages.filter(m => m.error || /スキップ/.test(m.text)).forEach(m => lines.push(m.text));
+                }
+                show(lines);
+            } catch (e) {
+                show([e.message], true);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    })();
+    </script>
+</section>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>レース結果 インポート</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         JRAの「レース結果」のページから、出走した全馬の成績を年ごとのファイル（例：「2026_レース結果」）に記録します。<br>
