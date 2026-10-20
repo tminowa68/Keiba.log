@@ -137,7 +137,7 @@
                     <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
                     <td class="nowrap">{{ chiho_mark(r.horse_name) }}{% if r.registered %}<a href="/horse/{{ r.horse_name|urlencode }}"><strong>{{ r.horse_name }}</strong></a>{% else %}{{ r.horse_name }}{% endif %}</td>
-                    <td class="nowrap">{{ r.sex }}{{ r.age }}</td>
+                    <td class="nowrap center"><span class="{{ 'female-text' if r.sex == '牝' else '' }}">{{ r.sex }}</span>{{ r.age }}</td>
                     <td>{{ r.weight }}</td>
                     <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
                     <td class="bl">{{ r.time }}</td>
@@ -169,10 +169,10 @@
                 {% for h in t.horses %}
                 <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }}>
                     <td class="nowrap">{{ chiho_mark(h.name) }}{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
-                    <td class="nowrap">{{ h.gender }}{{ h.age }}</td>
+                    <td class="nowrap center"><span class="{{ 'female-text' if h.gender == '牝' else '' }}">{{ h.gender }}</span>{{ h.age }}</td>
                     <td>{{ h.weight }}</td>
                     <td class="nowrap">{{ h['class'] }}</td>
-                    <td class="nowrap">{{ h.stable }}</td>
+                    <td class="nowrap">{{ h.stable|stable_html }}</td>
 {{ prev_cells(h) }}
                 </tr>
                 {% endfor %}

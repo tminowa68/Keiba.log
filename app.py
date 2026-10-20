@@ -2496,6 +2496,43 @@ def chiho_mark(name):
 app.jinja_env.globals['chiho_mark'] = chiho_mark
 app.jinja_env.globals['is_chiho'] = lambda name: str(name or '').strip() in chiho_horse_names()
 
+# --- 所属（拠点）のマーク：「美浦・調教師名」の「美浦・」を、美浦は青・栗東は赤・地方などその他はグレーのマークにする ---
+def area_mark_html(area):
+    from markupsafe import Markup, escape
+    area = str(area or '').strip()
+    if not area:
+        return Markup('')
+    cls = {'美浦': 'area-miho', '栗東': 'area-ritto'}.get(area, 'area-other')
+    return Markup(f'<span class="area-mark {cls}">{escape(area)}</span>')
+
+def stable_html(label, name=None):
+    """「美浦・調教師名」（または拠点と調教師名）を、拠点のマークと調教師名にする"""
+    from markupsafe import Markup, escape
+    if name is not None:
+        area, stable = str(label or '').strip(), str(name or '').strip()
+    else:
+        label = str(label or '').strip()
+        area, stable = label.split('・', 1) if '・' in label else ('', label)
+    return Markup(f"{area_mark_html(area)}{escape(stable)}")
+
+_AREA_IN_TEXT_RE = re.compile(r'(^|[\s：→])([^\s：→・（()]{1,5})・')
+
+def area_marks_in_text(text):
+    """転厩の文（「転厩：川崎・山崎 裕也→美浦・和田 雄二」）の中の「拠点・」をマークにする"""
+    from markupsafe import Markup, escape
+    out, pos = [], 0
+    text = str(text or '')
+    for m in _AREA_IN_TEXT_RE.finditer(text):
+        out.append(str(escape(text[pos:m.start(2)])))
+        out.append(str(area_mark_html(m.group(2))))
+        pos = m.end()
+    out.append(str(escape(text[pos:])))
+    return Markup(''.join(out))
+
+app.jinja_env.filters['stable_html'] = stable_html
+app.jinja_env.filters['area_marks'] = area_marks_in_text
+app.jinja_env.globals['stable_html'] = stable_html
+
 app.jinja_env.filters['race_parts'] = race_parts
 app.jinja_env.filters['race_inline'] = race_inline_html
 app.jinja_env.filters['history_race_title'] = history_race_title

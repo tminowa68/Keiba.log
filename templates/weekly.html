@@ -49,7 +49,7 @@
         </select>
     </div>
 
-    <h2 style="margin-top: 15px;">{{ week_label }}{% if stable %}　{{ stable }}{% endif %}</h2>
+    <h2 style="margin-top: 15px;">{{ week_label }}{% if stable %}　{{ stable|stable_html }}{% endif %}</h2>
     <p style="margin: 0; color: #555;">
         登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
     </p>
@@ -119,7 +119,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 {% macro best_th2(col='') %}<th data-col="{{ col }}">年</th><th data-col="{{ col }}">レース名</th><th data-col="{{ col }}">着順</th>{% endmacro %}
 
 {% macro stable_cell(h) %}
-            <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.stable %}{{ h.stable }}{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable }}{% endif %}</td>
+            <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.stable %}{{ h.stable|stable_html }}{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable|stable_html }}{% endif %}</td>
 {%- endmacro %}
 
 <section>
@@ -231,8 +231,8 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
             <td>{{ h.type }}</td>
-            <td>{{ h.old }}</td>
-            <td>{{ h.new }}</td>
+            <td>{{ h.old|stable_html if h.type == '転厩' else h.old }}</td>
+            <td>{{ h.new|stable_html if h.type == '転厩' else h.new }}</td>
 {{ last_race_cells(h) }}
         </tr>
         {% endfor %}

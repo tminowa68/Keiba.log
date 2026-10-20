@@ -31,7 +31,7 @@
                         <p class="m-0"><strong>厩舎：</strong>
                             <span id="current-stable-display">
                                 {% if horse|length > 8 and horse[7] and horse[8] %}
-                                    {{ horse[7] }}・{{ horse[8] }}
+                                    {{ stable_html(horse[7], horse[8]) }}
                                 {% endif %}
                             </span>
                         </p>
@@ -374,7 +374,7 @@
             <div class="race-summary-title">簡易プロフィール</div>
             {# 牝馬の性齢の「牝」と、母は赤字にする #}
             <div>性齢：{% if brief_profile.sex_age.startswith('牝') %}<span class="female-text">牝</span>{{ brief_profile.sex_age[1:] }}{% else %}{{ brief_profile.sex_age }}{% endif %}</div>
-            <div>厩舎：{{ brief_profile.stable }}</div>
+            <div>厩舎：{{ brief_profile.stable|stable_html }}</div>
             <div>父：{{ brief_profile.sire }}</div>
             <div>母：<span class="female-text">{{ brief_profile.dam }}</span></div>
             {% if brief_profile.bms %}<div>母の父：{{ brief_profile.bms }}</div>{% endif %}
@@ -463,7 +463,7 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
                     {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
-                    <td class="bl" colspan="17">{{ r.text }}</td>
+                    <td class="bl" colspan="17">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -532,9 +532,9 @@
                     {# 「仮」の記録（レースの結果から推定した日付）は日付を表示しない #}
                     <td>{{ '' if change.get('仮', '')|string|trim == '仮' else change.get('年月日', '')|jpdate }}</td>
                     <td>{{ change.get('項目', '') }}</td>
-                    <td>{{ change.get('旧', '') }}</td>
+                    <td>{{ change.get('旧', '')|stable_html if change.get('項目', '') == '転厩' else change.get('旧', '') }}</td>
                     <td class="history-arrow">{{ '→' if change.get('旧', '') or change.get('新', '') else '' }}</td>
-                    <td>{{ change.get('新', '') }}</td>
+                    <td>{{ change.get('新', '')|stable_html if change.get('項目', '') == '転厩' else change.get('新', '') }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
