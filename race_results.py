@@ -657,7 +657,18 @@ def parse_special_race_page(html_or_soup):
         if g:
             race['grade'] = g
             break
-    return {'race': race, 'horses': horses}
+    # 年齢条件・クラス・記号・重量（ページの「3歳以上」「オープン」「（国際）（特指）」「ハンデ」）
+    for key, sel in (('category', '.type .category'), ('class', '.type .class'), ('marks', '.type .rule'),
+                     ('weight_rule', '.type .weight')):
+        el = soup.select_one(sel)
+        if el and _text(el):
+            race[key] = _text(el)
+    # 出走可能頭数（「出走可能頭数 18頭」「出走可能頭数：18頭」「フルゲート18頭」など）
+    page_text = _text(soup.body or soup).replace('：', ':')
+    cm = re.search(r'出走可能頭数\s*:?\s*(\d+)\s*頭', page_text) or re.search(r'フルゲート\s*:?\s*(\d+)\s*頭', page_text)
+    if cm:
+        race['capacity'] = int(cm.group(1))
+    return {'race': race, 'horses': horses, 'capacity': race.get('capacity')}
 
 
 def parse_horse_transfers(html_or_soup):
