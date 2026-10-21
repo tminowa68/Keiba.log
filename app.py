@@ -7851,12 +7851,14 @@ def race_detail():
             # 想定・特別登録の出走決定順（JRAの出走馬決定方法のルールがあるレース）
             rule = RR.entry_order_rule(race_date, jump, (race or {}).get('category', ''), (race or {}).get('class', ''),
                                        (race or {}).get('grade', ''), (race or {}).get('name', ''),
-                                       (race or {}).get('weight_rule', '')) if race else None
+                                       (race or {}).get('weight_rule', ''), venue) if race else None
             for t in tabs:
                 if t['key'] not in ('estimated', 'special') or not rule:
                     continue
                 order = RR.entry_order([{'key': h['name'], 'results': h.get('_results'), 'birth_year': h.get('_birth_year'),
-                                         'weight': h.get('weight')} for h in t['horses']], rule, race_date, jump)
+                                         'weight': h.get('weight'), 'area': str(h.get('stable') or '').split('・')[0]
+                                         if '・' in str(h.get('stable') or '') else ''}
+                                        for h in t['horses']], rule, race_date, jump, venue)
                 for h in t['horses']:
                     h['order'], h['order_group'] = order.get(h['name'], ('', ''))
                 t['order_groups'] = [{'index': i, 'label': step['label']} for i, step in enumerate(rule)
