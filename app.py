@@ -2804,8 +2804,11 @@ def record_race_changes(sh, horse_changes, stables, reg_dates=None):
             before_date, after_date = ch['before']['date'], ch['after']['date']
             thursday = thursday_of_race_week(after_date)
             reg = (reg_dates or {}).get(name)
-            into_jra = ch['type'] == '転厩' and ch['before'].get('affiliation', 'JRA') != 'JRA' \
-                and ch['after'].get('affiliation', 'JRA') == 'JRA' and reg and before_date < reg <= after_date
+            # 地方所属からJRA所属に変わった間の転厩・去勢は、JRAに転入した日（競走馬登録日）を日付にする
+            # （転厩は確定の日付、去勢は転入した日を仮の日付にする）
+            into_jra = bool(ch['before'].get('affiliation', 'JRA') != 'JRA'
+                            and ch['after'].get('affiliation', 'JRA') == 'JRA' and reg and before_date < reg <= after_date)
+            keep_tentative = '仮' if ch['type'] == '去勢' else ''
             same = sorted([(parse_full_date(r[C_DATE]), i, r) for i, r in existing.get(name, [])
                            if i not in used and _same_change(ch, r) and parse_full_date(r[C_DATE])],
                           key=lambda x: x[0])
@@ -2813,10 +2816,10 @@ def record_race_changes(sh, horse_changes, stables, reg_dates=None):
             if match:
                 d, i, r = match
                 used.add(i)
-                if into_jra and i is not None and (d != reg or r[C_TENTATIVE]):
-                    # 仮の日付で記録した地方からJRAへの転厩を、競走馬登録日（転入日）に直す
-                    r[C_DATE], r[C_TENTATIVE] = reg.strftime('%Y%m%d'), ''
-                    updates.append({'range': f"A{i}:B{i}", 'values': [[r[C_DATE], '']]})
+                if into_jra and i is not None and (d != reg or r[C_TENTATIVE].strip() != keep_tentative):
+                    # 仮の日付で記録した地方からJRAへの間の転厩・去勢を、競走馬登録日（転入日）に直す
+                    r[C_DATE], r[C_TENTATIVE] = reg.strftime('%Y%m%d'), keep_tentative
+                    updates.append({'range': f"A{i}:B{i}", 'values': [[r[C_DATE], keep_tentative]]})
                 elif d > after_date and i is not None:
                     # 記録されている日付が変わった後のレースより後なら、そのレースの週の木曜日に戻す（日付は「仮」）
                     r[C_DATE], r[C_TENTATIVE] = thursday.strftime('%Y%m%d'), '仮'
@@ -2827,7 +2830,8 @@ def record_race_changes(sh, horse_changes, stables, reg_dates=None):
                 row = changes_row(when.strftime('%Y%m%d'), name, '転厩', trainer_label(ch['old'], stables),
                                   trainer_label(ch['new'], stables), tentative=not into_jra)
             else:
-                row = changes_row(thursday.strftime('%Y%m%d'), name, '去勢', '牡', 'せん', tentative=True)
+                when = reg if into_jra else thursday
+                row = changes_row(when.strftime('%Y%m%d'), name, '去勢', '牡', 'せん', tentative=True)
             new_rows.append(row)
             existing.setdefault(name, []).append([None, row])
     if updates:
@@ -3305,7 +3309,8 @@ def api_race_results_horse_races():
     # リンクの無い地方競馬のレースがあれば、地方競馬情報サイトで馬を探して地方のレースも取り込む
     if RR.parse_horse_nar_rows(html):
         try:
-            nar = nar_horse_races(str(data.get('url') or ''))
+            entries = [t['date'] for t in RR.parse_horse_transfers(html) if t['type'] != '転出']
+            nar = nar_horse_races(str(data.get('url') or ''), entries)
             races += [r for r in nar['races'] if r['race_id'] not in {x['race_id'] for x in races}]
             transfers += nar['messages']
         except Exception as e:
@@ -3613,11 +3618,12 @@ def search_nar_horse(row):
                       else '地方競馬情報サイトで同じ馬名の馬を1頭に絞れませんでした')
     return cands[0]['url'], fetch_nar_html(cands[0]['url'])
 
-def nar_horse_races(horse_url):
+def nar_horse_races(horse_url, entry_dates=()):
     """JRAの競走馬（Horses・Sire・Damシートの馬）の地方競馬の出走レースを地方競馬情報サイトから探す。
     見つかった馬の競走馬情報のページ（k_activeCode=1）のURLをそのシートのNARのURLに書き込む。
     地方競馬登録抹消の日をChangesシートに「地方抹消」として、地方競馬情報サイトの馬主が違えば
-    「馬主変更」（日付は地方抹消の日、仮）として記録する。{'races': [...], 'messages': [...]} を返す"""
+    「馬主変更」として記録する（日付は仮で、JRAに転入した日。分からなければ地方抹消の日）。
+    entry_dates：JRAの競走馬情報の「JRAへ転入」の日付。{'races': [...], 'messages': [...]} を返す"""
     horse_id = RR.horse_id_from_url(horse_url)
     sh = gc.open(horse_data)
     title = row_no = row = None
@@ -3660,10 +3666,14 @@ def nar_horse_races(horse_url):
     ws_changes = get_or_create_worksheet(sh, "Changes", CHANGES_COLUMNS)
     change_rows = [list(c) + [''] * len(CHANGES_COLUMNS) for c in with_sheets_retry(ws_changes.get_all_values)[1:]]
     mine = [c for c in change_rows if c[C_NAME].strip() == name]
-    new_rows = []
+    new_rows, updates = [], []
     cancel = mark.get('cancel_date')
     if cancel:
         d8 = cancel.strftime('%Y%m%d')
+        # 地方からJRAに移籍した日：地方抹消の日以降で最初の「JRAへ転入」の日、無ければ競走馬登録日（転入日）
+        reg = parse_full_date(str(row[H_REGISTRATION] if len(row) > H_REGISTRATION else ''))
+        entry = min([d for d in list(entry_dates) + [reg] if d and d >= cancel], default=None)
+        owner_d8 = entry.strftime('%Y%m%d') if entry else d8
         if not any(c[C_TYPE].strip() == '地方抹消' and re.sub(r'\D', '', c[C_DATE]) == d8 for c in mine):
             new_rows.append(changes_row(d8, name, '地方抹消'))
             messages.append(f"{name}：地方競馬登録抹消（{format_date_jp(cancel)}）をChangesシートに記録")
@@ -3675,13 +3685,23 @@ def nar_horse_races(horse_url):
                 print(f"地方競馬情報サイトの馬主を取得できませんでした: {e}")
             owner = str(row[H_OWNER] if len(row) > H_OWNER else '').strip()
             key = lambda t: re.sub(r'[\s　]', '', t)
-            if nar_owner and owner and key(nar_owner) != key(owner) and not any(
-                    c[C_TYPE].strip() == '馬主変更' and key(c[C_OLD]) == key(nar_owner) and key(c[C_NEW]) == key(owner)
-                    for c in mine):
-                new_rows.append(changes_row(d8, name, '馬主変更', nar_owner, owner, tentative=True))
-                messages.append(f"{name}：馬主変更（{nar_owner}→{owner}）をChangesシートに記録（日付は地方抹消の日・仮）")
+            same = [i for i, c in enumerate(change_rows) if c[C_NAME].strip() == name
+                    and c[C_TYPE].strip() == '馬主変更' and key(c[C_OLD]) == key(nar_owner) and key(c[C_NEW]) == key(owner)]
+            when_label = 'JRAに転入した日' if entry else '地方抹消の日'
+            if nar_owner and owner and key(nar_owner) != key(owner) and not same:
+                new_rows.append(changes_row(owner_d8, name, '馬主変更', nar_owner, owner, tentative=True))
+                messages.append(f"{name}：馬主変更（{nar_owner}→{owner}）をChangesシートに記録（日付は{when_label}・仮）")
+            for i in same:
+                c = change_rows[i]
+                if c[C_TENTATIVE].strip() == '仮' and re.sub(r'\D', '', c[C_DATE]) != owner_d8:
+                    # 仮の日付（地方抹消の日など）で記録した馬主変更を、JRAに転入した日に直す
+                    updates.append({'range': f"A{i + 2}:B{i + 2}", 'values': [[owner_d8, '仮']]})
+                    messages.append(f"{name}：馬主変更の日付を{when_label}（{format_date_jp(owner_d8)}）に修正")
+    if updates:
+        with_sheets_retry(ws_changes.batch_update, updates)
     if new_rows:
         with_sheets_retry(ws_changes.append_rows, new_rows)
+    if updates or new_rows:
         remember_sheet_values("Changes")
     return {'races': races, 'messages': messages}
 
