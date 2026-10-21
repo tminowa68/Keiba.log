@@ -2013,6 +2013,11 @@ def api_special_entries_upload():
             race = page['race']
             if not page['horses']:
                 raise ValueError('登録馬が見つかりません（各レースの登録馬のページを指定してください）')
+            if race.get('date') and race.get('venue') and not race.get('num') and race.get('name'):
+                # レース番号がページに無い場合は、番組からレース名が同じレースを探す
+                day = get_program_for_dates([race['date']]).get(race['date'], {}).get(race['venue'], {})
+                race['num'] = next((n for n, p in day.items() if p.get('name') and (
+                    p['name'] == race['name'] or race['name'] in p['name'] or p['name'] in race['name'])), None)
             missing = [label for key, label in (('date', '年月日'), ('venue', '競馬場'), ('num', 'レース番号'))
                        if not race.get(key)]
             if missing:

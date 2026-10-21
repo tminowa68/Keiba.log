@@ -158,7 +158,7 @@
         <table class="race-list-table race-result-table" id="tbl_{{ t.key }}" data-capacity="{{ t.capacity or '' }}">
             <thead>
                 <tr>
-                    {% if t.order_groups %}<th class="lottery-col"></th><th>出走<br>決定順</th>{% endif %}
+                    {% if t.order_groups %}<th class="order-col">出走<br>決定順</th>{% endif %}
                     <th>馬名</th>
                     <th>性齢</th>
                     <th>斤量</th>
@@ -170,11 +170,11 @@
             <tbody>
                 {# 出走決定順で並べたときに、決定条件が変わるところに入れる条件の行 #}
                 {% for g in t.order_groups or [] %}
-                <tr class="order-group-row" data-group="{{ g.index }}"><td colspan="13">{{ g.label }}</td></tr>
+                <tr class="order-group-row" data-group="{{ g.index }}"><td colspan="12">{{ g.label }}</td></tr>
                 {% endfor %}
                 {% for h in t.horses %}
                 <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }} data-order="{{ h.order }}" data-group="{{ h.order_group }}">
-                    {% if t.order_groups %}<td class="lottery-cell"></td><td class="num center">{{ h.order }}</td>{% endif %}
+                    {% if t.order_groups %}<td class="num center order-cell">{{ h.order }}</td>{% endif %}
                     <td class="nowrap">{{ chiho_mark(h.name) }}{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
                     <td class="nowrap center"><span class="{{ 'female-text' if h.gender == '牝' else '' }}">{{ h.gender }}</span>{{ h.age }}</td>
                     <td>{{ h.weight }}</td>
@@ -267,35 +267,33 @@ function switchTab(key, remember = true) {
     // 出走決定順で並べたときに、出走可能頭数を超える順位のところに太線を引き、
     // 出走可能な範囲の最下位の順位で同じ順位の馬が範囲を超える場合は、その馬をまとめて「抽選」と表示する
     function markCapacity(table, active) {
-        if (!table.querySelector('th.lottery-col')) return;
+        if (!table.querySelector('th.order-col')) return;
         const rows = Array.from(table.tBodies[0].rows).filter(r => !r.classList.contains('order-group-row'));
+        // 前回の表示を戻す（順位のセルをまとめていたら各行に戻す）
         rows.forEach(r => {
             r.classList.remove('capacity-line');
-            r.querySelectorAll('td.lottery-cell, td.lottery').forEach(td => td.remove());
+            if (!r._orderCell) r._orderCell = r.querySelector('td.order-cell');
+            const cell = r._orderCell;
+            cell.rowSpan = 1;
+            cell.classList.remove('lottery');
+            cell.textContent = r.dataset.order || '';
+            if (cell.parentNode !== r) r.insertBefore(cell, r.firstChild);
         });
         const cap = Number(table.dataset.capacity || 0);
+        if (!active || !cap) return;
         const pos = r => (r.dataset.order ? Number(r.dataset.order) : null);
-        let lottery = [];
-        if (active && cap) {
-            const inRange = rows.filter(r => pos(r) !== null && pos(r) <= cap);
-            if (inRange.length && inRange.length < rows.length) inRange[inRange.length - 1].classList.add('capacity-line');
-            const last = inRange.length ? pos(inRange[inRange.length - 1]) : null;
-            const tied = rows.filter(r => pos(r) === last);
-            if (last !== null && last + tied.length - 1 > cap) lottery = tied;
-        }
-        rows.forEach(r => {
-            if (lottery.length && r === lottery[0]) {
-                const td = document.createElement('td');
-                td.className = 'lottery';
-                td.rowSpan = lottery.length;
-                td.innerHTML = '<span>抽<br>選</span>';   // 縦書き（1文字ずつ改行）
-                r.insertBefore(td, r.firstChild);
-            } else if (!lottery.includes(r)) {
-                const td = document.createElement('td');
-                td.className = 'lottery-cell';
-                r.insertBefore(td, r.firstChild);
-            }
-        });
+        const inRange = rows.filter(r => pos(r) !== null && pos(r) <= cap);
+        if (inRange.length && inRange.length < rows.length) inRange[inRange.length - 1].classList.add('capacity-line');
+        const last = inRange.length ? pos(inRange[inRange.length - 1]) : null;
+        const tied = rows.filter(r => pos(r) === last);
+        if (last === null || last + tied.length - 1 <= cap || tied.length < 2) return;
+        // 同じ順位の馬の順位のセルを1つにまとめ、左側に「抽選」と縦に表示する
+        const first = tied[0]._orderCell;
+        first.rowSpan = tied.length;
+        first.classList.add('lottery');
+        first.innerHTML = '<span class="lottery-mark">抽<br>選</span><span class="lottery-num"></span>';
+        first.querySelector('.lottery-num').textContent = String(last);
+        tied.slice(1).forEach(r => r._orderCell.remove());
     }
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
         ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;
