@@ -7653,7 +7653,7 @@ def previous_race_info(horses, race_date, jump=False):
     for t in targets:
         res = [r for r in found.get(t['key'], []) if r['date'] < race_date]
         info = {'prev_when': '', 'prev_title': '', 'prev_place': '', 'prev_date': '', 'interval': '',
-                'interval_weeks': '', 'shutoku': 0}
+                'interval_weeks': '', 'shutoku': 0, '_results': res, '_birth_year': t['birth_year']}
         if res:
             p = res[0]
             weeks = interval_weeks_between(p['date'], race_date)
@@ -7848,6 +7848,21 @@ def race_detail():
             for t in tabs:
                 for h in t.get('horses') or t.get('runners') or []:
                     h.update(prev.get(h['horse_name'] if 'horse_name' in h else h['name'], {}))
+            # 想定・特別登録の出走決定順（JRAの出走馬決定方法のルールがあるレース）
+            rule = RR.entry_order_rule(race_date, jump, (race or {}).get('category', ''), (race or {}).get('class', ''),
+                                       (race or {}).get('grade', ''), (race or {}).get('name', ''),
+                                       (race or {}).get('weight_rule', ''), venue) if race else None
+            for t in tabs:
+                if t['key'] not in ('estimated', 'special') or not rule:
+                    continue
+                order = RR.entry_order([{'key': h['name'], 'results': h.get('_results'), 'birth_year': h.get('_birth_year'),
+                                         'weight': h.get('weight'), 'area': str(h.get('stable') or '').split('・')[0]
+                                         if '・' in str(h.get('stable') or '') else ''}
+                                        for h in t['horses']], rule, race_date, jump, venue)
+                for h in t['horses']:
+                    h['order'], h['order_group'] = order.get(h['name'], ('', ''))
+                t['order_groups'] = [{'index': i, 'label': step['label']} for i, step in enumerate(rule)
+                                     if any(v[1] == i for v in order.values())]
         except Exception as e:
             print(f"前走レースの読み込みエラー: {e}")
 

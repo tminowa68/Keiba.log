@@ -2509,3 +2509,11 @@ td.col-last-race {
     box-sizing: border-box;
 }
 .corner-box:first-child { margin-left: 0; }
+/* race_detailの想定・特別登録：出走決定順の決定条件の行 */
+.race-result-table tr.order-group-row td {
+    background: #eef4fb;
+    color: #1f4e79;
+    font-weight: bold;
+    font-size: 0.9em;
+    text-align: left;
+}

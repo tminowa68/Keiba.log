@@ -961,3 +961,145 @@ def parse_horse_nar_rows(html_or_soup):
                 out.append({'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3))), 'venue': venue,
                             'name': cells[2]})
     return out
+
+
+# --- 出馬投票の出走決定順（JRAの「競馬番組等について」の出走馬決定方法と、JRAのよくある質問） ---
+# 各年度の変更（競馬番組等について）：
+#   2021年度：3(4)歳以上2勝クラス 2勝クラス馬のうち4節以内の前走5着以内馬（それまでは3着以内）
+#   2022年度：3(4)歳以上3勝クラス 3勝クラス馬のうち4節以内の前走3着以内馬、以下クラス順に出走間隔の長い馬
+#   2023年度：平地の3(4)歳以上オープン（重賞・リステッドを除く） オープン馬のうち8節以内の前走3着以内馬、以下同様
+#   2025年度：3(4)歳以上3勝クラス 前走成績の対象を8節以内に拡大
+#   2026年度：2・3歳1勝クラス（それまでは次走優先権）、障害のオープン（一般競走） オープン馬のうち8節以内の前走3着以内馬
+# 未勝利・1勝クラスは自ブロック所属馬（美浦所属馬は中山・東京、栗東所属馬は京都・阪神の開催。第3場は対象外）を優先する。
+# 2勝クラスは移籍後初戦の馬・未出走馬の条件がある（JRAのよくある質問）
+# ※前走成績は中央競馬の平地競走（障害は障害競走）の成績に限る。
+# ※ハンデキャップ競走（3勝クラスは2022年度、オープンは2023年度から）はハンデ上位3頭を最優先とする
+_CLASS_ORDER = ['オープン', '3勝クラス', '2勝クラス', '1勝クラス', '未勝利']
+BLOCK_VENUES = {'中山': '美浦', '東京': '美浦', '京都': '栗東', '阪神': '栗東'}   # 競馬場 → 自ブロックの所属
+
+
+def entry_order_rule(race_date, jump, category, race_class, grade='', race_name='', weight_rule='', venue=''):
+    """出走決定順の決め方。[{'kind': 'handicap'／'form'／'transfer'／'unraced'／'interval', 'class', 'within'（節）,
+    'place'（着以内）, 'block'（'own'／'other'／None）, 'label'}]。当てはまるルールが無ければ None"""
+    if not race_date:
+        return None
+    year = race_date.year
+    cls = (race_class or '').strip()
+    young = (category or '').strip() in ('2歳', '3歳')
+    blocks = venue in BLOCK_VENUES   # 自ブロック・他ブロックで分ける開催か（第3場は分けない）
+
+    def step(kind, label, c=None, block=None, **kw):
+        return dict(kind=kind, label=label, block=block, **{'class': c}, **kw)
+
+    def form(c, within, place):
+        return step('form', f"{c}馬のうち、{within}節以内の前走{place}着以内馬", c, within=within, place=place)
+
+    def interval(c):
+        return step('interval', f"{c}馬のうち、出走間隔の長い馬", c)
+
+    def by_block(make):
+        # 自ブロック → 他ブロックの順（第3場は分けずに1回）
+        return make('own') + make('other') if blocks else make(None)
+
+    handicap = {'kind': 'handicap', 'label': 'ハンデ上位3頭', 'block': None, 'class': None}
+    if jump:
+        if cls == 'オープン' and not grade and not is_special_race_name(race_name) and year >= 2026:
+            return [form('オープン', 8, 3), interval('オープン'), interval('未勝利')]
+        return None
+    who = lambda b: {'own': '自ブロック所属馬', 'other': '他ブロック所属馬'}.get(b, '馬')
+    if cls == '未勝利':
+        return by_block(lambda b: [
+            step('form', f"4節以内の前走5着以内の{who(b)}", '未勝利', b, within=4, place=5),
+            step('unraced', f"未出走馬のうち{who(b)}" if b else '未出走馬', None, b),
+            step('interval', f"出走間隔の長い{who(b)}", '未勝利', b)])
+    if cls == '1勝クラス' and (not young or year >= 2026):
+        return by_block(lambda b: [
+            step('form', f"4節以内の前走5着以内の{who(b)}（未勝利馬を除く）", '1勝クラス', b, within=4, place=5),
+            step('transfer', f"地方や外国での出走経験があり、JRAに移籍後初戦の{who(b)}", None, b),
+            step('interval', f"出走間隔の長い{who(b)}（未勝利馬を除く）", '1勝クラス', b)]) + by_block(lambda b: [
+            step('unraced', f"未出走馬のうち{who(b)}" if b else '未出走馬', None, b),
+            step('interval', f"未勝利馬のうち出走間隔の長い{who(b)}", '未勝利', b)])
+    if cls == '2勝クラス' and not young:
+        return [form('2勝クラス', 4, 5 if year >= 2021 else 3),
+                step('transfer', '地方や外国での出走経験があり、JRAに移籍後初戦の2勝クラス馬', '2勝クラス'),
+                interval('2勝クラス'),
+                step('transfer', '地方や外国での出走経験があり、JRAに移籍後初戦の1勝クラス馬', '1勝クラス'),
+                interval('1勝クラス'), step('unraced', '未出走馬'), interval('未勝利')]
+    if cls == '3勝クラス' and not young and year >= 2022:
+        steps = [form('3勝クラス', 8 if year >= 2025 else 4, 3)] + [interval(c) for c in _CLASS_ORDER[1:]]
+        return ([handicap] if weight_rule == 'ハンデ' else []) + steps
+    if cls == 'オープン' and not young and not grade and year >= 2023:
+        steps = [form('オープン', 8, 3)] + [interval(c) for c in _CLASS_ORDER]
+        return ([handicap] if weight_rule == 'ハンデ' else []) + steps
+    return None
+
+
+def race_week_index(d):
+    """節（開催の週）の番号：その週の木曜日を基準にした週の通し番号"""
+    thursday = d - timedelta(days=(d.weekday() - 3) % 7)
+    return thursday.toordinal() // 7
+
+
+def entry_horse_class(results, race_date, jump, birth_year):
+    """出走決定順の判定に使う、その日の馬のクラス（オープン・3勝クラス・2勝クラス・1勝クラス・未勝利）"""
+    s = summarize_results([r for r in results if r.get('date') and r['date'] < race_date],
+                          birth_year=birth_year, today=race_date)['jump' if jump else 'flat']
+    cls = s['class'].replace('障害', '')
+    return '未勝利' if cls in ('新馬', '未出走', '未勝利') else cls
+
+
+def entry_order(horses, rule, race_date, jump=False, venue=''):
+    """出走決定順を付ける。horses：[{'key', 'results'（出走成績）, 'birth_year', 'weight', 'area'（美浦・栗東）}]。
+    {key: (順位, 条件の番号)} を返す（どの条件にも当てはまらない馬は含めない）。同じ順位は同じ番号"""
+    week = race_week_index(race_date)
+    own_area = BLOCK_VENUES.get(venue)
+    info = {}
+    for h in horses:
+        past = sorted([r for r in h.get('results') or [] if r.get('date') and r['date'] < race_date],
+                      key=lambda r: r['date'], reverse=True)
+        jra_same = [r for r in past if not r.get('nar') and bool(r.get('jump')) == bool(jump)]
+        prev = jra_same[0] if jra_same else None
+        area = (h.get('area') or '').strip()
+        info[h['key']] = {
+            'class': entry_horse_class(past, race_date, jump, h.get('birth_year')),
+            # 前走（中央の平地競走。障害は障害競走）が何節前か、着順
+            'prev_weeks': week - race_week_index(prev['date']) if prev else None,
+            'prev_place': int(prev['place']) if prev and str(prev.get('place', '')).isdigit() else None,
+            'unraced': not past,
+            # JRAに移籍後初戦：地方（または外国）で出走経験があり、最後の出走が地方のレース
+            'transfer': bool(past) and bool(past[0].get('nar')),
+            # 出走間隔（節）。初出走馬は最も長い
+            'interval': week - race_week_index(past[0]['date']) if past else 10 ** 6,
+            'weight': float(h['weight']) if re.fullmatch(r'\d+(\.\d+)?', str(h.get('weight') or '')) else None,
+            # 自ブロック所属馬か（所属が分からない馬は自ブロックとして扱う）
+            'own': not own_area or not area or area == own_area,
+        }
+    done, out, position = set(), {}, 1
+    for gi, step in enumerate(rule):
+        block = step.get('block')
+        cands = {k: v for k, v in info.items() if k not in done
+                 and (block is None or (block == 'own') == v['own'])
+                 and (not step.get('class') or v['class'] == step['class'])}
+        if step['kind'] == 'handicap':
+            weights = sorted([v['weight'] for v in info.values() if v['weight'] is not None], reverse=True)
+            if len(weights) < 3:
+                continue
+            group = [(k, 0) for k, v in cands.items() if v['weight'] is not None and v['weight'] >= weights[2]]
+        elif step['kind'] == 'form':
+            group = [(k, 0) for k, v in cands.items() if v['prev_weeks'] is not None and v['prev_weeks'] <= step['within']
+                     and v['prev_place'] is not None and v['prev_place'] <= step['place']]
+        elif step['kind'] == 'transfer':
+            group = [(k, 0) for k, v in cands.items() if v['transfer']]
+        elif step['kind'] == 'unraced':
+            group = [(k, 0) for k, v in cands.items() if v['unraced']]
+        else:
+            group = [(k, -v['interval']) for k, v in cands.items()]
+        group.sort(key=lambda x: x[1])
+        prev_key, prev_pos = None, position
+        for i, (k, sort_key) in enumerate(group):
+            pos = prev_pos if sort_key == prev_key else position + i
+            out[k] = (pos, gi)
+            prev_key, prev_pos = sort_key, pos
+            done.add(k)
+        position += len(group)
+    return out

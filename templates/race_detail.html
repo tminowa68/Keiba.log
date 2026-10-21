@@ -77,6 +77,7 @@
             <span class="sort-controls" data-table="tbl_{{ t.key }}">
                 並び替え：<select class="sort-key">
                     {% if t.key == 'final' %}<option value="place">着順</option>{% endif %}
+                    {% if t.order_groups %}<option value="order">出走決定順</option>{% endif %}
                     <option value="num">馬番</option>
                     <option value="name">馬名</option>
                     <option value="age">馬齢</option>
@@ -89,8 +90,8 @@
                     <option value="asc">昇順</option>
                     <option value="desc">降順</option>
                 </select>
-                <input type="hidden" class="sort-default" value="{{ 'place' if t.key == 'final' else 'shutoku' }}">
-                <input type="hidden" class="sort-default-dir" value="{{ 'asc' if t.key == 'final' else 'desc' }}">
+                <input type="hidden" class="sort-default" value="{{ 'place' if t.key == 'final' else 'order' if t.order_groups else 'shutoku' }}">
+                <input type="hidden" class="sort-default-dir" value="{{ 'asc' if t.key == 'final' or t.order_groups else 'desc' }}">
             </span>
         </div>
         {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
@@ -157,6 +158,7 @@
         <table class="race-list-table race-result-table" id="tbl_{{ t.key }}">
             <thead>
                 <tr>
+                    {% if t.order_groups %}<th>出走<br>決定順</th>{% endif %}
                     <th>馬名</th>
                     <th>性齢</th>
                     <th>斤量</th>
@@ -166,8 +168,13 @@
                 </tr>
             </thead>
             <tbody>
+                {# 出走決定順で並べたときに、決定条件が変わるところに入れる条件の行 #}
+                {% for g in t.order_groups or [] %}
+                <tr class="order-group-row" data-group="{{ g.index }}"><td colspan="12">{{ g.label }}</td></tr>
+                {% endfor %}
                 {% for h in t.horses %}
-                <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }}>
+                <tr {{ sort_attrs(h, h.horse_num, h.name, h.age, h.weight) }} data-order="{{ h.order }}" data-group="{{ h.order_group }}">
+                    {% if t.order_groups %}<td class="num center">{{ h.order }}</td>{% endif %}
                     <td class="nowrap">{{ chiho_mark(h.name) }}{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
                     <td class="nowrap center"><span class="{{ 'female-text' if h.gender == '牝' else '' }}">{{ h.gender }}</span>{{ h.age }}</td>
                     <td>{{ h.weight }}</td>
@@ -220,7 +227,7 @@ function switchTab(key, remember = true) {
 
 // 出馬表の並び替え（値が無い行は最後。同じ値なら馬名順）
 (function() {
-    const numeric = { num: true, age: true, weight: true, prevplace: true, shutoku: true, place: true };
+    const numeric = { num: true, age: true, weight: true, prevplace: true, shutoku: true, place: true, order: true };
     function value(tr, key) {
         const v = tr.dataset[key] || '';
         if (v === '') return null;
@@ -238,11 +245,23 @@ function switchTab(key, remember = true) {
         const key = ctrl.querySelector('.sort-key').value;
         const dir = ctrl.querySelector('.sort-dir').value === 'desc' ? -1 : 1;
         const tbody = table.tBodies[0];
+        const headers = Array.from(tbody.querySelectorAll('tr.order-group-row'));
+        headers.forEach(tr => tr.remove());
+        let lastGroup = null;
         Array.from(tbody.rows).sort((a, b) => {
             const va = value(a, key), vb = value(b, key);
             const c = (va === null || vb === null) ? compare(va, vb) : dir * compare(va, vb);
             return c || compare(value(a, 'name'), value(b, 'name'));
-        }).forEach(tr => tbody.appendChild(tr));
+        }).forEach(tr => {
+            // 出走決定順（昇順）で並べたときは、決定条件が変わるところに条件の行を入れる
+            const g = tr.dataset.group;
+            if (key === 'order' && dir === 1 && g !== '' && g !== lastGroup) {
+                const header = headers.find(h => h.dataset.group === g);
+                if (header) tbody.appendChild(header);
+                lastGroup = g;
+            }
+            tbody.appendChild(tr);
+        });
     }
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
         ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;
