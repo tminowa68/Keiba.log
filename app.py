@@ -1893,7 +1893,9 @@ def entry_sheet_row(race, horse, status):
               '区分': '障害' if race.get('jump') else '平地', '年齢条件': race.get('category', ''),
               'クラス': race.get('class', ''), '記号': race.get('marks', ''), '距離': race.get('distance', ''),
               'コース': race.get('surface', ''), '馬名': horse['name'], '馬ID': horse.get('horse_id', ''),
-              '登録': status, '斤量': horse.get('weight', '')}
+              '登録': status, '斤量': horse.get('weight', ''),
+              # 想定・特別登録などの記録の行の頭数の列には、出走可能頭数を記録する
+              '頭数': race.get('capacity') or ''}
     return [str(values.get(c, '')) for c in RUNNER_SHEET_COLUMNS]
 
 def save_entries(entries):
@@ -1921,6 +1923,7 @@ def save_entries(entries):
             elif k[0]:
                 results_done.add((k[1], k[2], str(k[3]).strip()))
         updates, new_rows = [], []
+        cap_c = RUNNER_COL['頭数']
         for e in items:
             race, status = e['race'], e['status']
             label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R {race.get('name', '')}".strip()
@@ -1930,6 +1933,11 @@ def save_entries(entries):
             key = entry_key(race['date'], race['venue'], race['num'])
             have = recorded.setdefault(key, {})
             added = updated = 0
+            if race.get('capacity'):
+                # 記録済みの馬の行にも出走可能頭数を書き込む
+                for row_no, _ in have.values():
+                    if row_no:
+                        updates.append({'range': f"{col_letter(cap_c)}{row_no}", 'values': [[str(race['capacity'])]]})
             for h in e['horses']:
                 if h['name'] in have:
                     row_no, old = have[h['name']]
@@ -1977,7 +1985,10 @@ def api_special_entries_import():
 
     def _fetch(race):
         try:
-            return race, RR.parse_special_race_page(fetch_jra_html(JRA_ACCESS_T, cname=race['cname']))['horses'], None
+            page = RR.parse_special_race_page(fetch_jra_html(JRA_ACCESS_T, cname=race['cname']))
+            if page.get('capacity'):
+                race['capacity'] = page['capacity']
+            return race, page['horses'], None
         except Exception as e:
             return race, [], str(e)
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -7828,6 +7839,10 @@ def race_detail():
                                 for e in entries if order.index(e['stage']) >= i],
                      # 次の段階に進める候補（この段階の馬）
                      'candidates': [e['horse_name'] for e in entries if e['stage'] == key]})
+    # 出走可能頭数（特別登録のページから記録した、想定・特別登録などの記録の行の頭数の列）
+    capacity = next((int(e['runners']) for e in entries if str(e.get('runners') or '').isdigit()), None)
+    for t in tabs:
+        t['capacity'] = capacity
     finals = [r for r in runners if r['stage'] == 'final']
     if finals:
         tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals})

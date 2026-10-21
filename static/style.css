@@ -2517,3 +2517,17 @@ td.col-last-race {
     font-size: 0.9em;
     text-align: left;
 }
+/* 出走決定順：出走可能頭数を超える順位の境目の太線と、出走可能な範囲の最下位の「抽選」 */
+.race-result-table tr.capacity-line td { border-bottom: 3px solid #333; }
+.race-result-table th.lottery-col,
+.race-result-table td.lottery-cell { width: 1.6em; padding: 0; }
+.race-result-table td.lottery {
+    width: 1.6em;
+    padding: 2px 0;
+    background: #fff3e0;
+    color: #e65100;
+    font-weight: bold;
+    text-align: center;
+    vertical-align: middle;
+}
+.race-result-table td.lottery span { display: inline-block; font-size: 0.85em; line-height: 1.2; }
