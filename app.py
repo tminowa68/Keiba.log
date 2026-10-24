@@ -7996,9 +7996,11 @@ def race_detail():
         r['stage'] = runner_stage(r)
         r['registered'] = r['horse_name'] in horses
     entries = [r for r in runners if r['stage'] != 'final']
+    # タブは想定・特別登録（特別レースのみ）・枠順確定前・確定出馬表をいつも表示し、記録の無い段階は空にする
+    special_race = bool(race and RR.is_special_race_name(race.get('name')))
     tabs = []
     for i, (key, label) in enumerate(ENTRY_STAGES):
-        if not any(e['stage'] == key for e in entries):
+        if key == 'special' and not special_race and not any(e['stage'] == key for e in entries):
             continue
         tabs.append({'key': key, 'label': label,
                      'horses': [dict(_horse_info(e['horse_name']), name=e['horse_name'], status=e['entry'],
@@ -8014,8 +8016,11 @@ def race_detail():
     for t in tabs:
         t['capacity'] = capacity
     finals = [r for r in runners if r['stage'] == 'final']
-    if finals:
+    if race or runners:
         tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals})
+    # 最初に開くタブ：記録のある一番後の段階
+    default_tab = next((t['key'] for t in reversed(tabs) if t.get('horses') or t.get('runners')),
+                       tabs[0]['key'] if tabs else '')
     # 特別登録はレース名のある（特別）レースだけ
     for t in tabs:
         if t['key'] == 'estimated':
@@ -8054,7 +8059,7 @@ def race_detail():
     heading = f"{race['kai']}回{venue}{race['nichi']}日" if race and race.get('kai') else venue
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
-                           program_race=program_race, result_race=result_race, tabs=tabs,
+                           program_race=program_race, result_race=result_race, tabs=tabs, default_tab=default_tab,
                            heading=heading, **nav)
 
 @app.route('/save_entry', methods=['POST'])
