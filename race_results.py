@@ -1194,6 +1194,7 @@ def parse_denma_page(html_or_soup):
                        'weight': weight.group(1) if weight else '',
                        'jockey': _text(tr.select_one('td.jockey p.jockey')),
                        'trainer': _text(trainer)})
+    race['runners_count'] = len(horses)
     day_key = f"{next((c for c, v in VENUES.items() if v == race['venue']), '')}{race['date'].year}" \
               f"{int(race['kai'] or 0):02d}{int(race['nichi'] or 0):02d}{race['date'].strftime('%Y%m%d')}"
     return {'race': race, 'horses': horses, 'day_key': day_key,

@@ -1864,7 +1864,7 @@ def save_race_results(parsed_list, overwrite=False):
         if replace_ids or entry_ids:
             # 入れ替えるレースの古い行を消す（下の行から消して行番号がずれないようにする）
             # 同じレースの行は続いているため、続いている行はまとめて消す
-            for ws, remove in ((ws_race, replace_ids), (ws_runner, replace_ids | entry_ids)):
+            for ws, remove in ((ws_race, replace_ids | entry_ids), (ws_runner, replace_ids | entry_ids)):
                 if not remove:
                     continue
                 ids = ws.col_values(1)
@@ -2106,6 +2106,34 @@ def _safe_fetch_denma(cname):
         print(f"出馬表のページ（{cname}）を取得できませんでした: {e}")
         return ''
 
+def save_denma_races(races):
+    """出馬表から読み取ったレース（条件・本賞金など）をレースシートに記録する（レースIDは「E年月日場R」）。
+    同じレースの記録があれば入れ替え、レース結果を取り込み済みのレースは記録しない"""
+    by_year = {}
+    for race in races:
+        by_year.setdefault(race['date'].year, []).append(race)
+    for year, items in by_year.items():
+        ws_race, _ = result_sheets(year, create=True)
+        ids = with_sheets_retry(ws_race.col_values, 1)
+        keys = list(with_sheets_retry(ws_race.batch_get, [f"A2:{col_letter(RACE_SHEET_COLUMNS.index('R'))}"])[0])
+        done = {(str(k[1]), str(k[2]), str(k[5]).strip()) for k in keys if k and k[0] and not is_entry_row_id(k[0])
+                and len(k) > 5}
+        rows, remove = [], set()
+        for race in items:
+            if (race['date'].strftime('%Y%m%d'), race['venue'], str(int(race['num']))) in done:
+                continue
+            key = entry_key(race['date'], race['venue'], race['num'])
+            remove.add(key)
+            r = dict(race, race_id=key, url='')
+            for k in ('kai', 'nichi', 'rule', 'weight_rule', 'course_detail', 'time', 'weather', 'turf', 'dirt'):
+                r.setdefault(k, '')
+            r['runners_count'] = race.get('runners_count', '')
+            rows.append([str(v) for v in race_sheet_row(r)])
+        for idx in sorted((i for i, v in enumerate(ids, start=1) if i > 1 and v in remove), reverse=True):
+            with_sheets_retry(ws_race.delete_rows, idx)
+        if rows:
+            with_sheets_retry(ws_race.append_rows, rows, value_input_option='RAW')
+
 def denma_entries(pages):
     """出馬表のページ（parse_denma_page の結果）の一覧を、save_entries に渡す記録にする"""
     entries = []
@@ -2172,9 +2200,9 @@ def api_denma_import_day():
                     failed.append(err)
         results = save_entries(denma_entries(pages))
         try:
-            save_program_prizes([p['race'] for p in pages])
+            save_denma_races([p['race'] for p in pages])
         except Exception as e:
-            print(f"本賞金の記録に失敗しました: {e}")
+            print(f"出馬表のレースの記録に失敗しました: {e}")
         unregistered = denma_unregistered(pages) if data.get('register') else []
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -2197,9 +2225,9 @@ def api_denma_upload():
     try:
         results = save_entries(denma_entries(pages))
         try:
-            save_program_prizes([p['race'] for p in pages])
+            save_denma_races([p['race'] for p in pages])
         except Exception as e:
-            print(f"本賞金の記録に失敗しました: {e}")
+            print(f"出馬表のレースの記録に失敗しました: {e}")
         unregistered = denma_unregistered(pages) if request.form.get('register') == '1' else []
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -3956,20 +3984,16 @@ def api_race_results_import_races():
 
 # --- 開催日程（競馬番組）：年ごとのファイルの「番組」シート（1レース1行） ---
 PROGRAM_SHEET = "番組"
-# 本賞金（1〜5着、万円）は出馬表を取り込んだときに記録する（開催日程のページには無いため）
 PROGRAM_COLUMNS = ["年月日", "場", "回", "日", "R", "レース名", "グレード", "区分", "年齢条件", "クラス", "条件",
-                   "距離", "コース", "コース詳細", "記号", "重量", "発走時刻",
-                   "1着本賞金", "2着本賞金", "3着本賞金", "4着本賞金", "5着本賞金"]
-PROGRAM_PRIZE_COLS = PROGRAM_COLUMNS[-5:]
+                   "距離", "コース", "コース詳細", "記号", "重量", "発走時刻"]
 PROGRAM_COL = {name: i for i, name in enumerate(PROGRAM_COLUMNS)}
 _program_cache = {}   # 年 → (読み込んだ時刻, 行の一覧)
 PROGRAM_CACHE_TTL = 300
 
 def program_sheet_row(race):
-    prizes = [str(p) for p in (race.get('prizes') or [])][:5]
     return [race['date'].strftime('%Y%m%d'), race['venue'], race['kai'], race['nichi'], race['num'], race['name'],
             race['grade'], '障害' if race['jump'] else '平地', race['category'], race['class'], race['condition'],
-            race['distance'], race['surface'], race['course_detail'], race['marks'], race['weight_rule'], race['time']] + prizes + [''] * (5 - len(prizes))
+            race['distance'], race['surface'], race['course_detail'], race['marks'], race['weight_rule'], race['time']]
 
 def save_program(races):
     """番組を保存する。同じ日の番組が既にあれば入れ替える（番組は変更されることがあるため）。保存した日の一覧を返す"""
@@ -3981,17 +4005,6 @@ def save_program(races):
         book = get_result_book(year, create=True)
         ws = _result_sheet(book, PROGRAM_SHEET, PROGRAM_COLUMNS)
         dates = {r['date'].strftime('%Y%m%d') for r in items}
-        # 出馬表から記録した本賞金は、番組を取り込み直しても残す
-        kept = {}
-        for old in get_program_rows(year):
-            if old[0] in dates and any(old[PROGRAM_COL[k]] for k in PROGRAM_PRIZE_COLS):
-                kept[(old[0], old[PROGRAM_COL['場']], str(old[PROGRAM_COL['R']]).strip())] = \
-                    prize_list([old[PROGRAM_COL[k]] for k in PROGRAM_PRIZE_COLS])
-        for r in items:
-            r.setdefault('prizes', kept.get((r['date'].strftime('%Y%m%d'), r['venue'], str(r['num']))))
-        if (with_sheets_retry(ws.row_values, 1) or [])[:len(PROGRAM_COLUMNS)] != PROGRAM_COLUMNS:
-            ensure_columns(ws, len(PROGRAM_COLUMNS))
-            ws.update(range_name='A1', values=[PROGRAM_COLUMNS])
         col = with_sheets_retry(ws.col_values, 1)
         blocks = []
         for idx in range(2, len(col) + 1):
@@ -4008,39 +4021,6 @@ def save_program(races):
         saved_dates |= {r['date'] for r in items}
         _program_cache.pop(year, None)
     return sorted(saved_dates)
-
-def save_program_prizes(races):
-    """出馬表から読み取った本賞金を、番組シートの同じレースの行に記録する（番組の無いレースは記録しない）"""
-    by_year = {}
-    for race in races:
-        if race.get('prizes') and race.get('date'):
-            by_year.setdefault(race['date'].year, []).append(race)
-    for year, items in by_year.items():
-        book = get_result_book(year)
-        if not book:
-            continue
-        try:
-            ws = book.worksheet(PROGRAM_SHEET)
-        except gspread.WorksheetNotFound:
-            continue
-        values = with_sheets_retry(ws.get_all_values)
-        if (values[0] if values else [])[:len(PROGRAM_COLUMNS)] != PROGRAM_COLUMNS:
-            ensure_columns(ws, len(PROGRAM_COLUMNS))
-            ws.update(range_name='A1', values=[PROGRAM_COLUMNS])
-        index = {(r[0], r[PROGRAM_COL['場']] if len(r) > PROGRAM_COL['場'] else '',
-                  str(r[PROGRAM_COL['R']]).strip() if len(r) > PROGRAM_COL['R'] else ''): i
-                 for i, r in enumerate(values[1:], start=2) if r}
-        first = col_letter(PROGRAM_COL[PROGRAM_PRIZE_COLS[0]])
-        last = col_letter(PROGRAM_COL[PROGRAM_PRIZE_COLS[-1]])
-        updates = []
-        for race in items:
-            row_no = index.get((race['date'].strftime('%Y%m%d'), race['venue'], str(int(race['num']))))
-            if row_no:
-                prizes = [str(p) for p in race['prizes']][:5]
-                updates.append({'range': f"{first}{row_no}:{last}{row_no}", 'values': [prizes + [''] * (5 - len(prizes))]})
-        if updates:
-            with_sheets_retry(ws.batch_update, updates)
-            _program_cache.pop(year, None)
 
 def get_program_rows(year):
     """その年の番組シートの行（しばらくの間は覚えておく）"""
@@ -4088,8 +4068,7 @@ def program_race_from_row(r):
             'num': f"{num}レース", 'race_num': num, 'name': c('レース名'), 'grade': c('グレード'), 'jump': jump,
             'category': c('年齢条件'), 'class': c('クラス'), 'condition': c('条件'),
             'course': course, 'distance': dist, 'surface': c('コース'), 'course_detail': detail,
-            'marks': marks, 'note': '牝' if '牝' in marks else '', 'weight_rule': c('重量'), 'time': c('発走時刻'),
-            'prizes': prize_list([c(k) for k in PROGRAM_PRIZE_COLS])}
+            'marks': marks, 'note': '牝' if '牝' in marks else '', 'weight_rule': c('重量'), 'time': c('発走時刻')}
 
 def prize_list(values):
     """本賞金の列の値（文字列）を数の一覧にする（空なら空の一覧）"""
@@ -7995,6 +7974,8 @@ def read_race_result(race_date, venue, num):
     cond = [f"{col_letter(1)} = {_gviz_quote(day)}"]
     race_rows = [r for r in query_sheet_rows(book, RACE_SHEET, RACE_SHEET_COLUMNS, cond, lambda r: True)
                  if _match(r, 1, 2, 5)]
+    # レース結果の行を、出馬表から記録した行（レースIDが「E〜」）より優先する
+    race_rows.sort(key=lambda r: is_entry_row_id(r[0]))
     runner_rows = [r for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, cond, lambda r: True)
                    if _match(r, RUNNER_COL['年月日'], RUNNER_COL['場'], RUNNER_COL['R'])]
     race = None
@@ -8063,9 +8044,9 @@ def race_detail():
                 'course': course_label(e['surface'], '', dist, e['jump'])}
     if race and not race.get('kai') and result_race:
         race = dict(race, kai=result_race['kai'], nichi=result_race['nichi'])
-    # 本賞金：レース結果（無ければ出馬表から番組に記録したもの）
+    # 本賞金：レースシート（レース結果、結果が無ければ出馬表から記録したレースの行）
     if race:
-        race = dict(race, prizes=(result_race or {}).get('prizes') or (program_race or {}).get('prizes') or [])
+        race = dict(race, prizes=(result_race or {}).get('prizes') or [])
 
     horses = {}
     for h in get_all_horses():
