@@ -2539,3 +2539,5 @@ td.col-last-race {
     font-size: 0.85em;
     line-height: 1.2;
 }
+/* 出馬表・出走履歴の見出し（頭数・馬番・人気・着順）を縦書きにする */
+.race-result-table th.th-vertical { line-height: 1.15; padding-left: 4px; padding-right: 4px; }

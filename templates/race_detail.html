@@ -96,7 +96,7 @@
         </div>
         {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
         {# 前走レース（日付｜開催｜レース名｜着順）・間隔・収得賞金 #}
-        {% macro prev_ths() %}<th class="bl">前走日付</th><th>開催</th><th>前走レース</th><th>着順</th><th class="bl">間隔</th><th class="bl">収得賞金<br>（万円）</th>{% endmacro %}
+        {% macro prev_ths() %}<th class="bl">前走日付</th><th>開催</th><th>前走レース</th><th class="th-vertical">着<br>順</th><th class="bl">間隔</th><th class="bl">収得賞金<br>（万円）</th>{% endmacro %}
         {% macro prev_cells(h) %}{% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
                     <td class="num nowrap bl">{{ h.prev_when }}</td>
                     <td class="nowrap">{{ h.prev_venue }}</td>
@@ -113,9 +113,9 @@
         <table class="race-list-table race-result-table" id="tbl_{{ t.key }}">
             <thead>
                 <tr>
-                    <th>着順</th>
+                    <th class="th-vertical">着<br>順</th>
                     <th>枠</th>
-                    <th>馬番</th>
+                    <th class="th-vertical">馬<br>番</th>
                     <th>馬名</th>
                     <th>性齢</th>
                     <th>斤量</th>
@@ -124,10 +124,11 @@
                     <th>着差</th>
                     <th>通過</th>
                     <th>上り</th>
-                    <th>人気</th>
+                    <th class="th-vertical">人<br>気</th>
                     <th class="bl">馬体重</th>
+                    <th>増減</th>
                     <th>調教師</th>
-                    <th class="bl">本賞金</th>
+                    <th class="bl">本賞金<br>（万円）</th>
                     {{ prev_ths() }}
                 </tr>
             </thead>
@@ -146,7 +147,8 @@
                     <td class="nowrap corners">{{ r.corners|corners_html }}</td>
                     <td>{{ r.last }}</td>
                     <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
-                    <td class="nowrap bl">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
+                    <td class="num nowrap bl">{{ r.body_weight }}</td>
+                    <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
                     <td class="nowrap">{{ r.trainer }}</td>
                     <td class="num bl">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
 {{ prev_cells(r) }}

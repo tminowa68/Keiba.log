@@ -440,18 +440,19 @@
                     <th>レース名</th>
                     <th>コース</th>
                     <th>馬場</th>
-                    <th class="bl">頭数</th>
+                    <th class="bl th-vertical">頭<br>数</th>
                     <th>枠</th>
-                    <th>馬番</th>
-                    <th class="bl">人気</th>
-                    <th>着順</th>
+                    <th class="th-vertical">馬<br>番</th>
+                    <th class="bl th-vertical">人<br>気</th>
+                    <th class="th-vertical">着<br>順</th>
                     <th class="bl">騎手</th>
                     <th>斤量</th>
                     <th class="bl">タイム</th>
                     <th>通過</th>
                     <th>上り</th>
                     <th class="bl">馬体重</th>
-                    <th class="bl">本賞金</th>
+                    <th>増減</th>
+                    <th class="bl">本賞金<br>（万円）</th>
                     <th>収得賞金<br>（万円）</th>
                 </tr>
             </thead>
@@ -463,7 +464,7 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
                     {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
-                    <td class="bl" colspan="17">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
+                    <td class="bl" colspan="18">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -485,14 +486,15 @@
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap corners">{{ r.corners|corners_html }}</td>
                     <td>{{ r.last }}</td>
-                    <td class="nowrap bl">{{ r.body_weight }}{% if r.body_diff %}({{ r.body_diff }}){% endif %}</td>
+                    <td class="num nowrap bl">{{ r.body_weight }}</td>
+                    <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
                     <td class="num bl">{{ "+{:,}".format(r.prize) if r.prize else '' }}</td>
                     <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
                 </tr>
                 {% endif %}
                 {% else %}
                 <tr>
-                    <td colspan="19" class="no-data-text">出走履歴がありません。</td>
+                    <td colspan="20" class="no-data-text">出走履歴がありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
