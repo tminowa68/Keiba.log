@@ -2073,22 +2073,27 @@ def fetch_jra_menu_page(label, access, default_cname):
 
 def denma_days_from_pages(html_list, follow=True):
     """出馬表の開催選択・レース選択・出馬表のページから、開催日の一覧 [{'key', 'label', 'date', 'cname'}] を返す。
-    follow=True なら、開催選択のページのリンク先（出馬表以外のページ）も開いて出馬表のリンクを探す"""
+    follow=True なら、開催選択のページの開催のボタンのリンク先（レース選択のページ）と、出馬表のページ
+    （同じ週の他の開催の1Rへのリンクがある）も開いて、開催日を探す
+    （保存した開催選択のページには開催のボタンのリンク先が残らず、重賞のレースへのリンクだけが残るため）"""
     days = {}
     for html in html_list:
         for key, races in RR.denma_cnames(html).items():
             days.setdefault(key, races[min(races)])
-    if follow and not days:
+    if follow:
         others = []
         for html in html_list:
             for m in re.finditer(r"accessD\.html'?\s*,\s*'(pw01d\w+/[0-9A-Fa-f]{2})'|accessD\.html\?CNAME=(pw01d\w+/[0-9A-Fa-f]{2})", html):
                 c = m.group(1) or m.group(2)
                 if not c.startswith('pw01dde') and c not in others:
                     others.append(c)
+        # 出馬表のページを1つ開くと、同じ週の各開催の1Rへのリンクがある
+        others += list(days.values())[:1]
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=4) as pool:
-            pages = list(pool.map(lambda c: _safe_fetch_denma(c), others[:16]))
-        return denma_days_from_pages([p for p in pages if p], follow=False)
+            pages = [p for p in pool.map(_safe_fetch_denma, others[:16]) if p]
+        for key, races in RR.denma_cnames(' '.join(pages)).items():
+            days.setdefault(key, races[min(races)])
     out = [{'key': k, 'label': RR.denma_day_label(k), 'date': f"{k[10:14]}-{k[14:16]}-{k[16:18]}", 'cname': c}
            for k, c in days.items()]
     out.sort(key=lambda d: (d['date'], d['key']))
