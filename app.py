@@ -2713,6 +2713,19 @@ def corners_html(text):
     return Markup(''.join(f'<span class="corner-box">{escape(p.strip())}</span>' for p in parts))
 
 app.jinja_env.filters['corners_html'] = corners_html
+def body_diff_text(diff):
+    """馬体重の増減の表示：初出走などの数字でないものは空、地方のレースのプラス（「4」）は「+4」にする"""
+    diff = str(diff or '').strip().strip('()（）')
+    if not re.fullmatch(r'[+\-－]?\d+', diff):
+        return ''
+    if diff[0] in '+-':
+        return diff
+    if diff[0] == '－':
+        return '-' + diff[1:]
+    return diff if diff == '0' else '+' + diff
+
+app.jinja_env.filters['body_diff'] = body_diff_text
+
 app.jinja_env.filters['stable_html'] = stable_html
 app.jinja_env.filters['area_marks'] = area_marks_in_text
 app.jinja_env.globals['stable_html'] = stable_html
