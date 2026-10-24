@@ -431,6 +431,147 @@
 </script>
 
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>出馬表 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAの競馬メニューの「出馬表」から開催を選び、各レースの出走馬を年ごとのファイルの成績シートに「確定」として記録します
+        （馬番が無ければ「枠順確定前」、馬番があれば「確定出馬表」のタブに表示します。枠・馬番・斤量・騎手も記録します）。<br>
+        ・「開催を取得」：JRAのサイトから出馬表のある開催の一覧を取得します。取り込む開催を選んで「取り込み開始」を押してください。<br>
+        ・ファイルから取り込む：各レースの出馬表のページを保存したファイル（.mhtml／.html）を指定します（複数可）。<br>
+        結果を取り込み済みのレースは飛ばします。
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:10px;">
+        <button type="button" id="dn-scan-btn" class="rr-btn">開催を取得</button>
+        <span style="color:#888;">または</span>
+        <input type="file" id="dn-files" accept=".mhtml,.mht,.html,.htm" multiple>
+        <button type="button" id="dn-upload-btn" class="rr-btn">ファイルから取り込む</button>
+        <label style="font-size:0.9em;"><input type="checkbox" id="dn-register"> 未登録の出走馬を登録する</label>
+    </div>
+    <div id="dn-days" style="margin-top:10px; display:none;">
+        <div id="dn-day-list" style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:0.9em;"></div>
+        <button type="button" id="dn-start-btn" class="rr-btn" style="margin-top:8px;">取り込み開始</button>
+    </div>
+    <div id="dn-message" style="margin-top:10px; font-size:0.9em;"></div>
+    <ul id="dn-log" style="margin-top:6px; font-size:0.85em; color:#555; max-height:240px; overflow-y:auto;"></ul>
+</section>
+
+<script>
+(function() {
+    const $ = id => document.getElementById(id);
+    function message(text, isError) {
+        $('dn-message').textContent = text;
+        $('dn-message').style.color = isError ? '#c62828' : '#333';
+    }
+    function log(results, failed) {
+        (results || []).forEach(r => {
+            const li = document.createElement('li');
+            li.textContent = `${r.label}：` + (r.message || `${r.added}頭を追加` + (r.updated ? `、${r.updated}頭を確定に更新` : ''));
+            $('dn-log').appendChild(li);
+        });
+        (failed || []).forEach(f => {
+            const li = document.createElement('li');
+            li.style.color = '#c62828';
+            li.textContent = f;
+            $('dn-log').appendChild(li);
+        });
+    }
+    function setBusy(busy) { ['dn-scan-btn', 'dn-upload-btn', 'dn-start-btn'].forEach(id => { $(id).disabled = busy; }); }
+    let unregistered = [];
+    function collect(res) {
+        (res.unregistered || []).forEach(u => { if (!unregistered.some(x => x.name === u.name)) unregistered.push(u); });
+    }
+    async function registerIfNeeded() {
+        if (!$('dn-register').checked || !unregistered.length) return '';
+        const reg = await RaceImport.registerHorses(unregistered, { log: t => message(t) });
+        return `、未登録の馬${unregistered.length}頭のうち${reg.registered}頭を登録`;
+    }
+
+    $('dn-scan-btn').addEventListener('click', async () => {
+        setBusy(true);
+        message('出馬表のある開催を取得しています...');
+        try {
+            const form = new FormData();
+            form.append('live', '1');
+            const res = await fetch('/api/denma/scan', { method: 'POST', body: form });
+            const data = await res.json().catch(() => ({ error: `取得に失敗しました（HTTP ${res.status}）` }));
+            if (!res.ok || data.error) throw new Error(data.error || `取得に失敗しました（HTTP ${res.status}）`);
+            $('dn-day-list').innerHTML = '';
+            data.days.forEach(d => {
+                const label = document.createElement('label');
+                label.innerHTML = `<input type="checkbox" checked> `;
+                label.querySelector('input').dataset.cname = d.cname;
+                label.querySelector('input').dataset.label = d.label;
+                label.appendChild(document.createTextNode(d.label));
+                $('dn-day-list').appendChild(label);
+            });
+            $('dn-days').style.display = '';
+            message(`${data.days.length}開催の出馬表があります。取り込む開催を選んでください。`);
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+
+    $('dn-start-btn').addEventListener('click', async () => {
+        const days = Array.from($('dn-day-list').querySelectorAll('input:checked'));
+        if (!days.length) { message('開催を選択してください。', true); return; }
+        setBusy(true);
+        $('dn-log').innerHTML = '';
+        unregistered = [];
+        let added = 0, failed = 0;
+        try {
+            for (let i = 0; i < days.length; i++) {
+                message(`${days[i].dataset.label} の出馬表を取り込んでいます（${i + 1}／${days.length}開催）...`);
+                try {
+                    const res = await RaceImport.post('/api/denma/import_day', { cname: days[i].dataset.cname,
+                                                                                register: $('dn-register').checked });
+                    log(res.results, res.failed);
+                    collect(res);
+                    added += (res.results || []).reduce((n, r) => n + r.added, 0);
+                    failed += (res.failed || []).length;
+                } catch (e) {
+                    if (RaceImport.isFatalError(e.message)) throw e;
+                    log([], [`${days[i].dataset.label}：${e.message}`]);
+                    failed++;
+                }
+            }
+            const reg = await registerIfNeeded();
+            message(`完了しました（${days.length}開催、${added}頭を追加${reg}` + (failed ? `、${failed}件失敗` : '') + '）。');
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+
+    $('dn-upload-btn').addEventListener('click', async () => {
+        const files = $('dn-files').files;
+        if (!files.length) { message('ファイルを選択してください。', true); return; }
+        setBusy(true);
+        $('dn-log').innerHTML = '';
+        unregistered = [];
+        message('ファイルから取り込んでいます...');
+        try {
+            const form = new FormData();
+            Array.from(files).forEach(f => form.append('denma_files', f));
+            if ($('dn-register').checked) form.append('register', '1');
+            const res = await fetch('/api/denma/upload', { method: 'POST', body: form });
+            const data = await res.json().catch(() => ({ error: `取り込みに失敗しました（HTTP ${res.status}）` }));
+            if (!res.ok || data.error) throw new Error(data.error || `取り込みに失敗しました（HTTP ${res.status}）`);
+            log(data.results, data.failed);
+            collect(data);
+            const reg = await registerIfNeeded();
+            message('完了しました' + (reg ? `（${reg.slice(1)}）` : '') + '。');
+        } catch (e) {
+            message(e.message, true);
+        } finally {
+            setBusy(false);
+        }
+    });
+})();
+</script>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>登録馬の出走レースから取り込み</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         Horses・Sire・DamシートにJRAのURLが登録されている馬について、JRAの競走馬情報のページの「出走レース」から、
