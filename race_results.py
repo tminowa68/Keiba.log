@@ -960,6 +960,16 @@ def parse_nar_person_page(html_or_soup):
     return {'name': nar_person_name(name_el.get_text('') if name_el else ''), 'affiliation': aff}
 
 
+def nar_venue_name(text):
+    """JRAの出走レースの表の競馬場（「名古」「宇都」のように2文字に略される）を、地方競馬の競馬場名にする。
+    地方競馬の競馬場でなければ空文字"""
+    text = (text or '').replace(' ', '').strip()
+    if text in NAR_VENUES:
+        return text
+    found = [v for v in NAR_VENUES if len(text) >= 2 and v.startswith(text)]
+    return found[0] if len(found) == 1 else ''
+
+
 def parse_horse_nar_rows(html_or_soup):
     """JRAの競走馬情報のページの「出走レース」の表で、リンクの無い地方競馬のレースの行
     [{'date', 'venue', 'name'}]（競馬場が地方競馬の競馬場の行だけ）"""
@@ -977,7 +987,8 @@ def parse_horse_nar_rows(html_or_soup):
                 continue
             m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', cells[0])
             venue = cells[1].replace(' ', '')
-            if m and venue in NAR_VENUES:
+            venue = nar_venue_name(venue)
+            if m and venue:
                 out.append({'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3))), 'venue': venue,
                             'name': cells[2]})
     return out
