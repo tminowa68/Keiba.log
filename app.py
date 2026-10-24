@@ -3524,7 +3524,7 @@ def record_horse_transfers(horse_url, transfers):
             if (d8, name) not in cancelled:
                 new_cancel.append([d8, name])
                 cancelled.add((d8, name))
-                messages.append(f"{name}：JRAから転出（{format_date_jp(t['date'])}）を抹消シートに記録")
+                messages.append(f"{name}：JRAより転出（{format_date_jp(t['date'])}）を抹消シートに記録")
         elif not reg:
             reg = d8
             ensure_columns(ws_h, len(HORSE_COLUMNS))
@@ -3539,6 +3539,13 @@ def record_horse_transfers(horse_url, transfers):
         ws_cancel.append_rows(new_cancel)
     if new_changes:
         ws_changes.append_rows(new_changes)
+    # 最後がJRAからの転出なら、Horsesシートの状態を抹消にする
+    last = max(transfers, key=lambda t: t['date'])
+    status = str(row[H_STATUS]).strip() if len(row) > H_STATUS else ''
+    if last['type'] == '転出' and status != '抹消':
+        ws_h.update(range_name=f"{col_letter(H_STATUS)}{row_no}", values=[['抹消']])
+        remember_sheet_values("Horses")
+        messages.append(f"{name}：状態を抹消に変更（{status or '空欄'}→抹消）")
     return messages
 
 # --- 地方競馬（地方競馬情報サイト）のレース結果・出走履歴 ---
