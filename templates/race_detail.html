@@ -73,7 +73,7 @@
     {% for t in tabs %}
     <section id="{{ t.key }}" class="entry-section">
         <div class="section-title mb-8">
-            <h3 class="m-0">{{ t.label }} <span class="final-count-text">（{{ (t.horses or t.runners)|length }}頭{% if t.capacity and t.key != 'final' %}、出走可能：{{ t.capacity }}頭{% endif %}）</span></h3>
+            <h3 class="m-0">{{ t.label }} <span class="final-count-text">（{{ (t.horses if t.key != 'final' else t.runners)|length }}頭{% if t.capacity and t.key != 'final' %}、出走可能：{{ t.capacity }}頭{% endif %}）</span></h3>
             <span class="sort-controls" data-table="tbl_{{ t.key }}">
                 並び替え：<select class="sort-key">
                     {% if t.key == 'final' %}<option value="place">着順</option>{% endif %}
@@ -187,6 +187,9 @@
         </table>
         {% endif %}
         </div>
+        {% if not (t.horses if t.key != 'final' else t.runners) %}
+        <p class="no-data-text">{{ t.label }}の馬はまだ記録されていません。</p>
+        {% endif %}
     </section>
     {% endfor %}
     {% else %}
@@ -208,13 +211,14 @@
 <script>
 const raceKey = {{ (date ~ venue ~ num)|tojson }};
 const tabKeys = {{ tabs|map(attribute='key')|list|tojson }};
+const defaultTab = {{ default_tab|tojson }};
 
 document.addEventListener('DOMContentLoaded', function() {
     if (!tabKeys.length) return;
     // 前に開いていたタブ（無ければ一番後の段階のタブ）を開く
     let active = null;
     try { active = localStorage.getItem('raceTab_' + raceKey); } catch (e) {}
-    switchTab(tabKeys.includes(active) ? active : tabKeys[tabKeys.length - 1], false);
+    switchTab(tabKeys.includes(active) ? active : (defaultTab || tabKeys[tabKeys.length - 1]), false);
 });
 
 function switchTab(key, remember = true) {
