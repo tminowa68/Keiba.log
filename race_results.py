@@ -165,26 +165,10 @@ def parse_kaisai_page(html_or_soup, today=None):
     return result
 
 
-def parse_race_result_page(html_or_soup, url=''):
-    """レース結果のページから {'race': {...}, 'runners': [{...}, ...]} を返す"""
-    soup = _soup(html_or_soup)
-    header = soup.select_one('div.race_header')
-    if header is None:
-        raise ValueError('レース結果のページではありません。')
-
+def parse_race_header(header, race_id=''):
+    """レース結果・出馬表のページの見出し（div.race_header）から、年月日・開催・レース番号・レース名・条件・コース・
+    本賞金などを読み取る"""
     race = {}
-    cname = ''
-    for a in soup.find_all('a', href=True):
-        m = re.search(r'CNAME=(pw01sde\d+/[0-9A-Fa-f]{2})', a['href'])
-        if m and header in a.parents:
-            cname = m.group(1)
-            break
-    if not cname:
-        m = re.search(r'CNAME=(pw01sde\d+/[0-9A-Fa-f]{2})', url or '')
-        cname = m.group(1) if m else ''
-    race['race_id'] = race_id_from_cname(cname)
-    race['url'] = JRA_RESULT_URL + cname if cname else (url or '')
-
     date_text = _text(header.select_one('.date_line .cell.date'))
     m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', date_text)
     if not m:
@@ -201,7 +185,7 @@ def parse_race_result_page(html_or_soup, url=''):
 
     num_img = header.select_one('.race_number img')
     nm = re.search(r'(\d+)', (num_img.get('alt') if num_img else '') or '')
-    race['num'] = int(nm.group(1)) if nm else (int(race['race_id'][-10:-8]) if len(race['race_id']) >= 10 else '')
+    race['num'] = int(nm.group(1)) if nm else (int(race_id[-10:-8]) if len(race_id or '') >= 10 else '')
 
     title = header.select_one('.race_title')
     race['name'] = _text(title.select_one('.race_name')) if title else ''
@@ -244,6 +228,31 @@ def parse_race_result_page(html_or_soup, url=''):
                 prizes.append(int(pm.group(1).replace(',', '')) if pm else 0)
             break
     race['prizes'] = prizes  # 1着〜5着の本賞金（万円）
+    return race
+
+
+def parse_race_result_page(html_or_soup, url=''):
+    """レース結果のページから {'race': {...}, 'runners': [{...}, ...]} を返す"""
+    soup = _soup(html_or_soup)
+    header = soup.select_one('div.race_header')
+    if header is None:
+        raise ValueError('レース結果のページではありません。')
+
+    race = {}
+    cname = ''
+    for a in soup.find_all('a', href=True):
+        m = re.search(r'CNAME=(pw01sde\d+/[0-9A-Fa-f]{2})', a['href'])
+        if m and header in a.parents:
+            cname = m.group(1)
+            break
+    if not cname:
+        m = re.search(r'CNAME=(pw01sde\d+/[0-9A-Fa-f]{2})', url or '')
+        cname = m.group(1) if m else ''
+    race['race_id'] = race_id_from_cname(cname)
+    race['url'] = JRA_RESULT_URL + cname if cname else (url or '')
+
+    race.update(parse_race_header(header, race.get('race_id', '')))
+    prizes = race['prizes']
 
     table = None
     for t in soup.select('table.basic'):
@@ -1114,3 +1123,65 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
             done.add(k)
         position += len(group)
     return out
+
+
+# --- 出馬表（JRAの競馬メニューの「出馬表」） ---
+JRA_ENTRY_URL = "https://www.jra.go.jp/JRADB/accessD.html"
+_DENMA_CNAME_RE = re.compile(r'(pw01dde\d\d(\d{2})(\d{4})(\d{2})(\d{2})(\d{2})(\d{8})/[0-9A-Fa-f]{2})')
+
+
+def denma_cnames(html_or_text):
+    """ページの中の出馬表のレースへのリンク（CNAME）を {開催日のキー: {レース番号: CNAME}} で返す。
+    開催日のキー：場2桁・年4桁・回2桁・日2桁・年月日8桁（レース結果の day_key と同じ形）"""
+    text = str(html_or_text)
+    out = {}
+    for m in _DENMA_CNAME_RE.finditer(text):
+        cname, venue, year, kai, nichi, num, ymd = m.groups()
+        out.setdefault(f"{venue}{year}{kai}{nichi}{ymd}", {}).setdefault(int(num), cname)
+    return out
+
+
+def denma_day_label(key):
+    """開催日のキーから「2026年10月24日 4回東京8日」"""
+    venue, kai, nichi, ymd = key[:2], int(key[6:8]), int(key[8:10]), key[10:18]
+    return f"{int(ymd[:4])}年{int(ymd[4:6])}月{int(ymd[6:8])}日 {kai}回{VENUES.get(venue, venue)}{nichi}日"
+
+
+def parse_denma_page(html_or_soup):
+    """出馬表のページから {'race': {...}, 'horses': [{'name', 'url', 'horse_id', 'waku', 'num', 'sex', 'age',
+    'weight', 'jockey', 'trainer'}], 'day_races': {レース番号: CNAME}} を返す（馬番が無ければ枠順確定前）"""
+    soup = _soup(html_or_soup)
+    header = soup.select_one('div.race_header')
+    if header is None:
+        raise ValueError('出馬表のページではありません。')
+    race = parse_race_header(header)
+    if not race.get('date') or not race.get('venue'):
+        raise ValueError('レースの年月日・競馬場を読み取れませんでした。')
+    horses = []
+    for tr in soup.select('table.basic tbody tr'):
+        name_td = tr.select_one('td.horse')
+        if not name_td:
+            continue
+        a = name_td.select_one('.name a') or name_td.find('a')
+        name = _text(a or name_td.select_one('.name'))
+        if not name:
+            continue
+        url = a.get('href', '') if a else ''
+        waku_img = tr.select_one('td.waku img')
+        wm = re.search(r'(\d)', (waku_img.get('alt') if waku_img else '') or _text(tr.select_one('td.waku')))
+        num = _text(tr.select_one('td.num'))
+        age_text = _text(tr.select_one('td.jockey .age') or tr.select_one('.age'))
+        am = re.match(r'(牡|牝|せん|セン|騸)\s*(\d+)', age_text)
+        weight = re.search(r'([\d.]+)', _text(tr.select_one('td.jockey .weight') or tr.select_one('p.weight')))
+        trainer = name_td.select_one('p.trainer a') or name_td.select_one('p.trainer')
+        horses.append({'name': name, 'url': url, 'horse_id': horse_id_from_url(url),
+                       'waku': wm.group(1) if wm else '', 'num': num if num.isdigit() else '',
+                       'sex': ('せん' if am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
+                       'age': int(am.group(2)) if am else '',
+                       'weight': weight.group(1) if weight else '',
+                       'jockey': _text(tr.select_one('td.jockey p.jockey')),
+                       'trainer': _text(trainer)})
+    day_key = f"{next((c for c, v in VENUES.items() if v == race['venue']), '')}{race['date'].year}" \
+              f"{int(race['kai'] or 0):02d}{int(race['nichi'] or 0):02d}{race['date'].strftime('%Y%m%d')}"
+    return {'race': race, 'horses': horses, 'day_key': day_key,
+            'day_races': denma_cnames(str(soup)).get(day_key, {})}

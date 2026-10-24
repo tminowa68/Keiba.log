@@ -223,8 +223,13 @@ def changes_row(date_str, name, change_type, old='', new='', tentative=False):
     return [date_str, '仮' if tentative else '', name, change_type, old, new]
 
 def col_letter(idx):
-    """0始まりの列番号を列記号（A, B, …）にする"""
-    return chr(ord('A') + idx)
+    """0始まりの列番号を列記号（A, B, …, Z, AA, AB, …）にする"""
+    letters = ''
+    idx += 1
+    while idx:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(ord('A') + rem) + letters
+    return letters
 
 _JAPANESE_CHAR_RE = re.compile(r'[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]')
 
@@ -1894,6 +1899,9 @@ def entry_sheet_row(race, horse, status):
               'クラス': race.get('class', ''), '記号': race.get('marks', ''), '距離': race.get('distance', ''),
               'コース': race.get('surface', ''), '馬名': horse['name'], '馬ID': horse.get('horse_id', ''),
               '登録': status, '斤量': horse.get('weight', ''),
+              # 出馬表から記録する項目（枠順確定後は枠・馬番も）
+              '枠': horse.get('waku', ''), '馬番': horse.get('num', ''), '性別': horse.get('sex', ''),
+              '年齢': horse.get('age', ''), '騎手': horse.get('jockey', ''), '調教師': horse.get('trainer', ''),
               # 想定・特別登録などの記録の行の頭数の列には、出走可能頭数を記録する
               '頭数': race.get('capacity') or ''}
     return [str(values.get(c, '')) for c in RUNNER_SHEET_COLUMNS]
@@ -1941,6 +1949,14 @@ def save_entries(entries):
             for h in e['horses']:
                 if h['name'] in have:
                     row_no, old = have[h['name']]
+                    if row_no:
+                        # 出馬表の枠・馬番・斤量・騎手などは、記録済みの馬の行にも書き込む
+                        for col in ('枠', '馬番', '性別', '年齢', '斤量', '騎手', '調教師'):
+                            key = {'枠': 'waku', '馬番': 'num', '性別': 'sex', '年齢': 'age', '斤量': 'weight',
+                                   '騎手': 'jockey', '調教師': 'trainer'}[col]
+                            if h.get(key) not in (None, ''):
+                                updates.append({'range': f"{col_letter(RUNNER_COL[col])}{row_no}",
+                                                'values': [[str(h[key])]]})
                     if ENTRY_RANK.get(status, 0) > ENTRY_RANK.get(old, 0) and row_no:
                         updates.append({'range': f"{col_letter(entry_c)}{row_no}", 'values': [[status]]})
                         have[h['name']] = (row_no, status)
@@ -2037,6 +2053,144 @@ def api_special_entries_upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     return jsonify({'results': saved, 'failed': failed})
+
+# --- 出馬表（競馬メニューの「出馬表」）：出走馬を成績シートに「確定」として記録する（馬番が無ければ枠順確定前） ---
+JRA_DENMA_MENU_CNAME = "pw01dli00/F3"   # 競馬メニューの「出馬表」（開催選択のページ）
+
+def fetch_jra_menu_page(label, access, default_cname):
+    """競馬メニューのリンク（label）と同じ操作でページを開く（リンク先が見つからなければ既定のリンク先）"""
+    action, cname = f"https://www.jra.go.jp/JRADB/{access}", default_cname
+    try:
+        menu = BeautifulSoup(fetch_jra_html("https://www.jra.go.jp/keiba/"), 'html.parser')
+        for a in menu.find_all('a', onclick=True):
+            m = re.search(r"doAction\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)", a['onclick'])
+            if m and a.get_text(strip=True) == label and access in m.group(1):
+                action, cname = 'https://www.jra.go.jp' + m.group(1), m.group(2)
+                break
+    except Exception as e:
+        print(f"競馬メニューの取得に失敗したため、既定のリンク先を使います: {e}")
+    return fetch_jra_html(action, cname=cname)
+
+def denma_days_from_pages(html_list, follow=True):
+    """出馬表の開催選択・レース選択・出馬表のページから、開催日の一覧 [{'key', 'label', 'date', 'cname'}] を返す。
+    follow=True なら、開催選択のページのリンク先（出馬表以外のページ）も開いて出馬表のリンクを探す"""
+    days = {}
+    for html in html_list:
+        for key, races in RR.denma_cnames(html).items():
+            days.setdefault(key, races[min(races)])
+    if follow and not days:
+        others = []
+        for html in html_list:
+            for m in re.finditer(r"accessD\.html'?\s*,\s*'(pw01d\w+/[0-9A-Fa-f]{2})'|accessD\.html\?CNAME=(pw01d\w+/[0-9A-Fa-f]{2})", html):
+                c = m.group(1) or m.group(2)
+                if not c.startswith('pw01dde') and c not in others:
+                    others.append(c)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pages = list(pool.map(lambda c: _safe_fetch_denma(c), others[:16]))
+        return denma_days_from_pages([p for p in pages if p], follow=False)
+    out = [{'key': k, 'label': RR.denma_day_label(k), 'date': f"{k[10:14]}-{k[14:16]}-{k[16:18]}", 'cname': c}
+           for k, c in days.items()]
+    out.sort(key=lambda d: (d['date'], d['key']))
+    return out
+
+def _safe_fetch_denma(cname):
+    try:
+        return fetch_jra_html(RR.JRA_ENTRY_URL, cname=cname)
+    except Exception as e:
+        print(f"出馬表のページ（{cname}）を取得できませんでした: {e}")
+        return ''
+
+def denma_entries(pages):
+    """出馬表のページ（parse_denma_page の結果）の一覧を、save_entries に渡す記録にする"""
+    entries = []
+    for p in pages:
+        race = dict(p['race'])
+        race['marks'] = race.get('rule', '')
+        entries.append({'race': race, 'horses': p['horses'], 'status': '確定'})
+    return entries
+
+def denma_unregistered(pages):
+    """出馬表の出走馬のうち、Horses・Sire・Damのどのシートにも無い馬"""
+    names = set()
+    for t in ('Horses', 'Sire', 'Dam'):
+        for r in horse_sheet_values(t)[1:]:
+            names.update(n.strip() for n in r[:2] if n and n.strip())
+    items, seen = [], set()
+    for p in pages:
+        for h in p['horses']:
+            if h['name'] not in names and h['name'] not in seen and h.get('url'):
+                seen.add(h['name'])
+                items.append({'name': h['name'], 'url': h['url']})
+    return items
+
+@app.route('/api/denma/scan', methods=['POST'])
+@login_required
+def api_denma_scan():
+    """競馬メニューの「出馬表」（JRAから取得、またはアップロードしたページ）から、出馬表のある開催日の一覧を返す"""
+    try:
+        if request.form.get('live') == '1':
+            html_list = [fetch_jra_menu_page('出馬表', 'accessD', JRA_DENMA_MENU_CNAME)]
+        else:
+            html_list = [_extract_html_from_upload(f.read()) for f in request.files.getlist('denma_files') if f and f.filename]
+            if not html_list:
+                return jsonify({'error': 'ファイルが選択されていません。'}), 400
+        days = denma_days_from_pages(html_list)
+    except Exception as e:
+        return jsonify({'error': f'ページの読み取りに失敗しました: {e}'}), 400
+    if not days:
+        return jsonify({'error': '出馬表へのリンクが見つかりませんでした。'}), 400
+    return jsonify({'days': days})
+
+@app.route('/api/denma/import_day', methods=['POST'])
+@login_required
+def api_denma_import_day():
+    """1開催日の全レースの出馬表を取得し、出走馬を成績シートに記録する"""
+    from concurrent.futures import ThreadPoolExecutor
+    data = request.get_json(silent=True) or {}
+    try:
+        first = RR.parse_denma_page(fetch_jra_html(RR.JRA_ENTRY_URL, cname=str(data.get('cname') or '')))
+        others = [c for n, c in sorted(first['day_races'].items()) if n != first['race'].get('num')]
+        failed = []
+
+        def _one(cname):
+            try:
+                return RR.parse_denma_page(fetch_jra_html(RR.JRA_ENTRY_URL, cname=cname)), None
+            except Exception as e:
+                return None, f"{cname}（{e}）"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pages = [first]
+            for page, err in pool.map(_one, others):
+                if page:
+                    pages.append(page)
+                if err:
+                    failed.append(err)
+        results = save_entries(denma_entries(pages))
+        unregistered = denma_unregistered(pages) if data.get('register') else []
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'results': results, 'failed': failed, 'unregistered': unregistered})
+
+@app.route('/api/denma/upload', methods=['POST'])
+@login_required
+def api_denma_upload():
+    """出馬表のページを保存したファイル（.mhtml／.html、複数可）から出走馬を記録する"""
+    pages, failed = [], []
+    for f in request.files.getlist('denma_files'):
+        if not f or not f.filename:
+            continue
+        try:
+            pages.append(RR.parse_denma_page(_extract_html_from_upload(f.read())))
+        except Exception as e:
+            failed.append(f"{f.filename}（{e}）")
+    if not pages:
+        return jsonify({'error': '出馬表を読み取れませんでした。' + ' '.join(failed)}), 400
+    try:
+        results = save_entries(denma_entries(pages))
+        unregistered = denma_unregistered(pages) if request.form.get('register') == '1' else []
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'results': results, 'failed': failed, 'unregistered': unregistered})
 
 def fetch_jra_html(url, cname=None):
     """JRAのページを取得してHTMLを返す（cname を指定すると、ページのボタンと同じようにPOSTで開く）"""
