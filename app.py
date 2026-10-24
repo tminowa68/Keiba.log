@@ -5076,7 +5076,8 @@ def import_horses():
                     new_status = resolve_registration_status(row[H_STATUS], birth_year, reg_y, reg_m)
                     if new_status != row[H_STATUS]:
                         row[H_STATUS] = new_status
-                    if _blank(row[H_REG_STATUS]):
+                    # 登録時状態：先に管理馬一覧から取り込んでいれば、その時の状態（入厩・放牧）を残す（早期になる馬は早期）
+                    if _blank(row[H_REG_STATUS]) or new_status == '早期':
                         row[H_REG_STATUS] = row[H_STATUS]
                     changed = True
 
@@ -5438,6 +5439,11 @@ def import_trainer_page(html_text):
                 status_changed.append(f"{name}：{current or '空欄'}→{new_status}")
                 if current != '抹消' or name in reregistered_names:
                     pasture_changes.append((name, current, new_status))
+            # 登録時状態が空欄の、競走馬登録の直後（7日以内）の馬は、管理馬一覧の状態を登録時状態にする
+            # （競走馬登録→管理馬一覧の順に取り込んだ場合）
+            reg_date = parse_full_date(str(row[H_REGISTRATION] or ''))
+            if _blank(row[H_REG_STATUS]) and reg_date and 0 <= (datetime.now().date() - reg_date).days <= 7:
+                row[H_REG_STATUS] = row[H_STATUS]
 
             # 転厩：管理馬一覧の調教師（一致する厩舎が無ければリンク先の調教師名）と拠点・厩舎が異なる場合
             new_stable = None
