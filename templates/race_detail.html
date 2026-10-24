@@ -61,6 +61,11 @@
                 {% if result_race.going %}<span><strong>馬場:</strong> {{ result_race.going }}</span>{% endif %}
             {% endif %}
         </div>
+        {% if race.prizes %}
+        <div class="race-info-prize">
+            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ "{:,}".format(p) }}{% endfor %}
+        </div>
+        {% endif %}
     </section>
 
     {% if tabs %}
@@ -128,7 +133,6 @@
                     <th class="bl">馬体重</th>
                     <th>増減</th>
                     <th>調教師</th>
-                    <th class="bl">本賞金<br>（万円）</th>
                     {{ prev_ths() }}
                 </tr>
             </thead>
@@ -150,7 +154,6 @@
                     <td class="num nowrap bl">{{ r.body_weight }}</td>
                     <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
                     <td class="nowrap">{{ r.trainer }}</td>
-                    <td class="num bl">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
 {{ prev_cells(r) }}
                 </tr>
                 {% endfor %}
