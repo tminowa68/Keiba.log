@@ -372,11 +372,11 @@
         {# 簡易プロフィール #}
         <div class="race-summary-box">
             <div class="race-summary-title">簡易プロフィール</div>
-            {# 牝馬の性齢の「牝」と、母は赤字にする #}
+            {# 牝馬の性齢の「牝」は赤字にする #}
             <div>性齢：{% if brief_profile.sex_age.startswith('牝') %}<span class="female-text">牝</span>{{ brief_profile.sex_age[1:] }}{% else %}{{ brief_profile.sex_age }}{% endif %}</div>
             <div>厩舎：{{ brief_profile.stable|stable_html }}</div>
             <div>父：{{ brief_profile.sire }}</div>
-            <div>母：<span class="female-text">{{ brief_profile.dam }}</span></div>
+            <div>母：{{ brief_profile.dam }}</div>
             {% if brief_profile.bms %}<div>母の父：{{ brief_profile.bms }}</div>{% endif %}
         </div>
         {{ race_summary('平地', race_summary_data.flat) }}
