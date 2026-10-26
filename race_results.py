@@ -502,8 +502,10 @@ def summarize_results(results, birth_year=None, today=None):
         current = class_from_shutoku(shutoku, bool(started), jump, birth_year, today)
         # 現クラスの成績：現在のクラスと同じクラスのレースをすべて通算する
         # （オープンなら2歳・3歳・3歳以上・4歳以上のオープン（重賞・リステッドを含む）をすべて含む）
+        # 未勝利なら新馬のレースも含める
         target = current.replace('障害', '')
-        in_class = [r for r in rows if race_level(r) == target and r.get('place') not in ('取消', '除外', '')]
+        levels = ('未勝利', '新馬') if target == '未勝利' else (target,)
+        in_class = [r for r in rows if race_level(r) in levels and r.get('place') not in ('取消', '除外', '')]
         summary[kind] = {'starts': len(started), 'record': _record(started), 'total_prize': total_prize,
                          'shutoku': shutoku, 'class': current, 'kokyu': kokyu,
                          'class_starts': len(in_class), 'class_record': _record(in_class)}
