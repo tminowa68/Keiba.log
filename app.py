@@ -3530,13 +3530,17 @@ def api_race_results_horse_races():
         transfers = record_horse_transfers(str(data.get('url') or ''), RR.parse_horse_transfers(html))
     except Exception as e:
         print(f"転出・転入の記録に失敗しました: {e}")
-    # リンクの無い地方競馬のレースがあれば、地方競馬情報サイトで馬を探して地方のレースも取り込む
-    if RR.parse_horse_nar_rows(html):
+    # 地方競馬情報サイトで馬を探して地方のレースも取り込む：リンクの無い地方競馬のレースがある馬と、
+    # JRAで抹消された馬（地方に移籍した馬は、JRAの出走レースに地方のレースが載らない）、NARのURLがある馬
+    nar_rows = bool(RR.parse_horse_nar_rows(html))
+    cancelled = '抹消年月日' in BeautifulSoup(html, 'html.parser').get_text(' ', strip=True)
+    if nar_rows or cancelled or horse_has_nar_url(str(data.get('url') or '')):
         try:
             entries = [t['date'] for t in RR.parse_horse_transfers(html) if t['type'] != '転出']
             nar = nar_horse_races(str(data.get('url') or ''), entries)
             races += [r for r in nar['races'] if r['race_id'] not in {x['race_id'] for x in races}]
-            transfers += nar['messages']
+            if nar['races'] or nar_rows:
+                transfers += nar['messages']
         except Exception as e:
             transfers.append(f"地方競馬のレースを探せませんでした（{e}）")
     races.sort(key=lambda r: r['date'], reverse=True)
@@ -3848,6 +3852,21 @@ def search_nar_horse(row):
         return None, ('地方競馬情報サイトに見つかりませんでした' if not cands
                       else '地方競馬情報サイトで同じ馬名の馬を1頭に絞れませんでした')
     return cands[0]['url'], fetch_nar_html(cands[0]['url'])
+
+def horse_has_nar_url(horse_url):
+    """JRAのURLが同じHorses・Sire・Damシートの馬に、NARのURLが記録されているか"""
+    horse_id = RR.horse_id_from_url(horse_url)
+    if not horse_id:
+        return False
+    for t, url_col, nar_col in (('Horses', H_JRA_URL, H_NAR_URL), ('Sire', P_JRA_URL, P_NAR_URL), ('Dam', P_JRA_URL, P_NAR_URL)):
+        try:
+            rows = horse_sheet_values(t)[1:]
+        except Exception:
+            continue
+        for r in rows:
+            if len(r) > url_col and RR.horse_id_from_url(r[url_col]) == horse_id:
+                return bool(len(r) > nar_col and str(r[nar_col]).strip())
+    return False
 
 def nar_horse_races(horse_url, entry_dates=()):
     """JRAの競走馬（Horses・Sire・Damシートの馬）の地方競馬の出走レースを地方競馬情報サイトから探す。
