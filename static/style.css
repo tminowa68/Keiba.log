@@ -2450,6 +2450,9 @@ td.col-last-race {
 .race-mark-filly { background: #e91e63; }
 .race-mark-handicap { background: #5e35b1; }
 .race-mark-betsutei { background: #00897b; }
+.race-mark-bairei { background: #546e7a; }
+.race-mark-teiryo { background: #1e88e5; }
+.race-mark-weight { background: #9e9e9e; }
 /* 番組表・レース詳細のコース：芝は緑、ダートは茶、障害はグレー */
 .course-label {
     display: inline-block;
@@ -2560,3 +2563,5 @@ td.col-last-race {
 .kind-btn.active { background: #2e7d32; color: #fff; }
 /* 画面の一部を読み込めなかったときの注意書き */
 .section-error-note { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; border-radius: 4px; padding: 6px 10px; font-size: 0.9em; }
+/* 出走履歴の馬体重の見出し（3文字の縦書きを2文字の縦書きと同じ高さにする） */
+.race-result-table th.th-vertical-3 { font-size: 0.67em; line-height: 1.15; }
