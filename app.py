@@ -1850,14 +1850,37 @@ def runner_sheet_row(race, r):
             '確定', r['sex'], r['age'], r['weight'], r['mark'], r['jockey'], r['time'], r['margin'], r['corners'], r['last'],
             r['body_weight'], r['body_diff'], r['trainer'], r['pop'], r['prize']]
 
+def _row_blocks(ids, remove):
+    """シートのA列の値（ids、1行目は見出し）のうち、remove(値, 行の位置) が真になる行を、続いている行ごとに
+    [開始行, 終了行] の一覧にする（行番号は1から）"""
+    blocks = []
+    for idx in range(2, len(ids) + 1):
+        if remove(ids[idx - 1], idx):
+            if blocks and blocks[-1][1] == idx - 1:
+                blocks[-1][1] = idx
+            else:
+                blocks.append([idx, idx])
+    return blocks
+
+def _delete_row_blocks(ws, blocks):
+    """行をまとめて消す（下の行から消して行番号がずれないようにする。回数制限にかかった場合はやり直す）"""
+    for start, end in reversed(blocks):
+        with_sheets_retry(ws.delete_rows, start, end)
+
 def save_race_results(parsed_list, overwrite=False):
     """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
+    取り込み済みかどうかは、レースシートのレースIDに加えて成績シートの結果の行（年月日・場・R）でも確かめる。
+    成績シートに行があるのにレースシートにレースの行が無いレース（途中で止まった取り込み）は、入れ替えて直す。
+    書き込みは「レースシートの古い行を消す → 成績シートの古い行を消す → 成績シートに書く → レースシートに書く」の順にし、
+    途中で止まってもレースの行が無い（次の取り込みで直る）状態になるようにする。
     (取り込んだレース, 飛ばしたレース) のラベル一覧を返す"""
     saved, skipped, saved_ids = [], [], set()
     prepare_nar_results(parsed_list)   # 地方のレースの騎手・調教師のフルネーム、登録馬の馬ID
     by_year = {}
     for parsed in parsed_list:
         by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
+    r_date, r_venue, r_num = RUNNER_COL['年月日'], RUNNER_COL['場'], RUNNER_COL['R']
+    race_key = lambda d, v, n: (str(d).strip(), str(v).strip(), str(n).strip())
     for year, items in sorted(by_year.items()):
         try:
             ws_race, ws_runner = result_sheets(year, create=True)
@@ -1867,7 +1890,14 @@ def save_race_results(parsed_list, overwrite=False):
             forget_result_sheets(year)
             ws_race, ws_runner = result_sheets(year, create=True)
             existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
-        race_rows, runner_rows, replace_ids, this_time = [], [], set(), set()
+        def read_runner_keys():
+            # 成績シートのレースID・年月日・場・Rの列（2行目から順に）
+            return [list(r) + [''] * (r_num + 1) for r in
+                    with_sheets_retry(ws_runner.batch_get, [f"A2:{col_letter(r_num)}"])[0]]
+        # 成績シートの結果の行（出馬表から記録した「E〜」の行を除く）のレース（年月日・場・R）
+        runner_keys = {race_key(r[r_date], r[r_venue], r[r_num]) for r in read_runner_keys()
+                       if r[0] and not is_entry_row_id(r[0])}
+        race_rows, new_runner_rows, replace_ids, replace_keys, this_time = [], [], set(), set(), set()
         for parsed in items:
             race = parsed['race']
             label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R"
@@ -1876,44 +1906,45 @@ def save_race_results(parsed_list, overwrite=False):
                 continue
             if race['race_id'] in this_time:
                 continue   # 同じレースが2回指定された場合
+            key = race_key(race['date'].strftime('%Y%m%d'), race['venue'], int(race['num']))
             if race['race_id'] in existing and not overwrite:
                 skipped.append(f"{label}（取り込み済み）")
                 continue
-            if race['race_id'] in existing:
+            if race['race_id'] in existing or key in runner_keys:
+                # 入れ替えるレース（レースの行が無く成績の行だけが残っているレースも、成績の行を消して書き直す）
                 replace_ids.add(race['race_id'])
+                replace_keys.add(key)
             existing.add(race['race_id'])
             this_time.add(race['race_id'])
             race_rows.append(race_sheet_row(race))
-            runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
+            new_runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
             saved.append(label)
             saved_ids.add(race['race_id'])
-        # 結果を取り込んだレースの想定・特別登録などの記録（成績シート）も消す
+        # 結果を取り込んだレースの想定・特別登録などの記録（出馬表から記録した「E〜」の行）も消す
         entry_ids = {entry_key(p['race']['date'], p['race']['venue'], p['race']['num'])
                      for p in items if p['race']['race_id'] in this_time}
-        if replace_ids or entry_ids:
-            # 入れ替えるレースの古い行を消す（下の行から消して行番号がずれないようにする）
-            # 同じレースの行は続いているため、続いている行はまとめて消す
-            for ws, remove in ((ws_race, replace_ids | entry_ids), (ws_runner, replace_ids | entry_ids)):
-                if not remove:
-                    continue
-                ids = ws.col_values(1)
-                blocks = []
-                for idx in range(2, len(ids) + 1):
-                    if ids[idx - 1] in remove:
-                        if blocks and blocks[-1][1] == idx - 1:
-                            blocks[-1][1] = idx
-                        else:
-                            blocks.append([idx, idx])
-                for start, end in reversed(blocks):
-                    ws.delete_rows(start, end)
+        remove_ids = replace_ids | entry_ids
+        if remove_ids:
+            # レースシートの古い行を最初に消す（途中で止まっても、レースの行が無い＝次の取り込みで直る状態にする）
+            ids = with_sheets_retry(ws_race.col_values, 1)
+            _delete_row_blocks(ws_race, _row_blocks(ids, lambda v, idx: v in remove_ids))
+            # 成績シート：レースIDが一致する行と、年月日・場・Rが同じ結果の行（重複して残った行も）を消す
+            rows = read_runner_keys()
+            ids = [''] + [str(r[0]).strip() for r in rows]
+            def runner_remove(v, idx):
+                r = rows[idx - 2]
+                return v in remove_ids or (bool(v) and not is_entry_row_id(v)
+                                           and race_key(r[r_date], r[r_venue], r[r_num]) in replace_keys)
+            _delete_row_blocks(ws_runner, _row_blocks(ids, runner_remove))
         # すべて文字列のまま書き込む（数字の列も文字列にしておくと、成績シートのクエリで型が混ざらない）
+        if new_runner_rows:
+            with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in new_runner_rows],
+                              value_input_option='RAW')
+        # レースの行は最後に書く（レースの行があれば、成績の行も書き終わっている）
         if race_rows:
             with_sheets_retry(ws_race.append_rows, [[str(v) for v in row] for row in race_rows],
                               value_input_option='RAW')
-        if runner_rows:
-            with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in runner_rows],
-                              value_input_option='RAW')
-        remember_recent_runner_rows(year, [[str(v) for v in row] for row in runner_rows], replace_ids)
+        remember_recent_runner_rows(year, [[str(v) for v in row] for row in new_runner_rows], replace_ids)
         _imported_ids_cache[year] = (time.time(), existing)
     if saved_ids:
         # 出走した登録馬のクラス・最新レースを計算し直す
