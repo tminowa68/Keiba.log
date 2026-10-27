@@ -2673,11 +2673,22 @@ def history_race_name_and_rank(r):
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
     rank = re.sub(r'^(\d勝)クラス$', r'\1ク', rank)
     name_html = race_title_html(title, '', race_detail_url(r['date'], r['venue'], r['num']),
-                                race_mark_list(r.get('rule'), r.get('weight_rule'), r.get('name')))
+                                race_mark_list(r.get('rule'), '', r.get('name')))   # 重量のマークは斤量の列に付ける
     rank_html = str(race_title_html('', rank)).strip() if rank else ''
     return name_html, Markup(rank_html)
 
 app.jinja_env.globals['history_race_name_and_rank'] = history_race_name_and_rank
+
+def weight_rule_mark(weight_rule):
+    """出走履歴の斤量の左に付ける重量（馬齢・定量・別定・ハンデ）のマーク"""
+    from markupsafe import Markup, escape
+    rule = str(weight_rule or '').strip()
+    if not rule:
+        return ''
+    cls = {'馬齢': 'race-mark-bairei', '定量': 'race-mark-teiryo', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
+    return Markup(f'<span class="race-mark {cls.get(rule, "race-mark-weight")}">{escape(rule)}</span> ')
+
+app.jinja_env.globals['weight_rule_mark'] = weight_rule_mark
 
 _JOCKEY_MARK_RE = re.compile(r'^([☆△▲◇★]+)\s*')
 

@@ -2450,6 +2450,9 @@ td.col-last-race {
 .race-mark-filly { background: #e91e63; }
 .race-mark-handicap { background: #5e35b1; }
 .race-mark-betsutei { background: #00897b; }
+.race-mark-bairei { background: #546e7a; }
+.race-mark-teiryo { background: #1e88e5; }
+.race-mark-weight { background: #9e9e9e; }
 /* 番組表・レース詳細のコース：芝は緑、ダートは茶、障害はグレー */
 .course-label {
     display: inline-block;

@@ -461,7 +461,7 @@
                 <tr>
                     <th>レース名</th>
                     <th>格</th>
-                    <th class="bl">減量</th>
+                    <th class="bl">減</th>
                     <th>騎手名</th>
                 </tr>
             </thead>
@@ -495,7 +495,7 @@
                     {% set jockey_mark, jockey_name = jockey_mark_and_name(r.mark, r.jockey) %}
                     <td class="center bl">{{ jockey_mark }}</td>
                     <td class="nowrap">{{ jockey_name }}</td>
-                    <td>{{ r.weight }}</td>
+                    <td class="nowrap">{{ weight_rule_mark(r.weight_rule) }}{{ r.weight }}</td>
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap corners">{{ r.corners|corners_html }}</td>
                     <td>{{ r.last }}</td>
