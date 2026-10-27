@@ -2513,12 +2513,15 @@ def race_mark_list(marks, weight_rule, name=''):
         out.append(str(weight_rule).strip())
     return out
 
+# マークの表示（ハンデは半角カナで短くする）
+RACE_MARK_LABELS = {'ハンデ': 'ﾊﾝﾃﾞ'}
+
 def race_marks_html(marks, weight_rule='', name=''):
     """牝馬限定・九州産馬限定・別定・ハンデのマーク（marks がマークの一覧ならそのまま使う）"""
     from markupsafe import Markup
     items = marks if isinstance(marks, list) else race_mark_list(marks, weight_rule, name)
     cls = {'牝': 'race-mark-filly', '九州': 'race-mark-kyushu', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
-    return Markup(''.join(f' <span class="race-mark {cls.get(m, "")}">{m}</span>' for m in items))
+    return Markup(''.join(f' <span class="race-mark {cls.get(m, "")}">{RACE_MARK_LABELS.get(m, m)}</span>' for m in items))
 
 app.jinja_env.globals['race_marks'] = race_marks_html
 
@@ -2686,7 +2689,7 @@ def weight_rule_mark(weight_rule):
     if not rule:
         return ''
     cls = {'馬齢': 'race-mark-bairei', '定量': 'race-mark-teiryo', '別定': 'race-mark-betsutei', 'ハンデ': 'race-mark-handicap'}
-    return Markup(f'<span class="race-mark {cls.get(rule, "race-mark-weight")}">{escape(rule)}</span> ')
+    return Markup(f'<span class="race-mark {cls.get(rule, "race-mark-weight")}">{escape(RACE_MARK_LABELS.get(rule, rule))}</span> ')
 
 app.jinja_env.globals['weight_rule_mark'] = weight_rule_mark
 
