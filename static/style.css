@@ -2546,3 +2546,15 @@ td.col-last-race {
 }
 /* 出馬表・出走履歴の見出し（頭数・馬番・人気・着順）を縦書きにする */
 .race-result-table th.th-vertical { line-height: 1.15; padding-left: 4px; padding-right: 4px; }
+/* 週間レポート：放牧入厩・変更の区分の絞り込みボタン */
+.kind-filter { display: inline-flex; gap: 4px; margin-left: 10px; vertical-align: middle; }
+.kind-btn {
+    padding: 2px 10px;
+    border: 1px solid #2e7d32;
+    border-radius: 12px;
+    background: #fff;
+    color: #2e7d32;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+.kind-btn.active { background: #2e7d32; color: #fff; }

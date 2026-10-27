@@ -71,7 +71,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 {%- endmacro %}
 
 {# 見出しの右の、並び順・最大表示件数のセレクト #}
-{% macro sort_controls(table_id, date_label, extra, default_key) %}
+{% macro sort_controls(table_id, date_label, extra, default_key, kinds=None) %}
     <span class="sort-controls" data-table="{{ table_id }}">
         並び順：<select class="sort-key">
             <option value="date">{{ date_label }}</option>
@@ -90,6 +90,13 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <option value="all">全件</option>
         </select>
         <input type="hidden" class="sort-default" value="{{ default_key }}">
+        {% if kinds %}
+        {# 区分・項目で絞り込むボタン（「全て」以外は複数選択できる） #}
+        <span class="kind-filter">
+            <button type="button" class="kind-btn active" data-kind="">全て</button>
+            {% for k in kinds %}<button type="button" class="kind-btn" data-kind="{{ k }}">{{ k }}</button>{% endfor %}
+        </span>
+        {% endif %}
     </span>
 {%- endmacro %}
 
@@ -187,7 +194,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 <section>
     <div class="section-title">
         <h3 class="m-0">放牧入厩（{{ pasture|length }}件）</h3>
-        {% if pasture %}{{ sort_controls('tbl_pasture', '日付', other_sorts, 'prize') }}{% endif %}
+        {% if pasture %}{{ sort_controls('tbl_pasture', '日付', other_sorts, 'prize', ['放牧', '入厩']) }}{% endif %}
     </div>
     {% if pasture %}
     <div class="weekly-table-scroll">
@@ -198,7 +205,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
         </thead>
         <tbody>
         {% for h in pasture %}
-        <tr {{ row_attrs(h) }}>
+        <tr {{ row_attrs(h) }} data-kind="{{ '入厩' if h.type.endswith('入厩') else h.type }}">
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
             <td>{{ h.type }}</td>
@@ -216,7 +223,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 <section>
     <div class="section-title">
         <h3 class="m-0">変更（{{ changes|length }}件）</h3>
-        {% if changes %}{{ sort_controls('tbl_changes', '日付', other_sorts, 'prize') }}{% endif %}
+        {% if changes %}{{ sort_controls('tbl_changes', '日付', other_sorts, 'prize', ['転厩', '去勢', '馬主変更']) }}{% endif %}
     </div>
     {% if changes %}
     <div class="weekly-table-scroll">
@@ -227,7 +234,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
         </thead>
         <tbody>
         {% for h in changes %}
-        <tr {{ row_attrs(h) }}>
+        <tr {{ row_attrs(h) }} data-kind="{{ h.type }}">
 {{ horse_cells(h) }}
 {{ stable_cell(h) }}
             <td>{{ h.type }}</td>
@@ -278,8 +285,14 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             if (va === null || vb === null) return compare(va, vb) || tieBreak(a, b);
             return dir * compare(va, vb) || tieBreak(a, b);
         });
-        rows.forEach((tr, i) => {
-            tr.style.display = (limit === 'all' || i < Number(limit)) ? '' : 'none';
+        // 区分・項目の絞り込み（選んだボタンの区分の行だけ。「全て」なら全部）
+        const kinds = Array.from(ctrl.querySelectorAll('.kind-btn.active')).map(b => b.dataset.kind).filter(k => k);
+        let shown = 0;
+        rows.forEach(tr => {
+            const match = !kinds.length || kinds.includes(tr.dataset.kind);
+            const visible = match && (limit === 'all' || shown < Number(limit));
+            if (visible) shown++;
+            tr.style.display = visible ? '' : 'none';
             tbody.appendChild(tr);
         });
         // 並び順で選んでいる列の背景色を変える
@@ -288,6 +301,19 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
         ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;
         ctrl.querySelectorAll('select').forEach(sel => sel.addEventListener('change', () => apply(ctrl)));
+        // 「全て」を押したら他のボタンはオフ。他のボタンは複数選択でき、どれも選ばれていなければ「全て」に戻す
+        const buttons = Array.from(ctrl.querySelectorAll('.kind-btn'));
+        buttons.forEach(btn => btn.addEventListener('click', () => {
+            const all = buttons.find(b => !b.dataset.kind);
+            if (!btn.dataset.kind) {
+                buttons.forEach(b => b.classList.toggle('active', b === btn));
+            } else {
+                btn.classList.toggle('active');
+                const any = buttons.some(b => b.dataset.kind && b.classList.contains('active'));
+                all.classList.toggle('active', !any);
+            }
+            apply(ctrl);
+        }));
         apply(ctrl);
     });
 })();
