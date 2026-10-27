@@ -2675,6 +2675,8 @@ def history_race_name_and_rank(r):
     from markupsafe import Markup
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
     rank = re.sub(r'^(\d勝)クラス$', r'\1ク', rank)
+    if not r.get('nar') and str(title).startswith('メイクデビュー'):
+        title, rank = '新馬戦', ''   # メイクデビュー〇〇は新馬戦として表示する
     name_html = race_title_html(title, '', race_detail_url(r['date'], r['venue'], r['num']),
                                 race_mark_list(r.get('rule'), '', r.get('name')))   # 重量のマークは斤量の列に付ける
     rank_html = str(race_title_html('', rank)).strip() if rank else ''
@@ -4911,7 +4913,7 @@ def api_auto_register_targets():
             items.append({'name': name, 'known': {k: v for k, v in known.items() if v}})
     elif source == 'weekly':
         base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
-        week_start = base - timedelta(days=base.weekday())
+        week_start = thursday_of_race_week(base)   # 週間レポートの週（木曜〜翌水曜）
         week_end = week_start + timedelta(days=6)
         in_week = lambda d: d is not None and week_start <= d <= week_end
         registered = {n.strip() for r in horses for n in r[:2] if n and n.strip()}
@@ -6220,10 +6222,10 @@ def race_sort_key(text):
 @app.route('/weekly')
 @wait_for_sheets
 def weekly():
-    """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
+    """登録馬・抹消馬・放牧入厩・変更を週単位（木曜〜翌水曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
     base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
     stable_filter = request.args.get('stable', '').strip()
-    week_start = base - timedelta(days=base.weekday())
+    week_start = thursday_of_race_week(base)
     week_end = week_start + timedelta(days=6)
 
     def in_week(d):
