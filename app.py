@@ -5,7 +5,7 @@ import requests
 import email
 from bs4 import BeautifulSoup
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, g
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, flash, session, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from urllib.parse import quote
@@ -283,6 +283,24 @@ def sheet_strict():
         return bool(getattr(g, 'strict_sheets', False))
     except RuntimeError:
         return False
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    """予期しないエラー：ログにトレースバックを出し、ログイン中は画面にエラーの種類と内容を表示する
+    （「Internal Server Error」だけでは原因が分からないため）"""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    import traceback
+    traceback.print_exc()
+    if request.path.startswith('/api/'):
+        return jsonify({'error': f"サーバーでエラーが発生しました（{type(e).__name__}: {e}）"}), 500
+    detail = f"{type(e).__name__}: {e}" if session.get('login') else ''
+    return render_template_string(
+        '{% extends "layout.html" %}{% block content %}<h2>エラーが発生しました</h2>'
+        '<p>画面を表示できませんでした。しばらくしてから再読み込みしてください。</p>'
+        '{% if detail %}<p class="section-error-note">{{ detail }}</p>{% endif %}'
+        '<p><a href="/">競走馬一覧に戻る</a></p>{% endblock %}', detail=detail), 500
 
 def sheet_not_ready(message):
     """読み込み待ちの画面の対象なら SheetNotReady を送出する"""
@@ -7683,9 +7701,12 @@ def horse_detail_redirect(name):
 def horse_detail(name, active_tab):
     if active_tab not in ['profile', 'races']:
         return redirect(url_for('horse_detail', name=name, active_tab='profile'))
-    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes", "放牧入厩", "抹消", "美浦", "栗東"])
+    # 使うシートはまとめて1回の読み込みで取得する（Google Sheetsの読み込み回数を減らす）
+    prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes", "放牧入厩", "抹消", "美浦", "栗東", NAR_KORYU_SHEET])
     all_horses = get_all_horses()
     horse = next((h for h in all_horses if len(h)>0 and (h[H_NAME].strip() == name.strip() or row_matches_name(h, name))), None)
+    # 読み込めなかった部分（その部分だけ空にして、画面は表示する）
+    section_errors = []
 
     if horse is None:
         # 読み込み待ちの画面で1秒ごとに読み込み直し、5回で見つからなければ
@@ -7765,12 +7786,26 @@ def horse_detail(name, active_tab):
     elif isinstance(horse[H_BIRTH], dict) and 'year' in horse[H_BIRTH]:
         base_birth_year = int(horse[H_BIRTH]['year'])
     
-    pedigree_data = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], base_birth_year, gc,
-                                      base_is_english=is_english_name(horse[H_NAME]))
-
-    # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
-    # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
-    family_table1, family_table2 = family_tables_for(horse, pedigree_data, base_birth_year)
+    # 5代血統と兄弟馬・近親馬はプロフィールのタブだけで表示する（出走レースのタブでは計算しない）
+    pedigree_data, family_table1, family_table2 = {}, [], []
+    if active_tab == 'profile':
+        try:
+            pedigree_data = get_5gen_pedigree(horse[H_SIRE], horse[H_DAM], base_birth_year, gc,
+                                              base_is_english=is_english_name(horse[H_NAME]))
+        except SheetNotReady:
+            raise
+        except Exception as e:
+            print(f"5代血統の読み込みエラー: {e}")
+            section_errors.append('5代血統')
+        # 兄弟馬・近親馬（インブリードの下に表示）：ページ初期表示時にサーバー側で計算しておくことで
+        # クライアント側の追加fetchによる表示の遅延・ちらつきを無くす
+        try:
+            family_table1, family_table2 = family_tables_for(horse, pedigree_data, base_birth_year)
+        except SheetNotReady:
+            raise
+        except Exception as e:
+            print(f"兄弟馬・近親馬の読み込みエラー: {e}")
+            section_errors.append('兄弟馬・近親馬')
 
     # 出走履歴（年ごとのレース結果のファイルから、馬IDまたは馬名で探す）と本賞金・収得賞金・クラス
     race_results, race_summary_data = [], RR.summarize_results([])
@@ -7784,11 +7819,12 @@ def horse_detail(name, active_tab):
                 print(f"レースの重量の読み込みエラー: {e}")
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
+            section_errors.append('出走履歴')
     race_history = build_race_history(race_results, changes_history, base_birth_year,
                                       pasture_history, cancel_dates)
 
     return render_template('horse_detail.html', 
-                           horse=horse, 
+                           horse=horse, section_errors=section_errors,
                            horse_races=horse_races,
                            race_results=race_results,
                            race_history=race_history,
@@ -8280,36 +8316,26 @@ def compute_relative_bests(horses, limit_seconds=12):
         print(f"レースの重量の読み込みエラー: {e}")
     return {key: (label, total, race_label(r) if r else '') for key, (label, total, r) in chosen.items()}
 
-def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire_disp,
-                           horse_status, horse_has_url, horse_has_alert,
-                           dam_name, dam_full_name, dam_birth_year,
-                           granddam_name, granddam_full_name, granddam_birth_year,
-                           ggranddam_name='', ggranddam_full_name='', ggranddam_birth_year=None):
-    """
-    「兄弟馬」テーブルと「近親馬」テーブル用のデータを組み立てる。
-    近親馬テーブルには、祖母を起点とした伯父叔父・伯母叔母・いとこ・いとこ甥いとこ姪に続けて、
-    曾祖母を起点とした大伯父大叔母・伯従父叔従母・はとこも表示する。
-    Horsesシートに加えて、Sireシート・Damシートに載っている馬（種牡馬・繁殖牝馬として登録されている
-    だけの馬）も血縁馬として拾い上げる。SireシートとDamシートから拾った馬にはリンクを付けない。
+# 兄弟馬・近親馬の計算に使う、全馬の照合用のデータ（Horses・Sire・Damシートが変わらなければ作り直さない）。
+# 馬の数が多いと準備に時間がかかり、Renderでは画面の処理時間の上限にかかるため覚えておく
+_family_index_cache = {}
 
-    戻り値は (兄弟馬のテーブル一覧, 近親馬のテーブル一覧) のタプル。各テーブルは
-      {'label': '母：〇〇（2015）', 'rows': [馬の行, ...]}（画面では見出しの後に「からの3代子孫」を付ける）
-    で、近親馬は祖母からの3代子孫と曾祖母からの3代子孫の2つのテーブルに分かれる。
-    馬の行は {'kind': 'row', 'relation':.., 'name':.., ..., 'children': [その馬の仔の行, ...]} で、
-    仔（2代目）・孫（3代目）は親の行の children に入れ子で入る。
-    """
-    if not dam_full_name:
-        return [], []
-
+def family_index():
+    """全馬（Horses・Sire・Damシート）の照合用データ。{'candidates', 'by_name', 'canon', 'canon_field'}。
+    各候補には、母欄の照合用の値・生年・直接の親の馬名・祖母（母の母）の照合用の値をあらかじめ求めておく"""
+    # シートの内容が前回と同じなら、前回作ったデータを使う（シートの値そのものの比較用の値で判定する）
+    raw = []
+    for title in ('Horses', 'Sire', 'Dam'):
+        try:
+            raw.append(tuple(tuple(r) for r in horse_sheet_values(title)))
+        except Exception:
+            raw.append(())
+    fingerprint = hash(tuple(raw))
+    cached = _family_index_cache.get('index')
+    if cached and cached[0] == fingerprint:
+        return cached[1]
     all_horses = get_all_horses()
-
-    # 甥・姪／いとこ判定用：ある馬名から「その馬自身の母欄の値」の候補群を引けるようにしておく
-    name_candidates = {}
-    for h in all_horses:
-        if len(h) > H_DAM and h[H_NAME]:
-            name_candidates.setdefault(h[H_NAME], []).append({'母': h[H_DAM], '生年月日': h[H_BIRTH]})
-
-    sire_records, dam_records = [], []
+    dam_records, sire_records = [], []
     try:
         dam_records = normalize_name_records(horse_sheet_records('Dam'))
         sire_records = normalize_name_records(horse_sheet_records('Sire'))
@@ -8317,6 +8343,13 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         sheet_not_ready(f"Sire・Damシートを読み込めませんでした: {e}")
     if not dam_records or not sire_records:
         sheet_not_ready("Sire・Damシートのデータが0件です")
+
+    # 甥・姪／いとこ判定用：ある馬名から「その馬自身の母欄の値」の候補群を引けるようにしておく
+    name_candidates = {}
+    for h in all_horses:
+        if len(h) > H_DAM and h[H_NAME]:
+            name_candidates.setdefault(h[H_NAME], []).append({'母': h[H_DAM], '生年月日': h[H_BIRTH]})
+
 
     # --- 和名と英馬名の対応：同じ馬の和名・英馬名を同じ馬として照合できるようにする ---
     # （母欄が和名の馬と英馬名の馬のどちらも、その母の仔として見つかるようにする）
@@ -8380,7 +8413,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         if len(h) <= H_DAM or not h[H_NAME]:
             continue
         nm = h[H_NAME].strip()
-        if not nm or canon(nm) == canon(horse_name):
+        if not nm:
             continue
         existing_names.add(canon(nm))
 
@@ -8401,7 +8434,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in sire_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
+        if not nm or canon(nm) in existing_names:
             continue
         existing_names.add(canon(nm))
         candidates.append({
@@ -8418,7 +8451,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
     for r in dam_records:
         nm = str(r.get('馬名', '')).strip()
-        if not nm or canon(nm) == canon(horse_name) or canon(nm) in existing_names:
+        if not nm or canon(nm) in existing_names:
             continue
         existing_names.add(canon(nm))
         candidates.append({
@@ -8437,6 +8470,47 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     for c in candidates:
         by_name.setdefault(canon(c['name']), []).append(c)
 
+    for c in candidates:
+        c['key'] = canon(c['name'])
+        c['birth_year'] = extract_year(c['birth_str']) or 0
+        target_dam = c['dam_field']
+        c['dam_key'] = canon_field(target_dam) if target_dam else ''
+        parent_disp, _, _ = split_dam_annotation(target_dam)
+        c['parent_disp'] = parent_disp
+        c['parent_key'] = canon(parent_disp)
+        c['granddam_key'] = canon(resolve_granddam_of(target_dam, c['birth_year'])) if target_dam else ''
+    index = {'candidates': candidates, 'by_name': by_name, 'canon': canon, 'canon_field': canon_field}
+    _family_index_cache['index'] = (fingerprint, index)
+    return index
+
+def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire_disp,
+                           horse_status, horse_has_url, horse_has_alert,
+                           dam_name, dam_full_name, dam_birth_year,
+                           granddam_name, granddam_full_name, granddam_birth_year,
+                           ggranddam_name='', ggranddam_full_name='', ggranddam_birth_year=None):
+    """
+    「兄弟馬」テーブルと「近親馬」テーブル用のデータを組み立てる。
+    近親馬テーブルには、祖母を起点とした伯父叔父・伯母叔母・いとこ・いとこ甥いとこ姪に続けて、
+    曾祖母を起点とした大伯父大叔母・伯従父叔従母・はとこも表示する。
+    Horsesシートに加えて、Sireシート・Damシートに載っている馬（種牡馬・繁殖牝馬として登録されている
+    だけの馬）も血縁馬として拾い上げる。SireシートとDamシートから拾った馬にはリンクを付けない。
+
+    戻り値は (兄弟馬のテーブル一覧, 近親馬のテーブル一覧) のタプル。各テーブルは
+      {'label': '母：〇〇（2015）', 'rows': [馬の行, ...]}（画面では見出しの後に「からの3代子孫」を付ける）
+    で、近親馬は祖母からの3代子孫と曾祖母からの3代子孫の2つのテーブルに分かれる。
+    馬の行は {'kind': 'row', 'relation':.., 'name':.., ..., 'children': [その馬の仔の行, ...]} で、
+    仔（2代目）・孫（3代目）は親の行の children に入れ子で入る。
+    """
+    if not dam_full_name:
+        return [], []
+
+    idx = family_index()
+    canon, by_name = idx['canon'], idx['by_name']
+    canon_field = idx['canon_field']
+    # 本馬自身は候補から除く
+    horse_key = canon(horse_name)
+    candidates = [c for c in idx['candidates'] if c['key'] != horse_key]
+
     def _find_own(name, birth_year):
         """母・祖母自身の表示用データ（性別・父・状態など）を候補リストから探す"""
         opts = by_name.get(canon(name), [])
@@ -8444,7 +8518,7 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
             return None
         if birth_year:
             for c in opts:
-                if extract_year(c['birth_str']) == birth_year:
+                if c['birth_year'] == birth_year:
                     return c
         return opts[0]
 
@@ -8477,8 +8551,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
         target_dam = c['dam_field']
         if not target_dam:
             continue
-        target_dam_key = canon_field(target_dam)
-        target_birth_year = extract_year(c['birth_str']) or 0
+        target_dam_key = c['dam_key']
+        target_birth_year = c['birth_year']
         gender = c['gender']
 
         # 1. 兄弟馬の判定（母が完全一致するか）
@@ -8522,8 +8596,8 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
 
         # 3. 甥・姪／いとこ／伯従父・叔従母の判定
         elif dam_name or granddam_name or ggranddam_name:
-            parent_disp_name, _, _ = split_dam_annotation(target_dam)
-            target_granddam = canon(resolve_granddam_of(target_dam, target_birth_year))
+            parent_disp_name = c['parent_disp']
+            target_granddam = c['granddam_key']
             if target_granddam and dam_name and target_granddam == dam_key:
                 relation = "甥" if gender in ['牡', 'せん'] else "姪"
                 nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
@@ -8582,16 +8656,15 @@ def compute_family_tables(horse_name, horse_gender, horse_birth_year, horse_sire
     grand_nephews, cousin_nephews, hatoko = [], [], []
 
     for c in candidates:
-        target_dam = c['dam_field']
-        if not target_dam:
+        if not c['dam_field']:
             continue
-        parent_disp_name, _, _ = split_dam_annotation(target_dam)
+        parent_disp_name = c['parent_disp']
         if not parent_disp_name:
             continue
         gender = c['gender']
-        target_birth_year = extract_year(c['birth_str']) or 0
+        target_birth_year = c['birth_year']
 
-        parent_key = canon(parent_disp_name)
+        parent_key = c['parent_key']
         if parent_key in nephew_names:
             relation = "又甥" if gender in ['牡', 'せん'] else "又姪"
             grand_nephews.append(_make_row(relation, c['name'], gender, target_birth_year, c['sire_disp'],
