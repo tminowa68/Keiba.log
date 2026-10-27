@@ -4913,7 +4913,7 @@ def api_auto_register_targets():
             items.append({'name': name, 'known': {k: v for k, v in known.items() if v}})
     elif source == 'weekly':
         base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
-        week_start = base - timedelta(days=base.weekday())
+        week_start = thursday_of_race_week(base)   # 週間レポートの週（木曜〜翌水曜）
         week_end = week_start + timedelta(days=6)
         in_week = lambda d: d is not None and week_start <= d <= week_end
         registered = {n.strip() for r in horses for n in r[:2] if n and n.strip()}
@@ -6222,10 +6222,10 @@ def race_sort_key(text):
 @app.route('/weekly')
 @wait_for_sheets
 def weekly():
-    """登録馬・抹消馬・放牧入厩・変更を週単位（月曜〜日曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
+    """登録馬・抹消馬・放牧入厩・変更を週単位（木曜〜翌水曜）で一覧表示する（stable指定時はその厩舎の馬だけ）"""
     base = parse_full_date(request.args.get('date', '')) or datetime.now().date()
     stable_filter = request.args.get('stable', '').strip()
-    week_start = base - timedelta(days=base.weekday())
+    week_start = thursday_of_race_week(base)
     week_end = week_start + timedelta(days=6)
 
     def in_week(d):
