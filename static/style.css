@@ -2560,3 +2560,5 @@ td.col-last-race {
 .kind-btn.active { background: #2e7d32; color: #fff; }
 /* 画面の一部を読み込めなかったときの注意書き */
 .section-error-note { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; border-radius: 4px; padding: 6px 10px; font-size: 0.9em; }
+/* 出走履歴の馬体重の見出し（3文字の縦書きを2文字の縦書きと同じ高さにする） */
+.race-result-table th.th-vertical-3 { font-size: 0.67em; line-height: 1.15; }

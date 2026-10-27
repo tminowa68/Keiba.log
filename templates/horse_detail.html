@@ -437,26 +437,32 @@
         <table class="race-list-table race-result-table">
             <thead>
                 <tr>
-                    <th>年</th>
-                    <th>日付</th>
-                    <th class="bl">開催</th>
+                    <th rowspan="2">年</th>
+                    <th rowspan="2">日付</th>
+                    <th rowspan="2" class="bl">開催</th>
+                    <th colspan="2">出走レース</th>
+                    <th rowspan="2">コース</th>
+                    <th rowspan="2">馬場</th>
+                    <th rowspan="2" class="bl th-vertical">頭<br>数</th>
+                    <th rowspan="2">枠</th>
+                    <th rowspan="2" class="th-vertical">馬<br>番</th>
+                    <th rowspan="2" class="bl th-vertical">人<br>気</th>
+                    <th rowspan="2" class="th-vertical">着<br>順</th>
+                    <th colspan="2" class="bl">騎手</th>
+                    <th rowspan="2">斤量</th>
+                    <th rowspan="2" class="bl">タイム</th>
+                    <th rowspan="2">通過</th>
+                    <th rowspan="2">上り</th>
+                    <th rowspan="2" class="bl th-vertical th-vertical-3">馬<br>体<br>重</th>
+                    <th rowspan="2" class="th-vertical">増<br>減</th>
+                    <th rowspan="2" class="bl">本賞金<br>（万円）</th>
+                    <th rowspan="2">収得賞金<br>（万円）</th>
+                </tr>
+                <tr>
                     <th>レース名</th>
-                    <th>コース</th>
-                    <th>馬場</th>
-                    <th class="bl th-vertical">頭<br>数</th>
-                    <th>枠</th>
-                    <th class="th-vertical">馬<br>番</th>
-                    <th class="bl th-vertical">人<br>気</th>
-                    <th class="th-vertical">着<br>順</th>
-                    <th class="bl">騎手</th>
-                    <th>斤量</th>
-                    <th class="bl">タイム</th>
-                    <th>通過</th>
-                    <th>上り</th>
-                    <th class="bl">馬体重</th>
-                    <th>増減</th>
-                    <th class="bl">本賞金<br>（万円）</th>
-                    <th>収得賞金<br>（万円）</th>
+                    <th>格</th>
+                    <th class="bl">減量</th>
+                    <th>騎手名</th>
                 </tr>
             </thead>
             <tbody>
@@ -467,7 +473,7 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
                     {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
-                    <td class="bl" colspan="18">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
+                    <td class="bl" colspan="20">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -476,7 +482,9 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
                     <td class="nowrap bl">{{ r.venue }}{{ r.num }}R</td>
-                    <td class="nowrap">{{ r|history_race_title(True) }}</td>
+                    {% set race_name_html, race_rank_html = history_race_name_and_rank(r) %}
+                    <td class="nowrap">{{ race_name_html }}</td>
+                    <td class="nowrap center">{{ race_rank_html }}</td>
                     <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
                     <td class="{{ {'稍重': 'going-yaya', '重': 'going-omo', '不良': 'going-furyo'}.get(r.going, '') }}">{{ r.going }}</td>
                     <td class="bl">{{ r.runners }}</td>
@@ -484,7 +492,9 @@
                     <td>{{ r.horse_num }}</td>
                     <td class="bl {{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
-                    <td class="nowrap bl">{{ r.mark }}{{ r.jockey }}</td>
+                    {% set jockey_mark, jockey_name = jockey_mark_and_name(r.mark, r.jockey) %}
+                    <td class="center bl">{{ jockey_mark }}</td>
+                    <td class="nowrap">{{ jockey_name }}</td>
                     <td>{{ r.weight }}</td>
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap corners">{{ r.corners|corners_html }}</td>
@@ -497,7 +507,7 @@
                 {% endif %}
                 {% else %}
                 <tr>
-                    <td colspan="20" class="no-data-text">出走履歴がありません。</td>
+                    <td colspan="22" class="no-data-text">出走履歴がありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
