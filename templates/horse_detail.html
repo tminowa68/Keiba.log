@@ -2,6 +2,9 @@
 {% block title %}{{ horse[0] }} - keiba.log{% endblock %}
 {% block content %}
 <h1>馬名：{{ chiho_mark(horse[0]) }}{{ horse[0] }}</h1>
+{% if section_errors %}
+<p class="section-error-note">一部の情報を読み込めませんでした（{{ section_errors|join('・') }}）。しばらくしてから再読み込みしてください。</p>
+{% endif %}
 <div class="entry-tabs mt-20">
     <a href="/horse/{{ horse[0] }}/profile" class="tab-btn {% if active_tab == 'profile' %}active{% endif %}">プロフィール</a>
     <a href="/horse/{{ horse[0] }}/races" class="tab-btn {% if active_tab == 'races' %}active{% endif %}">出走レース</a>
