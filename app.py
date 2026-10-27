@@ -1308,6 +1308,17 @@ def split_dam_annotation(raw):
         return m.group(1).strip(), m.group(2).strip(), int(m.group(3))
     return raw, None, None
 
+def find_parent_row(rows, raw):
+    """Sire・Damシートの行から親馬を探す。「馬名 (母馬 - 生年)」の形（同名の馬の区別）なら、母馬・生年も合う行"""
+    name, mother, year = split_dam_annotation(raw)
+    cands = [r for r in rows if row_matches_name(r, name)]
+    if mother or year:
+        matched = [r for r in cands
+                   if (not mother or (len(r) > P_DAM and _same_name(r[P_DAM], mother)))
+                   and (not year or (len(r) > P_BIRTH and date_year(r[P_BIRTH]) == year))]
+        cands = matched or cands
+    return cands[0] if cands else None
+
 def get_5gen_pedigree(sire_name, dam_name, base_birth_year, gc, base_is_english=False):
     # スプレッドシートから全データを取得
     try:
@@ -7727,14 +7738,14 @@ def horse_detail(name, active_tab):
         if horse and len(horse) > H_SIRE and horse[H_SIRE]:
             try:
                 s_data = horse_sheet_values("Sire")[1:]
-                s_row = next((r for r in s_data if row_matches_name(r, horse[H_SIRE])), None)
+                s_row = find_parent_row(s_data, horse[H_SIRE])
                 if s_row: sire_info.update({"line1": s_row[P_SIRE] if len(s_row)>P_SIRE else "不明", 
                                             "line2": s_row[P_DAM] if len(s_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
         if horse and len(horse) > H_DAM and horse[H_DAM]:
             try:
                 d_data = horse_sheet_values("Dam")[1:]
-                d_row = next((r for r in d_data if row_matches_name(r, horse[H_DAM])), None)
+                d_row = find_parent_row(d_data, horse[H_DAM])
                 if d_row: dam_info.update({"line3": d_row[P_SIRE] if len(d_row)>P_SIRE else "不明", 
                                            "line4": d_row[P_DAM] if len(d_row)>P_DAM else "不明"})
             except gspread.WorksheetNotFound: pass
@@ -7942,7 +7953,9 @@ def brief_profile(horse, dam_info, birth_year):
     age = datetime.now().year - birth_year if birth_year else ''
     bms = (dam_info or {}).get('line3', '')
     return {'sex_age': f"{cell(H_GENDER)}{age}", 'stable': '・'.join(x for x in (cell(H_AREA), cell(H_STABLE)) if x),
-            'sire': cell(H_SIRE), 'dam': cell(H_DAM), 'bms': '' if bms in ('', '不明') else bms}
+            # 父・母は同名の馬の区別の注記（「(母馬 - 生年)」）を除いて表示する
+            'sire': split_dam_annotation(cell(H_SIRE))[0], 'dam': split_dam_annotation(cell(H_DAM))[0],
+            'bms': '' if bms in ('', '不明') else split_dam_annotation(bms)[0]}
 
 def next_race_entries(horse_name, horse_id=''):
     """次走予定：成績シートのこの馬の想定・特別・確定（枠順確定前）の記録。
