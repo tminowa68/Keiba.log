@@ -2676,7 +2676,7 @@ def history_race_name_and_rank(r):
     title, rank = race_title(r.get('name'), r.get('grade'), r.get('class'), r.get('jump'), r.get('nar'))
     rank = re.sub(r'^(\d勝)クラス$', r'\1ク', rank)
     if not r.get('nar') and str(title).startswith('メイクデビュー'):
-        title, rank = '新馬', ''   # メイクデビュー〇〇は新馬戦として表示する
+        title, rank = '新馬戦', ''   # メイクデビュー〇〇は新馬戦として表示する
     name_html = race_title_html(title, '', race_detail_url(r['date'], r['venue'], r['num']),
                                 race_mark_list(r.get('rule'), '', r.get('name')))   # 重量のマークは斤量の列に付ける
     rank_html = str(race_title_html('', rank)).strip() if rank else ''
