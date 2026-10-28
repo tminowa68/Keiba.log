@@ -394,7 +394,7 @@
                 {% for r in horse_races %}
                 <tr>
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td class="nowrap">{{ r.venue }}{{ r.num }}R</td>
+                    <td class="nowrap">{{ venue_label(r) }}</td>
                     <td class="nowrap">{{ r.title_html }}</td>
                     <td class="nowrap {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') }}">{{ r.course }}</td>
                     <td class="nowrap">{{ r.status }}</td>
@@ -481,14 +481,14 @@
                 <tr class="{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
-                    <td class="nowrap bl">{{ r.venue }}{{ r.num }}R</td>
+                    <td class="nowrap bl">{{ venue_label(r) }}</td>
                     {% set race_name_html, race_rank_html = history_race_name_and_rank(r) %}
                     <td class="nowrap">{{ race_name_html }}</td>
                     <td class="nowrap center">{{ race_rank_html }}</td>
                     <td class="nowrap {{ surface_class }}">{{ r.surface }}{{ r.distance }}</td>
                     <td class="{{ {'稍重': 'going-yaya', '重': 'going-omo', '不良': 'going-furyo'}.get(r.going, '') }}">{{ r.going }}</td>
                     <td class="bl">{{ r.runners }}</td>
-                    <td class="waku waku-{{ r.waku }}">{{ r.waku }}</td>
+                    <td class="{{ "" if r.overseas else "waku waku-" ~ r.waku }}">{{ r.waku }}</td>
                     <td>{{ r.horse_num }}</td>
                     <td class="bl {{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>

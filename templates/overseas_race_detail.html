@@ -1,0 +1,110 @@
+{% extends "layout.html" %}
+{% block title %}{{ race.name }} - keiba.log{% endblock %}
+{% block content %}
+<div class="edit-container">
+    <section class="race-header-card">
+        <h1>{{ race.name }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}</h1>
+        <div class="race-info-main">
+            {{ date|jpdate(weekday=True) }} ／ <span class="overseas-mark">{{ race.country }}</span>{% if race.venue %} {{ race.venue }}{% endif %}
+        </div>
+        <div class="race-info-sub">
+            {% if race.time %}<span><strong>発走時刻:</strong> {{ race.time }}（現地時間）</span>{% endif %}
+            {% if race.condition %}<span><strong>出走条件:</strong> {{ race.condition }}</span>{% endif %}
+            {% if race.course %}<span class="nowrap"><strong>コース:</strong> <span style="white-space: nowrap;" class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(race.surface, '') }}">{{ race.course }}</span></span>{% endif %}
+            {% if race.going %}<span><strong>馬場:</strong> {{ race.going }}</span>{% endif %}
+            {% if race.runners %}<span><strong>頭数:</strong> {{ race.runners }}頭</span>{% endif %}
+        </div>
+        {% if race.prizes %}
+        <div class="race-info-prize">
+            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ "{:,}".format(p) }}{% endfor %}
+        </div>
+        {% endif %}
+        {% if race.url %}<div class="race-info-sub"><a href="{{ race.url }}" target="_blank" rel="noopener">JRAの海外競馬発売のページ</a></div>{% endif %}
+    </section>
+
+    {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
+    <div class="race-result-scroll">
+    <table class="race-list-table race-result-table">
+        <thead>
+            <tr>
+                <th class="th-vertical">着<br>順</th>
+                <th class="th-vertical">ゲ<br>｜<br>ト</th>
+                <th class="th-vertical">馬<br>番</th>
+                <th>馬名</th>
+                <th>性齢</th>
+                <th>斤量</th>
+                <th>騎手</th>
+                <th class="bl">タイム</th>
+                <th>着差</th>
+                <th class="th-vertical">人<br>気</th>
+                <th class="bl">馬体重</th>
+                <th>調教師（調教国）</th>
+                <th class="bl">本賞金<br>（万円）</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in runners %}
+            <tr{% if r.trained == 'JPN' %} class="overseas-jpn-row"{% endif %}>
+                <td class="race-place {{ rank_class.get(r.place|string, '') }}">{{ r.place }}</td>
+                <td>{{ r.waku }}</td>
+                <td>{{ r.horse_num }}</td>
+                <td class="nowrap">{% if r.registered %}<a href="/horse/{{ r.horse_name|urlencode }}"><strong>{{ r.horse_name }}</strong></a>{% else %}{{ r.horse_name }}{% endif %}</td>
+                <td class="nowrap center"><span class="{{ 'female-text' if r.sex == '牝' else '' }}">{{ r.sex }}</span>{{ r.age }}</td>
+                <td>{{ r.weight }}</td>
+                <td class="nowrap">{{ r.jockey }}</td>
+                <td class="bl">{{ r.time }}</td>
+                <td class="nowrap">{{ r.margin }}</td>
+                <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
+                <td class="num nowrap bl">{{ r.body_weight }}</td>
+                <td class="nowrap">{{ r.trainer }}{% if r.trained %}（{{ r.trained }}）{% endif %}</td>
+                <td class="num bl">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="13">出走馬の記録がありません。</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="overseas-note">日本の調教馬（調教国 JPN）の行は色を付けています。海外競馬発売のレース結果を取り込むと、全出走馬を記録します（「データ更新」の「海外レース結果の取り込み」）。</p>
+
+    {% if session.get('login') %}
+    <section class="overseas-edit">
+        <h3>レースの情報の手直し</h3>
+        <p class="overseas-note">ここで直したレース名・競馬場は、同じ国・同じ略称（{{ race.abbr or 'なし' }}）のレースを後から記録するときにも使います。
+            賞金は外貨のまま入力し、為替レートシートの{{ date.year }}年のレートで万円に換算します{% if meta['通貨'] %}（{{ meta['通貨'] }}：{{ '%g'|format(rate) ~ '円' if rate else 'レート未登録' }}）{% endif %}。</p>
+        <form id="overseasForm" class="overseas-form">
+            <label>国 <input name="国" list="countryList" value="{{ meta['国'] }}"></label>
+            <datalist id="countryList">{% for c in countries %}<option value="{{ c }}">{% endfor %}</datalist>
+            <label>競馬場 <input name="競馬場" value="{{ meta['競馬場'] }}"></label>
+            <label>レース名 <input name="レース名" value="{{ meta['レース名'] or race.name }}"></label>
+            <label>グレード <input name="グレード" value="{{ meta['グレード'] }}" size="4" placeholder="G1"></label>
+            <label>通貨 <input name="通貨" value="{{ meta['通貨'] }}" size="8" placeholder="米ドル"></label>
+            <br>
+            {% for c in prize_cols %}<label>{{ c }} <input name="{{ c }}" value="{{ meta[c] }}" size="12" inputmode="decimal"></label>{% endfor %}
+            <br>
+            <button type="submit" class="update-btn">保存</button>
+            <span id="overseasStatus"></span>
+        </form>
+    </section>
+    <script>
+    document.getElementById('overseasForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const status = document.getElementById('overseasStatus');
+        const body = { race_id: {{ race.id|tojson }} };
+        new FormData(this).forEach((v, k) => { body[k] = v; });
+        status.textContent = '保存しています...';
+        try {
+            const res = await fetch('/api/overseas_race/update', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+            status.textContent = '保存しました。';
+            setTimeout(() => location.reload(), 600);
+        } catch (err) {
+            status.textContent = '保存できませんでした：' + err.message;
+        }
+    });
+    </script>
+    {% endif %}
+</div>
+{% endblock %}

@@ -335,6 +335,59 @@
 })();
 </script>
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
+    <h2>海外レース結果 インポート</h2>
+    <p style="color:#555; font-size:0.9em; line-height:1.6;">
+        JRAで馬券を発売した海外のレースの「レース結果」のページ（https://www.jra.go.jp/keiba/overseas/race/…/kaiko.html）のURL、
+        またはページを保存したファイル（.mhtml／.html。複数選べます）を取り込みます。全出走馬を成績シートに、
+        正式なレース名・競馬場・1着賞金（外貨）を海外レースシートに記録します。日本の調教馬は調教師の「(JPN)」で判断します。<br>
+        馬券の発売が無かったレースは、「登録馬の出走レースから取り込み」や馬のページの取り込みで、JRAの競走馬情報から日本の馬の分だけ記録します。
+        国名・レース名は略称のままなので、レースのページ（race_detail）で直せます。<br>
+        賞金は為替レートシート（年・通貨・円）の年ごとのレートで万円に換算します。2〜5着の賞金はレースのページで入力してください。
+    </p>
+    <div style="margin-top:15px;">
+        <label>URL：</label><br>
+        <input type="url" id="ow-url" placeholder="https://www.jra.go.jp/keiba/overseas/race/2025kd/kaiko.html" style="width:100%; max-width:520px; padding:6px; margin-top:5px;">
+    </div>
+    <div style="margin-top:10px;">
+        <label>ファイル：</label><br>
+        <input type="file" id="ow-file" accept=".mhtml,.mht,.html,.htm" multiple style="margin-top:5px;">
+    </div>
+    <div style="margin-top:20px;">
+        <button type="button" id="ow-btn" style="background:#4CAF50; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">インポート実行</button>
+    </div>
+    <div id="ow-message" style="margin-top:10px; font-size:0.9em; line-height:1.6;"></div>
+    <script>
+    (function() {
+        const btn = document.getElementById('ow-btn'), msg = document.getElementById('ow-message');
+        const show = (lines, error) => { msg.style.color = error ? '#c62828' : ''; msg.innerHTML = '';
+            lines.forEach(t => { const d = document.createElement('div'); d.textContent = t; msg.appendChild(d); }); };
+        btn.addEventListener('click', async () => {
+            const url = document.getElementById('ow-url').value.trim();
+            const files = document.getElementById('ow-file').files;
+            if (!url && !files.length) { show(['URLを入力するか、ファイルを選択してください。'], true); return; }
+            btn.disabled = true;
+            show(['海外のレース結果を読み取っています...']);
+            try {
+                const form = new FormData();
+                if (url) form.append('url', url);
+                Array.from(files).forEach(f => form.append('files', f));
+                const res = await fetch('/api/race_results/import_overseas', { method: 'POST', body: form });
+                let data;
+                try { data = await res.json(); } catch (e) { throw new Error(`インポートに失敗しました（HTTP ${res.status}）`); }
+                if (!res.ok || data.error) throw new Error(data.error || `インポートに失敗しました（HTTP ${res.status}）`);
+                show((data.races || []).map(r => `${r.label}：${r.saved}頭を記録` +
+                    (r.japanese.length ? `（日本の調教馬：${r.japanese.join('、')}）` : '') + (r.message ? `　※${r.message}` : '')));
+            } catch (e) {
+                show([e.message], true);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    })();
+    </script>
+</section>
+
+<section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); margin-top:20px;">
     <h2>特別レース登録馬 インポート</h2>
     <p style="color:#555; font-size:0.9em; line-height:1.6;">
         JRAの競馬メニューの「特別レース登録馬」から、各特別レースの登録馬を年ごとのファイル（例：「2026_レース結果」）の成績シートに「特別」として記録します
