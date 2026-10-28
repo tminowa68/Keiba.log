@@ -458,7 +458,7 @@ def race_level(r):
     地方のレースは重賞（Jpn）だけオープンとし、それ以外は空文字"""
     if r.get('grade') in ('G1', 'G2', 'G3', 'L'):
         return 'オープン'
-    if r.get('nar'):
+    if r.get('nar') or r.get('overseas'):
         return ''
     cls = str(r.get('class') or '').strip()
     cls = _OLD_CLASS_NAMES.get(cls, cls)
@@ -486,7 +486,8 @@ def summarize_results(results, birth_year=None, today=None):
                 kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
                 shutoku //= 2
             place = int(r['place']) if str(r.get('place', '')).isdigit() else None
-            r['shutoku'] = shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
+            # 海外のレースは、競走馬情報の収得賞金との差から記録した額（overseas_shutoku）
+            r['shutoku'] = int(r.get('overseas_shutoku') or 0) if r.get('overseas') else shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
                                           r.get('grade', ''), r.get('name', ''), r.get('rule', ''),
                                           place, r.get('prize') or 0, nar=bool(r.get('nar')),
                                           affiliation=r.get('affiliation', ''), jra_class=r.get('nar_jra_class', ''))
@@ -1092,7 +1093,7 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
     for h in horses:
         past = sorted([r for r in h.get('results') or [] if r.get('date') and r['date'] < race_date],
                       key=lambda r: r['date'], reverse=True)
-        jra_same = [r for r in past if not r.get('nar') and bool(r.get('jump')) == bool(jump)]
+        jra_same = [r for r in past if not r.get('nar') and not r.get('overseas') and bool(r.get('jump')) == bool(jump)]
         prev = jra_same[0] if jra_same else None
         area = (h.get('area') or '').strip()
         info[h['key']] = {
@@ -1201,3 +1202,201 @@ def parse_denma_page(html_or_soup):
               f"{int(race['kai'] or 0):02d}{int(race['nichi'] or 0):02d}{race['date'].strftime('%Y%m%d')}"
     return {'race': race, 'horses': horses, 'day_key': day_key,
             'day_races': denma_cnames(str(soup)).get(day_key, {})}
+
+
+# --- 海外のレース ---
+# JRAの競走馬情報の出走レースの表の国名の略称（表の「国名の短縮表記例」と、その他の主な国）
+COUNTRY_ABBR = {'愛': 'アイルランド', '米': 'アメリカ', '英': 'イギリス', '豪': 'オーストラリア', '華': 'カタール',
+                'サウ': 'サウジアラビア', '新嘉': 'シンガポール', 'ア首': 'UAE', '巴': 'バーレーン', '仏': 'フランス',
+                '韓': '韓国', '香': '香港', '独': 'ドイツ', '伊': 'イタリア', '加': 'カナダ', '新': 'ニュージーランド',
+                '亜': 'アルゼンチン', '伯': 'ブラジル', '智': 'チリ', '星': 'シンガポール', 'マカ': 'マカオ',
+                '瑞': 'スウェーデン', '諾': 'ノルウェー', '白': 'ベルギー', '西': 'スペイン', '土': 'トルコ'}
+# 海外競馬発売のページの国名（「（アメリカ）」）→ 略称
+COUNTRY_NAME_ABBR = {v: k for k, v in COUNTRY_ABBR.items() if k not in ('星',)}
+COUNTRY_NAME_ABBR.update({'アラブ首長国連邦': 'ア首', 'ＵＡＥ': 'ア首', 'UAE': 'ア首'})
+OVERSEAS_RESULT_URL_RE = re.compile(r'https?://www\.jra\.go\.jp/keiba/overseas/race/[^\s"\'<>]+')
+
+
+def country_name(abbr):
+    """国名の略称（「米」）を国名（「アメリカ」）にする（分からなければそのまま）"""
+    return COUNTRY_ABBR.get(str(abbr or '').strip(), str(abbr or '').strip())
+
+
+def country_abbr(name):
+    """国名（「アメリカ」）を略称（「米」）にする（略称ならそのまま、分からなければ国名のまま）"""
+    name = str(name or '').strip()
+    return name if name in COUNTRY_ABBR else COUNTRY_NAME_ABBR.get(name, name)
+
+
+def _split_course(text):
+    """「ダ2000」「芝2400」「障3000」→ (コース, 距離)"""
+    m = re.match(r'^\s*(芝|ダ|障)\D*?(\d[\d,]*)', text or '')
+    return (m.group(1), m.group(2).replace(',', '')) if m else ('', re.sub(r'\D', '', text or ''))
+
+
+def parse_horse_overseas_rows(html_or_soup):
+    """JRAの競走馬情報のページの「出走レース」の表で、海外のレースの行（リンクが無く、場がJRA・地方の競馬場でない行）。
+    [{'date', 'country'（略称）, 'name'（略したレース名）, 'grade', 'surface', 'distance', 'going', 'runners',
+      'pop', 'place', 'jockey', 'weight', 'body_weight', 'time', 'rating', 'winner'}]"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.find_all('table'):
+        caption = table.find('caption')
+        if not caption or '出走レース' not in _text(caption):
+            continue
+        for tr in table.find_all('tr'):
+            if tr.find('a', href=re.compile(r'pw01sde')):
+                continue
+            tds = tr.find_all('td')
+            if len(tds) < 12:
+                continue
+            cells = [_text(td) for td in tds]
+            m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', cells[0])
+            venue = cells[1].replace(' ', '')
+            if not m or not venue or venue in VENUES.values() or nar_venue_name(venue):
+                continue
+            img = tds[2].find('img')
+            race_td = BeautifulSoup(str(tds[2]), 'html.parser')
+            for icon in race_td.find_all(class_='grade_icon'):
+                icon.decompose()
+            surface, distance = _split_course(cells[3])
+            body = cells[10] if re.fullmatch(r'\d+', cells[10]) else ''
+            out.append({'date': date(int(m.group(1)), int(m.group(2)), int(m.group(3))), 'country': venue,
+                        'name': _text(race_td), 'grade': normalize_grade(img.get('alt', '')) if img else '',
+                        'surface': surface, 'distance': distance, 'going': cells[4], 'runners': cells[5],
+                        'pop': cells[6], 'place': cells[7], 'jockey': cells[8], 'weight': cells[9],
+                        'body_weight': body, 'time': cells[11], 'rating': cells[12] if len(cells) > 12 else '',
+                        'winner': cells[13] if len(cells) > 13 else ''})
+    return out
+
+
+def parse_horse_prize_info(html_or_soup):
+    """JRAの競走馬情報のページの賞金：{'overseas'（内海外賞金）, 'shutoku_flat', 'shutoku_jump'}（円。無ければ None）"""
+    text = _soup(html_or_soup).get_text(' ', strip=True)
+
+    def amount(label):
+        m = re.search(label + r'\s*([\d,]+)\s*円', text)
+        return int(m.group(1).replace(',', '')) if m else None
+    return {'overseas': amount('内海外賞金'), 'shutoku_flat': amount(r'収得賞金\s*[（(]平地[）)]'),
+            'shutoku_jump': amount(r'収得賞金\s*[（(]障害[）)]')}
+
+
+def _money(text):
+    m = re.search(r'([\d,]+(?:\.\d+)?)', text or '')
+    return float(m.group(1).replace(',', '')) if m else None
+
+
+def parse_overseas_result_page(html_or_soup, url=''):
+    """JRAの海外競馬発売のレース結果のページ（https://www.jra.go.jp/keiba/overseas/race/2025kd/kaiko.html）。
+    [{'race': {date, venue（競馬場）, country（国名）, num, name, grade, category, weight_rule, distance, surface,
+               course_detail, time（現地時間）, turf, dirt, currency, total_prize, prizes（1着賞金だけ）, url, runners_count},
+      'runners': [{place, num, gate, name, bred, sex, age, weight, jockey, time, margin, body_weight, trainer,
+                   trained（調教国）, pop}]}]"""
+    soup = _soup(html_or_soup)
+    out = []
+    for table in soup.find_all('table', class_='overseas'):
+        cap = table.find('caption') or table
+        date_el = cap.find(class_='date')
+        dm = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', _text(date_el)) if date_el else None
+        if not dm:
+            continue
+        country_el = date_el.find(class_='country')
+        country = re.sub(r'[（）()\s]', '', _text(country_el)) if country_el else ''
+        venue_text = _text(date_el).replace(_text(country_el), '') if country_el else _text(date_el)
+        vm = re.search(r'[)）]\s*(.+?)(?:競馬場)?\s*$', venue_text)
+        venue = vm.group(1).strip() if vm else ''
+        num_img = cap.find('img', alt=re.compile(r'\d+レース'))
+        num = re.search(r'\d+', num_img['alt']).group(0) if num_img else ''
+        name_el = cap.find(class_='race_name')
+        name_text = _text(name_el) if name_el else ''
+        gm = re.search(r'[（(]\s*((?:G|Ｇ)\s*[1-3１-３ⅠⅡⅢ]|L|Ｌ|リステッド)\s*[）)]\s*$', name_text)
+        grade = normalize_grade(gm.group(1).replace(' ', '')) if gm else ''
+        name = name_text[:gm.start()].strip() if gm else name_text.strip()
+        cat_el = cap.find(class_=re.compile(r'\bcategory\b'))
+        cat = _text(cat_el) if cat_el else ''
+        wm = re.search(r'(馬齢|定量|別定|ハンデ)\s*$', cat)
+        weight_rule = wm.group(1) if wm else ''
+        category = (cat[:wm.start()] if wm else cat).strip()
+        course_el = cap.find(class_=re.compile(r'\bcourse\b'))
+        course = _text(course_el) if course_el else ''
+        distance = re.sub(r'\D', '', course.split('メートル')[0]) if 'メートル' in course else ''
+        dd = re.search(r'[（(]([^）)]*)[）)]', course)
+        detail = dd.group(1) if dd else ''
+        surface = '芝' if detail.startswith('芝') else ('ダ' if detail.startswith('ダ') else ('障' if '障' in detail else ''))
+        time_el = cap.find(class_='time')
+        tm = re.search(r'(\d{1,2})時(\d{1,2})分', _text(time_el)) if time_el else None
+        turf = dirt = ''
+        for li in cap.select('.baba li'):
+            c = _text(li.find(class_='cap')) if li.find(class_='cap') else ''
+            t = _text(li.find(class_='txt')) if li.find(class_='txt') else ''
+            if '芝' in c:
+                turf = t
+            elif 'ダ' in c:
+                dirt = t
+        currency, total, first = '', None, None
+        for cell in cap.select('.prize .cell'):
+            unit = cell.find(class_='unit')
+            label = _text(cell.find(class_='cap')) if cell.find(class_='cap') else ''
+            value = _money(_text(cell).replace(label, '').replace(_text(unit) if unit else '', ''))
+            if unit:
+                currency = currency or _text(unit)
+            if '総額' in label:
+                total = value
+            elif '1着' in label:
+                first = value
+        runners = []
+        for tr in table.select('tbody tr'):
+            tds = {(td.get('class') or [''])[0]: td for td in tr.find_all('td')}
+            if 'horse' not in tds:
+                continue
+            horse_td = tds['horse']
+            code = horse_td.find(class_='code')
+            bred = re.sub(r'[()（）\s]', '', _text(code)) if code else ''
+            for icon in horse_td.find_all(class_='icon'):
+                icon.decompose()
+            hname = _text(horse_td).replace(_text(code) if code else '', '').strip() if code else _text(horse_td)
+            num_el = tds.get('num')
+            n = num_el.find(class_='num') if num_el else None
+            g = num_el.find(class_='gate') if num_el else None
+            sm = re.match(r'(牡|牝|せん|セ|騸)\s*(\d+)', _text(tds.get('age')) if tds.get('age') else '')
+            tr_td = tds.get('trainer')
+            tcode = tr_td.find(class_='code') if tr_td else None
+            trainer = (_text(tr_td).replace(_text(tcode), '') if tcode else _text(tr_td)).strip() if tr_td else ''
+            place = _text(tds.get('place')) if tds.get('place') else ''
+            t = _text(tds.get('time')) if tds.get('time') else ''
+            is_time = bool(re.fullmatch(r'\d+:\d{2}(?:\.\d+)?', t))
+            runners.append({'place': place, 'num': re.sub(r'\D', '', _text(n)) if n else '',
+                            'gate': re.sub(r'\D', '', _text(g)) if g else '', 'name': hname, 'bred': bred,
+                            'sex': {'セ': 'せん', '騸': 'せん'}.get(sm.group(1), sm.group(1)) if sm else '',
+                            'age': sm.group(2) if sm else '',
+                            'weight': _text(tds.get('weight')) if tds.get('weight') else '',
+                            'jockey': _text(tds.get('jockey')) if tds.get('jockey') else '',
+                            'time': t if is_time else '', 'margin': '' if is_time else t,
+                            'body_weight': re.sub(r'\D', '', _text(tds.get('h_weight'))) if tds.get('h_weight') else '',
+                            'trainer': trainer,
+                            'trained': re.sub(r'[()（）\s]', '', _text(tcode)) if tcode else '',
+                            'pop': re.sub(r'\D', '', _text(tds.get('pop'))) if tds.get('pop') else ''})
+        race = {'date': date(int(dm.group(1)), int(dm.group(2)), int(dm.group(3))), 'venue': venue,
+                'country': country, 'num': num, 'name': name, 'grade': grade, 'category': category,
+                'weight_rule': weight_rule, 'distance': distance, 'surface': surface, 'course_detail': detail,
+                'time': f"{int(tm.group(1))}:{tm.group(2)}" if tm else '', 'turf': turf, 'dirt': dirt,
+                'currency': currency, 'total_prize': total, 'prizes': [first] if first is not None else [],
+                'url': url, 'runners_count': str(len([r for r in runners if r['place'] not in ('取消', '除外')]))}
+        out.append({'race': race, 'runners': runners})
+    return out
+
+
+def parse_horse_basic(html_or_soup):
+    """JRAの競走馬情報のページの馬名・性別・生年：{'name', 'sex', 'birth_year'}"""
+    soup = _soup(html_or_soup)
+    name = ''
+    txt = soup.select_one('h1 .txt')
+    if txt:
+        txt = BeautifulSoup(str(txt), 'html.parser')
+        for el in txt.select('.opt, .name_en, .icon'):
+            el.decompose()
+        name = _text(txt)
+    text = soup.get_text(' ', strip=True)
+    sm = re.search(r'性別\s*(牡|牝|せん)', text)
+    bm = re.search(r'生年月日\s*(\d{4})年', text)
+    return {'name': name, 'sex': sm.group(1) if sm else '', 'birth_year': int(bm.group(1)) if bm else None}

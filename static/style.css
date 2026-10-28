@@ -2567,3 +2567,19 @@ td.col-last-race {
 .race-result-table th.th-vertical-3 { font-size: 0.67em; line-height: 1.15; }
 /* horse_detail の出走履歴の表の文字の大きさ */
 .race-result-table.race-history-table { font-size: 0.75em; }
+/* 海外のレース：国名のマーク、日本の調教馬の行、手直しのフォーム */
+.overseas-mark {
+    display: inline-block;
+    padding: 0 4px;
+    border: 1px solid #6d4c41;
+    border-radius: 3px;
+    color: #6d4c41;
+    font-size: 0.85em;
+    line-height: 1.3;
+    margin-right: 3px;
+}
+.race-result-table tr.overseas-jpn-row td:not(.rank-1):not(.rank-2):not(.rank-3) { background: #fff8e1; }
+.overseas-note { font-size: 0.85em; color: #555; margin: 8px 0; }
+.overseas-edit { margin-top: 20px; padding: 12px; border: 1px solid #ddd; border-radius: 6px; }
+.overseas-form label { display: inline-block; margin: 4px 12px 4px 0; }
+.overseas-form input { padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
