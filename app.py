@@ -1873,19 +1873,28 @@ def _delete_row_blocks(ws, blocks):
     for start, end in reversed(blocks):
         with_sheets_retry(ws.delete_rows, start, end)
 
+def _jockey_key(name):
+    """騎手の比較用：減量の記号・空白を除く"""
+    return re.sub(r'[\s　☆△▲◇★]', '', str(name or ''))
+
 def save_race_results(parsed_list, overwrite=False):
     """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
-    取り込み済みかどうかは、レースシートのレースIDに加えて成績シートの結果の行（年月日・場・R）でも確かめる。
-    成績シートに行があるのにレースシートにレースの行が無いレース（途中で止まった取り込み）は、入れ替えて直す。
-    書き込みは「レースシートの古い行を消す → 成績シートの古い行を消す → 成績シートに書く → レースシートに書く」の順にし、
+    成績シートに記録済みの行（想定・特別登録・出馬表の記録「E〜」と、同じレースの結果の行）は、同じ馬の行に
+    着順・タイムなどを上書きし、レースIDもレース結果のものにそろえる（記録の無い馬の行だけ足す）。
+    出走しなかった馬の記録（非当選・非抽選・想定だけの馬など）はレースIDだけを書き換えて残し、
+    同じ馬の結果の行が重複していれば消す。記録済みの騎手（出馬表）から変わっていれば、Changesに騎手変更として記録する。
+    書き込みは「レースシートの古い行を消す → 成績シートを書き換える → レースシートに書く」の順にし、
     途中で止まってもレースの行が無い（次の取り込みで直る）状態になるようにする。
     (取り込んだレース, 飛ばしたレース) のラベル一覧を返す"""
-    saved, skipped, saved_ids = [], [], set()
+    saved, skipped, saved_ids, jockey_changes = [], [], set(), []
     prepare_nar_results(parsed_list)   # 地方のレースの騎手・調教師のフルネーム、登録馬の馬ID
     by_year = {}
     for parsed in parsed_list:
         by_year.setdefault(parsed['race']['date'].year, []).append(parsed)
     r_date, r_venue, r_num = RUNNER_COL['年月日'], RUNNER_COL['場'], RUNNER_COL['R']
+    c_name, c_id, c_entry, c_place, c_jockey = (RUNNER_COL[k] for k in ('馬名', '馬ID', '登録', '着順', '騎手'))
+    width = len(RUNNER_SHEET_COLUMNS)
+    last_col = col_letter(width - 1)
     race_key = lambda d, v, n: (str(d).strip(), str(v).strip(), str(n).strip())
     for year, items in sorted(by_year.items()):
         try:
@@ -1896,70 +1905,122 @@ def save_race_results(parsed_list, overwrite=False):
             forget_result_sheets(year)
             ws_race, ws_runner = result_sheets(year, create=True)
             existing = set(with_sheets_retry(ws_race.col_values, 1)[1:])
-        def read_runner_keys():
-            # 成績シートのレースID・年月日・場・Rの列（2行目から順に）
-            return [list(r) + [''] * (r_num + 1) for r in
-                    with_sheets_retry(ws_runner.batch_get, [f"A2:{col_letter(r_num)}"])[0]]
-        # 成績シートの結果の行（出馬表から記録した「E〜」の行を除く）のレース（年月日・場・R）
-        runner_keys = {race_key(r[r_date], r[r_venue], r[r_num]) for r in read_runner_keys()
-                       if r[0] and not is_entry_row_id(r[0]) and not is_overseas_id(r[0])}
-        race_rows, new_runner_rows, replace_ids, replace_keys, this_time = [], [], set(), set(), set()
+        todo = []
         for parsed in items:
             race = parsed['race']
             label = f"{race['date'].month}/{race['date'].day} {race['venue']}{race['num']}R"
             if not race['race_id']:
                 skipped.append(f"{label}（レースIDを読み取れません）")
                 continue
-            if race['race_id'] in this_time:
+            if any(p['race']['race_id'] == race['race_id'] for p in todo):
                 continue   # 同じレースが2回指定された場合
-            key = race_key(race['date'].strftime('%Y%m%d'), race['venue'], int(race['num']))
             if race['race_id'] in existing and not overwrite:
                 skipped.append(f"{label}（取り込み済み）")
                 continue
-            if race['race_id'] in existing or key in runner_keys:
-                # 入れ替えるレース（レースの行が無く成績の行だけが残っているレースも、成績の行を消して書き直す）
-                replace_ids.add(race['race_id'])
-                replace_keys.add(key)
-            existing.add(race['race_id'])
-            this_time.add(race['race_id'])
-            race_rows.append(race_sheet_row(race))
-            new_runner_rows.extend(runner_sheet_row(race, r) for r in parsed['runners'])
+            todo.append(parsed)
             saved.append(label)
             saved_ids.add(race['race_id'])
-        # 結果を取り込んだレースの想定・特別登録などの記録（出馬表から記録した「E〜」の行）も消す
-        entry_ids = {entry_key(p['race']['date'], p['race']['venue'], p['race']['num'])
-                     for p in items if p['race']['race_id'] in this_time}
-        remove_ids = replace_ids | entry_ids
-        if remove_ids:
-            # レースシートの古い行を最初に消す（途中で止まっても、レースの行が無い＝次の取り込みで直る状態にする）
-            ids = with_sheets_retry(ws_race.col_values, 1)
-            _delete_row_blocks(ws_race, _row_blocks(ids, lambda v, idx: v in remove_ids))
-            # 成績シート：レースIDが一致する行と、年月日・場・Rが同じ結果の行（重複して残った行も）を消す
-            rows = read_runner_keys()
-            ids = [''] + [str(r[0]).strip() for r in rows]
-            # 想定・特別登録などの記録のうち、非当選・非抽選の馬の行は残す
-            status = with_sheets_retry(ws_runner.col_values, RUNNER_COL['登録'] + 1) if entry_ids else []
-            def runner_remove(v, idx):
-                r = rows[idx - 2]
-                if v in entry_ids and idx - 1 < len(status) and str(status[idx - 1]).strip() in ENTRY_EXCLUDED:
-                    return False
-                return v in remove_ids or (bool(v) and not is_entry_row_id(v) and not is_overseas_id(v)
-                                           and race_key(r[r_date], r[r_venue], r[r_num]) in replace_keys)
-            _delete_row_blocks(ws_runner, _row_blocks(ids, runner_remove))
+        if not todo:
+            continue
+        # このとき保存するレースの成績シートの行：レースIDか出馬表などの記録（E〜）のIDが一致する行と、
+        # 年月日・場・Rが同じ結果の行（海外のレースはR が無いため除く）
+        by_id, by_key = {}, {}
+        for p in todo:
+            race = p['race']
+            by_id[race['race_id']] = race['race_id']
+            by_id[entry_key(race['date'], race['venue'], race['num'])] = race['race_id']
+            by_key[race_key(race['date'].strftime('%Y%m%d'), race['venue'], int(race['num']))] = race['race_id']
+        keys = [list(r) + [''] * (r_num + 1) for r in
+                with_sheets_retry(ws_runner.batch_get, [f"A2:{col_letter(r_num)}"])[0]]
+        target = {}   # 行番号 → 保存するレースのレースID
+        for no, r in enumerate(keys, start=2):
+            v = str(r[0]).strip()
+            if v in by_id:
+                target[no] = by_id[v]
+            elif v and not is_entry_row_id(v) and not is_overseas_id(v) and \
+                    race_key(r[r_date], r[r_venue], r[r_num]) in by_key:
+                target[no] = by_key[race_key(r[r_date], r[r_venue], r[r_num])]
+        old_rows = _read_rows(ws_runner, list(target), width) if target else {}
+        # レースシートの古い行（入れ替えるレースと、出馬表から記録したレースの行）を最初に消す
+        remove_ids = set(by_id)
+        ids = with_sheets_retry(ws_race.col_values, 1)
+        _delete_row_blocks(ws_race, _row_blocks(ids, lambda v, idx: v in remove_ids))
+        updates, delete_nos, append_rows, written = [], [], [], []
+        for p in todo:
+            race = p['race']
+            rid = race['race_id']
+            mine = sorted(no for no, x in target.items() if x == rid)
+            used = set()
+            for runner in p['runners']:
+                row = [str(v) for v in runner_sheet_row(race, runner)]
+                hid = str(runner.get('horse_id') or '').strip()
+                match = next((no for no in mine if no not in used and hid and old_rows[no][c_id].strip() == hid), None) \
+                    or next((no for no in mine if no not in used and old_rows[no][c_name].strip() == runner['name']), None)
+                if match:
+                    used.add(match)
+                    old = old_rows[match]
+                    # 出馬表で記録した騎手から変わっていれば騎手変更
+                    if old[c_entry].strip() == '確定' and not old[c_place].strip() and old[c_jockey].strip() \
+                            and runner.get('jockey') and _jockey_key(old[c_jockey]) != _jockey_key(runner['jockey']):
+                        jockey_changes.append((race['date'], runner['name'], old[c_jockey].strip(), runner['jockey']))
+                    if not row[c_id] and old[c_id].strip():
+                        row[c_id] = old[c_id].strip()
+                    updates.append({'range': f"A{match}:{last_col}{match}", 'values': [row]})
+                else:
+                    append_rows.append(row)
+                written.append(row)
+            for no in mine:
+                if no in used:
+                    continue
+                old = old_rows[no]
+                if old[c_place].strip() and old[c_entry].strip() in ('', '確定'):
+                    delete_nos.append(no)   # 同じ馬の結果の行が重複して残ったもの
+                elif old[0].strip() != rid:
+                    # 出走しなかった馬の記録（非当選・非抽選など）は、レースIDだけをそろえて残す
+                    updates.append({'range': f"A{no}", 'values': [[rid]]})
+                    written.append([rid] + old[1:])
         # すべて文字列のまま書き込む（数字の列も文字列にしておくと、成績シートのクエリで型が混ざらない）
-        if new_runner_rows:
-            with_sheets_retry(ws_runner.append_rows, [[str(v) for v in row] for row in new_runner_rows],
-                              value_input_option='RAW')
+        if updates:
+            for i in range(0, len(updates), 500):
+                with_sheets_retry(ws_runner.batch_update, updates[i:i + 500])
+        if delete_nos:
+            _delete_row_blocks(ws_runner, _number_blocks(delete_nos))
+        if append_rows:
+            with_sheets_retry(ws_runner.append_rows, append_rows, value_input_option='RAW')
         # レースの行は最後に書く（レースの行があれば、成績の行も書き終わっている）
-        if race_rows:
-            with_sheets_retry(ws_race.append_rows, [[str(v) for v in row] for row in race_rows],
-                              value_input_option='RAW')
-        remember_recent_runner_rows(year, [[str(v) for v in row] for row in new_runner_rows], replace_ids)
+        with_sheets_retry(ws_race.append_rows, [[str(v) for v in race_sheet_row(p['race'])] for p in todo],
+                          value_input_option='RAW')
+        remember_recent_runner_rows(year, written, set(by_id))
+        existing.update(p['race']['race_id'] for p in todo)
         _imported_ids_cache[year] = (time.time(), existing)
+    if jockey_changes:
+        try:
+            record_jockey_changes(jockey_changes)
+        except Exception as e:
+            print(f"騎手変更の記録に失敗しました: {e}")
     if saved_ids:
         # 出走した登録馬のクラス・最新レースを計算し直す
         update_class_for_runners([p for p in parsed_list if p['race']['race_id'] in saved_ids])
     return saved, skipped
+
+def record_jockey_changes(changes):
+    """騎手変更をChangesシートに記録する（出走馬すべて。年月日はレースの日）。changes：[(日付, 馬名, 旧, 新)]"""
+    if not changes:
+        return
+    migrate_changes_sheet()
+    ws = get_or_create_worksheet(gc.open(horse_data), "Changes", CHANGES_COLUMNS)
+    data = horse_sheet_values("Changes")
+    have = {(re.sub(r'\D', '', r[C_DATE]), r[C_NAME].strip(), _jockey_key(r[C_NEW]))
+            for r in (list(x) + [''] * len(CHANGES_COLUMNS) for x in data[1:]) if r[C_TYPE].strip() == '騎手変更'}
+    rows = []
+    for d, name, old, new in changes:
+        k = (d.strftime('%Y%m%d'), name, _jockey_key(new))
+        if k not in have:
+            have.add(k)
+            rows.append(changes_row(d.strftime('%Y%m%d'), name, '騎手変更', old, new))
+    if rows:
+        with_sheets_retry(ws.append_rows, rows)
+        remember_sheet_values("Changes")
 
 def entry_sheet_row(race, horse, status):
     """想定・特別登録・確定（枠順確定前）の記録の成績シートの行"""
@@ -1983,22 +2044,25 @@ def save_entries(entries):
     記録済みの馬は、登録の段階が進む場合と非当選・非抽選の場合だけ書き換える（確定を特別に戻さない）。
     結果を取り込み済みのレースは飛ばす。
     レースごとの [{'label', 'added', 'updated', 'message'}] を返す"""
-    out = []
+    out, jockey_changes = [], []
     by_year = {}
     for e in entries:
         by_year.setdefault(e['race']['date'].year, []).append(e)
     last_r, first_name, entry_c = RUNNER_COL['R'], RUNNER_COL['馬名'], RUNNER_COL['登録']
     for year, items in sorted(by_year.items()):
         ws_race, ws_runner = result_sheets(year, create=True)
-        keys, names = with_sheets_retry(ws_runner.batch_get, [f"A2:{col_letter(last_r)}",
-                                                              f"{col_letter(first_name)}2:{col_letter(entry_c)}"])
-        keys, names = list(keys), list(names)
-        results_done, recorded = set(), {}
+        jockey_c = RUNNER_COL['騎手']
+        keys, names, jockeys = with_sheets_retry(ws_runner.batch_get, [
+            f"A2:{col_letter(last_r)}", f"{col_letter(first_name)}2:{col_letter(entry_c)}",
+            f"{col_letter(jockey_c)}2:{col_letter(jockey_c)}"])
+        keys, names, jockeys = list(keys), list(names), list(jockeys)
+        results_done, recorded, old_jockey = set(), {}, {}
         for i, k in enumerate(keys):
             k = list(k) + [''] * 4
             if is_entry_row_id(k[0]):
                 n = list(names[i]) + [''] * 3 if i < len(names) else [''] * 3
                 recorded.setdefault(k[0], {})[n[0]] = (i + 2, n[2] or '確定')
+                old_jockey[i + 2] = str((list(jockeys[i]) + [''])[0] if i < len(jockeys) else '').strip()
             elif k[0]:
                 results_done.add((k[1], k[2], str(k[3]).strip()))
         updates, new_rows = [], []
@@ -2020,6 +2084,11 @@ def save_entries(entries):
             for h in e['horses']:
                 if h['name'] in have:
                     row_no, old = have[h['name']]
+                    # 確定出馬表（馬番がある）で、出馬表から記録した騎手から変わっていれば騎手変更
+                    if row_no and status == '確定' and old == '確定' and h.get('num') and h.get('jockey') \
+                            and old_jockey.get(row_no) and _jockey_key(old_jockey[row_no]) != _jockey_key(h['jockey']):
+                        jockey_changes.append((race['date'], h['name'], old_jockey[row_no], h['jockey']))
+                        old_jockey[row_no] = h['jockey']
                     if row_no:
                         # 出馬表の枠・馬番・斤量・騎手などは、記録済みの馬の行にも書き込む
                         for col in ('枠', '馬番', '性別', '年齢', '斤量', '騎手', '調教師'):
@@ -2043,6 +2112,11 @@ def save_entries(entries):
             with_sheets_retry(ws_runner.batch_update, updates)
         if new_rows:
             with_sheets_retry(ws_runner.append_rows, new_rows, value_input_option='RAW')
+    if jockey_changes:
+        try:
+            record_jockey_changes(jockey_changes)
+        except Exception as e:
+            print(f"騎手変更の記録に失敗しました: {e}")
     # 同じレースの記録（出走馬と非当選・非抽選の馬など）は1つにまとめる
     merged = {}
     for o in out:
@@ -2466,7 +2540,10 @@ def runner_row_to_result(r):
         'nar_jra_class': nar_koryu_jra_class(c('場'), c('クラス'), c('レース名')) if nar and affiliation == 'JRA'
         and c('着順') == '1' and not c('グレード') else '',
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
-        'entry': c('登録') or '確定', 'is_result': not is_entry_row_id(c('レースID')),
+        # レース結果の行：着順がある行（以前の記録で登録が空欄の行も）。結果を取り込んだレースの、出走しなかった馬の
+        # 記録（非当選・非抽選・想定だけの馬など）はレースIDが結果と同じでも結果ではない
+        'entry': c('登録') or '確定',
+        'is_result': not is_entry_row_id(c('レースID')) and bool(c('着順') or not c('登録')),
         'overseas': overseas, 'country': cm.group(1) if cm else '', 'trained': trained,
         'overseas_shutoku': (_num(sm.group(1)) or 0) if sm else 0,
     }
@@ -6856,7 +6933,8 @@ def weekly():
         # 「仮」の記録（レースの結果から推定した日付）は表示しない
         for r in horse_sheet_values("Changes")[1:]:
             d = parse_full_date(cell(r, C_DATE))
-            if in_week(d) and cell(r, C_TYPE) != '抹消' and cell(r, C_TENTATIVE) != '仮':
+            # 騎手変更（全出走馬を記録している）は週間レポートには表示しない
+            if in_week(d) and cell(r, C_TYPE) not in ('抹消', '騎手変更') and cell(r, C_TENTATIVE) != '仮':
                 changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
                                 'new': cell(r, C_NEW), 'tentative': cell(r, C_TENTATIVE) == '仮'})
 
@@ -8531,8 +8609,8 @@ ENTRY_STAGES = [('estimated', '想定'), ('special', '特別登録'), ('before_d
 ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw',
                       '非当選': 'excluded', '非抽選': 'excluded'}
 ENTRY_STATUS_LABEL = {'特別': '特別登録', '確定': '枠順確定前'}
-# 段階の順（非当選・非抽選の馬は、想定・特別登録のタブまで表示する）
-ENTRY_STAGE_RANK = {'estimated': 0, 'special': 1, 'excluded': 1, 'before_draw': 2}
+# 段階の順（非当選・非抽選の馬は、想定・特別登録・枠順確定前のタブに表示し、確定出馬表には表示しない）
+ENTRY_STAGE_RANK = {'estimated': 0, 'special': 1, 'excluded': 2, 'before_draw': 2}
 STAGE_STATUS = {'estimated': '想定', 'special': '特別', 'before_draw': '確定', 'final': '確定'}
 
 def entry_status_label(status):
@@ -8825,12 +8903,9 @@ def race_detail():
     capacity = next((int(e['runners']) for e in entries if str(e.get('runners') or '').isdigit()), None)
     for t in tabs:
         t['capacity'] = capacity
-        # 非当選・非抽選の馬（枠順確定前・確定出馬表のタブでは表の下に一覧で表示する）
-        t['excluded'] = {s: [e['horse_name'] for e in entries if e['entry'] == s] for s in ENTRY_EXCLUDED}
     finals = [r for r in runners if r['stage'] == 'final']
     if race or runners:
-        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals,
-                     'excluded': {s: [e['horse_name'] for e in entries if e['entry'] == s] for s in ENTRY_EXCLUDED}})
+        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals})
     # 最初に開くタブ：記録のある一番後の段階
     default_tab = next((t['key'] for t in reversed(tabs) if t.get('horses') or t.get('runners')),
                        tabs[0]['key'] if tabs else '')
@@ -8873,7 +8948,7 @@ def race_detail():
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
                            program_race=program_race, result_race=result_race, tabs=tabs, default_tab=default_tab,
-                           heading=heading, registered_names=set(horses), **nav)
+                           heading=heading, **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required

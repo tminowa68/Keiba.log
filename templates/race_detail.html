@@ -195,12 +195,6 @@
         {% if not (t.horses if t.key != 'final' else t.runners) %}
         <p class="no-data-text">{{ t.label }}の馬はまだ記録されていません。</p>
         {% endif %}
-        {# 出馬投票で出走できる馬とならなかった馬（枠順確定前・確定出馬表のタブ） #}
-        {% if t.key in ('before_draw', 'final') %}
-        {% for s, names in (t.excluded or {}).items() if names %}
-        <p class="excluded-line"><span class="excluded-mark">{{ s }}</span> {{ names|length }}頭：{% for n in names %}{% if not loop.first %}、{% endif %}{% if n in registered_names %}<a href="/horse/{{ n|urlencode }}">{{ n }}</a>{% else %}{{ n }}{% endif %}{% endfor %}</p>
-        {% endfor %}
-        {% endif %}
     </section>
     {% endfor %}
     {% else %}
