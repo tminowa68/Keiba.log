@@ -6933,7 +6933,8 @@ def weekly():
         # 「仮」の記録（レースの結果から推定した日付）は表示しない
         for r in horse_sheet_values("Changes")[1:]:
             d = parse_full_date(cell(r, C_DATE))
-            if in_week(d) and cell(r, C_TYPE) != '抹消' and cell(r, C_TENTATIVE) != '仮':
+            # 騎手変更（全出走馬を記録している）は週間レポートには表示しない
+            if in_week(d) and cell(r, C_TYPE) not in ('抹消', '騎手変更') and cell(r, C_TENTATIVE) != '仮':
                 changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
                                 'new': cell(r, C_NEW), 'tentative': cell(r, C_TENTATIVE) == '仮'})
 
