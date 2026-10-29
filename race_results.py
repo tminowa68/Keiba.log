@@ -1165,7 +1165,8 @@ def denma_day_label(key):
 
 def parse_denma_page(html_or_soup):
     """出馬表のページから {'race': {...}, 'horses': [{'name', 'url', 'horse_id', 'waku', 'num', 'sex', 'age',
-    'weight', 'jockey', 'trainer'}], 'day_races': {レース番号: CNAME}} を返す（馬番が無ければ枠順確定前）"""
+    'weight', 'jockey', 'trainer'}], 'excluded': [{'name', 'url', 'horse_id', 'status'（非当選／非抽選）}],
+    'day_races': {レース番号: CNAME}} を返す（馬番が無ければ枠順確定前）"""
     soup = _soup(html_or_soup)
     header = soup.select_one('div.race_header')
     if header is None:
@@ -1198,9 +1199,21 @@ def parse_denma_page(html_or_soup):
                        'jockey': _text(tr.select_one('td.jockey p.jockey')),
                        'trainer': _text(trainer)})
     race['runners_count'] = len(horses)
+    # 非当選・非抽選馬情報（出馬投票で出走できる馬とならなかった馬）
+    excluded = []
+    for unit in soup.select('.exclusion_unit'):
+        title = _text(unit.select_one('.title'))
+        status = '非当選' if '非当選' in title else ('非抽選' if '非抽選' in title else '')
+        if not status:
+            continue
+        for a in unit.select('.list a'):
+            name = _text(a)
+            if name:
+                excluded.append({'name': name, 'url': a.get('href', ''), 'horse_id': horse_id_from_url(a.get('href', '')),
+                                 'status': status})
     day_key = f"{next((c for c, v in VENUES.items() if v == race['venue']), '')}{race['date'].year}" \
               f"{int(race['kai'] or 0):02d}{int(race['nichi'] or 0):02d}{race['date'].strftime('%Y%m%d')}"
-    return {'race': race, 'horses': horses, 'day_key': day_key,
+    return {'race': race, 'horses': horses, 'excluded': excluded, 'day_key': day_key,
             'day_races': denma_cnames(str(soup)).get(day_key, {})}
 
 
