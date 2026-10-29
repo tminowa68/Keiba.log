@@ -1686,7 +1686,9 @@ RUNNER_SHEET_COLUMNS = ["レースID", "年月日", "場", "R", "レース名", 
 RUNNER_COL = {name: i for i, name in enumerate(RUNNER_SHEET_COLUMNS)}
 # 成績シートの「登録」：想定・特別（特別レース登録馬）・確定。レース結果の行は確定（空欄も確定として読む）。
 # 想定・特別・確定（枠順確定前）の記録の行は、レースIDの代わりに「E年月日場R」（例：E20261025京都11）を入れる
-ENTRY_RANK = {'想定': 1, '特別': 2, '確定': 3}
+ENTRY_RANK = {'想定': 1, '特別': 2, '確定': 3, '非当選': 3, '非抽選': 3}
+# 出馬投票で出走できる馬とならなかった馬（出馬表の「非当選・非抽選馬情報」）。レース結果を取り込んでも記録を残す
+ENTRY_EXCLUDED = ('非当選', '非抽選')
 
 def entry_key(race_date, venue, num):
     return f"E{race_date.strftime('%Y%m%d')}{venue}{int(num):02d}"
@@ -1935,8 +1937,12 @@ def save_race_results(parsed_list, overwrite=False):
             # 成績シート：レースIDが一致する行と、年月日・場・Rが同じ結果の行（重複して残った行も）を消す
             rows = read_runner_keys()
             ids = [''] + [str(r[0]).strip() for r in rows]
+            # 想定・特別登録などの記録のうち、非当選・非抽選の馬の行は残す
+            status = with_sheets_retry(ws_runner.col_values, RUNNER_COL['登録'] + 1) if entry_ids else []
             def runner_remove(v, idx):
                 r = rows[idx - 2]
+                if v in entry_ids and idx - 1 < len(status) and str(status[idx - 1]).strip() in ENTRY_EXCLUDED:
+                    return False
                 return v in remove_ids or (bool(v) and not is_entry_row_id(v) and not is_overseas_id(v)
                                            and race_key(r[r_date], r[r_venue], r[r_num]) in replace_keys)
             _delete_row_blocks(ws_runner, _row_blocks(ids, runner_remove))
@@ -1973,8 +1979,9 @@ def entry_sheet_row(race, horse, status):
 def save_entries(entries):
     """想定・特別登録・確定（枠順確定前）を年_レース結果の成績シートに記録する。
     entries：[{'race': {date, venue, num, name, grade, jump, category, class, marks, distance, surface},
-               'horses': [{'name', 'horse_id', 'weight'}], 'status': '想定'／'特別'／'確定'}]。
-    記録済みの馬は、登録の段階が進む場合だけ書き換える（確定を特別に戻さない）。結果を取り込み済みのレースは飛ばす。
+               'horses': [{'name', 'horse_id', 'weight'}], 'status': '想定'／'特別'／'確定'／'非当選'／'非抽選'}]。
+    記録済みの馬は、登録の段階が進む場合と非当選・非抽選の場合だけ書き換える（確定を特別に戻さない）。
+    結果を取り込み済みのレースは飛ばす。
     レースごとの [{'label', 'added', 'updated', 'message'}] を返す"""
     out = []
     by_year = {}
@@ -2021,7 +2028,9 @@ def save_entries(entries):
                             if h.get(key) not in (None, ''):
                                 updates.append({'range': f"{col_letter(RUNNER_COL[col])}{row_no}",
                                                 'values': [[str(h[key])]]})
-                    if ENTRY_RANK.get(status, 0) > ENTRY_RANK.get(old, 0) and row_no:
+                    # 登録の段階が進む場合と、非当選・非抽選が分かった場合（出馬表の記録が正しい）だけ書き換える
+                    if row_no and old != status and (ENTRY_RANK.get(status, 0) > ENTRY_RANK.get(old, 0)
+                                                     or status in ENTRY_EXCLUDED):
                         updates.append({'range': f"{col_letter(entry_c)}{row_no}", 'values': [[status]]})
                         have[h['name']] = (row_no, status)
                         updated += 1
@@ -2034,7 +2043,17 @@ def save_entries(entries):
             with_sheets_retry(ws_runner.batch_update, updates)
         if new_rows:
             with_sheets_retry(ws_runner.append_rows, new_rows, value_input_option='RAW')
-    return out
+    # 同じレースの記録（出走馬と非当選・非抽選の馬など）は1つにまとめる
+    merged = {}
+    for o in out:
+        if o['label'] in merged:
+            m = merged[o['label']]
+            m['added'] += o['added']
+            m['updated'] += o['updated']
+            m['message'] = m['message'] or o['message']
+        else:
+            merged[o['label']] = dict(o)
+    return list(merged.values())
 
 def special_race_info(r):
     """特別レース登録馬の一覧から読み取ったレース（日付は文字列でも可）を、記録用のレースの情報にする"""
@@ -2205,6 +2224,11 @@ def denma_entries(pages):
         race = dict(p['race'])
         race['marks'] = race.get('rule', '')
         entries.append({'race': race, 'horses': p['horses'], 'status': '確定'})
+        # 非当選・非抽選の馬も、その登録として記録する
+        for status in ENTRY_EXCLUDED:
+            excluded = [h for h in p.get('excluded') or [] if h['status'] == status]
+            if excluded:
+                entries.append({'race': race, 'horses': excluded, 'status': status})
     return entries
 
 def denma_unregistered(pages):
@@ -8504,8 +8528,11 @@ def age_allowed(category, age):
 
 # race_detailのタブ：成績シートの「登録」（想定・特別・確定）と、確定のうち馬番の有無（枠順確定前／確定出馬表）
 ENTRY_STAGES = [('estimated', '想定'), ('special', '特別登録'), ('before_draw', '枠順確定前')]
-ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw'}
+ENTRY_STATUS_STAGE = {'想定': 'estimated', '特別': 'special', '確定': 'before_draw',
+                      '非当選': 'excluded', '非抽選': 'excluded'}
 ENTRY_STATUS_LABEL = {'特別': '特別登録', '確定': '枠順確定前'}
+# 段階の順（非当選・非抽選の馬は、想定・特別登録のタブまで表示する）
+ENTRY_STAGE_RANK = {'estimated': 0, 'special': 1, 'excluded': 1, 'before_draw': 2}
 STAGE_STATUS = {'estimated': '想定', 'special': '特別', 'before_draw': '確定', 'final': '確定'}
 
 def entry_status_label(status):
@@ -8571,8 +8598,9 @@ def next_race_entries(horse_name, horse_id=''):
             continue
         mine = [x for x in (runner_row_to_result(r) for r in query_runner_rows(book, [horse_id], [horse_name])) if x]
         for e in mine:
-            if e['is_result'] or (horse_id and e['horse_id'] and e['horse_id'] != horse_id):
-                continue
+            if e['is_result'] or (horse_id and e['horse_id'] and e['horse_id'] != horse_id) \
+                    or e['entry'] in ENTRY_EXCLUDED:
+                continue   # 非当選・非抽選のレースは次走予定にしない
             day = e['date'].strftime('%Y%m%d')
             same = [x for x in (runner_row_to_result(r) for r in query_sheet_rows(
                         book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, [f"{col_letter(1)} = {_gviz_quote(day)}"],
@@ -8790,16 +8818,19 @@ def race_detail():
                                      horse_num=e['horse_num'], horse_id=e['horse_id'],
                                      **({} if e['horse_name'] in horses or not e['horse_id'][:4].isdigit()
                                         else {'age': race_date.year - int(e['horse_id'][:4])}))
-                                for e in entries if order.index(e['stage']) >= i],
+                                for e in entries if ENTRY_STAGE_RANK[e['stage']] >= i],
                      # 次の段階に進める候補（この段階の馬）
                      'candidates': [e['horse_name'] for e in entries if e['stage'] == key]})
     # 出走可能頭数（特別登録のページから記録した、想定・特別登録などの記録の行の頭数の列）
     capacity = next((int(e['runners']) for e in entries if str(e.get('runners') or '').isdigit()), None)
     for t in tabs:
         t['capacity'] = capacity
+        # 非当選・非抽選の馬（枠順確定前・確定出馬表のタブでは表の下に一覧で表示する）
+        t['excluded'] = {s: [e['horse_name'] for e in entries if e['entry'] == s] for s in ENTRY_EXCLUDED}
     finals = [r for r in runners if r['stage'] == 'final']
     if race or runners:
-        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals})
+        tabs.append({'key': 'final', 'label': '確定出馬表', 'runners': finals,
+                     'excluded': {s: [e['horse_name'] for e in entries if e['entry'] == s] for s in ENTRY_EXCLUDED}})
     # 最初に開くタブ：記録のある一番後の段階
     default_tab = next((t['key'] for t in reversed(tabs) if t.get('horses') or t.get('runners')),
                        tabs[0]['key'] if tabs else '')
@@ -8842,7 +8873,7 @@ def race_detail():
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
                            program_race=program_race, result_race=result_race, tabs=tabs, default_tab=default_tab,
-                           heading=heading, **nav)
+                           heading=heading, registered_names=set(horses), **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required

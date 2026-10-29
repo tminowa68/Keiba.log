@@ -2583,3 +2583,13 @@ td.col-last-race {
 .overseas-edit { margin-top: 20px; padding: 12px; border: 1px solid #ddd; border-radius: 6px; }
 .overseas-form label { display: inline-block; margin: 4px 12px 4px 0; }
 .overseas-form input { padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+/* 出馬表の非当選・非抽選の馬 */
+.excluded-mark {
+    display: inline-block;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #757575;
+    color: #fff;
+    font-size: 0.8em;
+}
+.excluded-line { margin: 8px 0 0; font-size: 0.9em; line-height: 1.6; }
