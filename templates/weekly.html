@@ -223,7 +223,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 <section>
     <div class="section-title">
         <h3 class="m-0">変更（{{ changes|length }}件）</h3>
-        {% if changes %}{{ sort_controls('tbl_changes', '日付', other_sorts, 'prize', ['転厩', '去勢', '馬主変更']) }}{% endif %}
+        {% if changes %}{{ sort_controls('tbl_changes', '日付', other_sorts, 'prize', ['転厩', '去勢', '馬主変更', '騎手変更']) }}{% endif %}
     </div>
     {% if changes %}
     <div class="weekly-table-scroll">
