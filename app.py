@@ -2004,9 +2004,7 @@ def save_race_results(parsed_list, overwrite=False):
     return saved, skipped
 
 def record_jockey_changes(changes):
-    """騎手変更をChangesシートに記録する（Horsesシートの馬だけ。年月日はレースの日）。changes：[(日付, 馬名, 旧, 新)]"""
-    names = {display_name_of_row(r) for r in horse_sheet_values("Horses")[1:]}
-    changes = [c for c in changes if c[1] in names]
+    """騎手変更をChangesシートに記録する（出走馬すべて。年月日はレースの日）。changes：[(日付, 馬名, 旧, 新)]"""
     if not changes:
         return
     migrate_changes_sheet()
