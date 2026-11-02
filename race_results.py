@@ -925,6 +925,51 @@ def nar_name_has_class(name, race_class):
     return bool(_nfkc(race_class)) and _nfkc(race_class) in _nfkc(name)
 
 
+# 地方のレース名の末尾のクラス・組（各競馬場の「一般」のクラス・組の表記）。全角を半角にしたレース名で探す
+#   クラス：オープン、OP、A1〜C4（「C3(上)」も）、A・B・C（組が付く場合だけ）、3歳・3歳以上（「3歳2」も）
+#   組：一 二 三、十二 十三、-1、1組、一組（「C3-3C4-1」「A4-2~B3」のように複数のことがある）
+_NAR_GROUP = r'(?:\s*(?:[一二三四五六七八九十]+組?|-\s*\d+組?|\d+組))'
+_NAR_CLASS_TOKEN = (r'(?:オープン|OP|[A-C]\d(?:\((?:上|下)\))?' + _NAR_GROUP + r'*'
+                    r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+|\d歳(?:以上)?\d?)')
+_NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'\s*~?\s*)+$')
+_NAR_CLASS_TOKEN_RE = re.compile(_NAR_CLASS_TOKEN)
+
+
+def split_nar_race_name(name):
+    """地方のレース名を、名前と末尾のクラス・組に分ける：(名前, [クラス・組])。クラス・組は半角にし空白を除く。
+    「北海道きたやさい賞Ｃ３－３Ｃ４－１」→ ('北海道きたやさい賞', ['C3-3', 'C4-1'])、
+    レース名がクラス・組だけ（「Ｃ１二 三」「３歳以上　Ｃ４－５」）なら名前は空"""
+    import unicodedata
+    name = str(name or '').strip()
+    # 1文字ずつ半角にして、元のレース名と位置をそろえる
+    norm = ''.join(c if len(unicodedata.normalize('NFKC', c)) != 1 else unicodedata.normalize('NFKC', c) for c in name)
+    m = _NAR_CLASS_SUFFIX_RE.search(norm)
+    if not m or m.start() == len(norm):
+        return name, []
+    tokens = []
+    for t in _NAR_CLASS_TOKEN_RE.finditer(m.group(0)):
+        t = re.sub(r'\s+', '', t.group(0))
+        if tokens and re.fullmatch(r'\d歳(?:以上)?', tokens[-1]):
+            tokens[-1] += t   # 「3歳」「3歳以上」の後のクラスは続けて1つにする（「3歳オープン」「3歳以上C4-5」）
+        elif t:
+            tokens.append(t)
+    return name[:m.start()].strip(), tokens
+
+
+def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
+    """地方のレースの表示用のレース名と格：
+    レース名の末尾にクラス・組があれば、レース名は名前だけにして、クラス・組を格にする（複数なら「・」でつなぐ）。
+    レース名がクラス・組だけなら、レース名はそのまま（先頭の「3歳以上」などは除く）で格は無し。
+    レース名にクラス・組が無ければ、格組（class_mark）を格にする（レース名に格組が含まれる場合は無し）。
+    重賞はグレード（grade_label）を格にする"""
+    base, tokens = split_nar_race_name(name)
+    if not base:
+        return re.sub(r'^[0-9０-９]歳(?:以上)?[\s　]+', '', str(name or '').strip()), grade_label
+    if tokens:
+        return base, grade_label or '・'.join(tokens)
+    return base, grade_label or ('' if nar_name_has_class(name, race_class) else class_mark)
+
+
 def apply_nar_class(race, race_class):
     """地方のレースのクラスに格組を入れ、レース名の末尾に格組が付いていれば除く
     （「頬白（ほおじろ）賞３歳２」→「頬白（ほおじろ）賞」。レース名が格組だけなら、そのまま残す）"""
