@@ -1874,8 +1874,8 @@ def _delete_row_blocks(ws, blocks):
         with_sheets_retry(ws.delete_rows, start, end)
 
 def _jockey_key(name):
-    """騎手の比較用：減量の記号・空白を除く"""
-    return re.sub(r'[\s　☆△▲◇★]', '', str(name or ''))
+    """騎手の比較用：減量の記号・空白を除き、異体字をそろえる"""
+    return normalize_person_name(re.sub(r'[☆△▲◇★]', '', str(name or '')))
 
 def save_race_results(parsed_list, overwrite=False):
     """読み取ったレース結果を年ごとのファイルに書き込む。取り込み済みのレースは飛ばす（overwrite=True なら入れ替える）。
@@ -3009,10 +3009,28 @@ app.jinja_env.filters['race_inline'] = race_inline_html
 app.jinja_env.filters['history_race_title'] = history_race_title
 
 # --- レースの間の転厩（成績の調教師が変わっている場合） ---
-def _trainer_key(name):
-    """調教師名の比較用（空白と拠点「美浦・」を除く）"""
-    name = str(name or '').split('・', 1)[-1]
+# 人名の異体字（JRAと地方競馬情報サイトなどで表記が違う字）を、比較用に1つの字にそろえる
+# 例：斉藤 崇史（JRA）と齋藤 崇史（地方）、渡辺・渡邊・渡邉、実・實
+_NAME_VARIANTS = {
+    '斉': '齋斎齊', '辺': '邊邉', '実': '實', '沢': '澤', '浜': '濱濵', '高': '髙', '崎': '﨑嵜碕', '島': '嶋嶌',
+    '徳': '德', '国': '國', '広': '廣', '桜': '櫻', '真': '眞', '恵': '惠', '栄': '榮', '竜': '龍', '富': '冨',
+    '昇': '曻', '戸': '戶', '槙': '槇', '浅': '淺', '増': '增', '黒': '黑', '関': '關', '鉄': '鐵', '条': '條',
+    '寿': '壽', '桧': '檜', '亀': '龜', '蔵': '藏', '芦': '蘆', '万': '萬', '与': '與', '竹': '竹', '巌': '巖',
+    '晃': '晄', '吉': '𠮷', '祐': '祐', '隆': '隆', '神': '神', '福': '福', '礼': '禮', '弥': '彌', '県': '縣',
+    '滝': '瀧', '塩': '鹽', '沼': '沼', '凛': '凜', '舘': '館', '峰': '峯', '嵐': '嵐', '桑': '桒', '柳': '栁',
+}
+_NAME_VARIANT_TABLE = str.maketrans({v: k for k, vs in _NAME_VARIANTS.items() for v in vs if v != k})
+
+def normalize_person_name(name):
+    """人名の比較用：全角・半角をそろえ（NFKC）、異体字を1つの字にそろえ、空白を除く"""
+    import unicodedata
+    name = unicodedata.normalize('NFKC', str(name or '')).translate(_NAME_VARIANT_TABLE)
     return re.sub(r'[\s　]', '', name)
+
+def _trainer_key(name):
+    """調教師名の比較用（空白と拠点「美浦・」を除き、異体字をそろえる）"""
+    name = str(name or '').split('・', 1)[-1]
+    return normalize_person_name(name)
 
 def trainer_label(name, stables):
     """転厩の記録・表示用の「拠点・調教師名」。美浦・栗東シートに無い調教師は拠点を空にして調教師名だけにする"""
