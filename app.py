@@ -2638,7 +2638,7 @@ def race_label(r):
         # 地方のレースは、レース名の末尾のクラス・組（無ければ格組）を格にする
         if r['name']:
             title, rank = RR.nar_title_and_rank(r['name'], nar_grade_label(r.get('grade')), r.get('class'),
-                                                nar_class_mark(r.get('class')))
+                                                nar_class_mark(RR.nar_display_name(r.get('class'))))
             name = title + (f"({rank})" if rank else '')
         else:
             name = nar_class_mark(r.get('class'))
@@ -2735,7 +2735,8 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
             return nar_class_mark(race_class), ''
         # 地方のレースは、レース名の末尾のクラス・組を格にする（レース名にクラスの表記が無ければ格組。重賞はグレード）。
         # 地方のレース名は空白より前を冠として除かない（「Ｃ１二 三」のように組の間に空白がある）
-        title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade), race_class, nar_class_mark(race_class))
+        title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade), race_class,
+                                            nar_class_mark(RR.nar_display_name(race_class)))
         return short_race_name(title, strip_prefix=False), rank
     if name:
         cond = _CONDITION_RACE_RE.match(name)
