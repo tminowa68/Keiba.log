@@ -934,7 +934,8 @@ _NAR_CLASS_TOKEN = (r'(?:オープン|OP|[A-C]\d(?:\((?:上|下)\))?' + _NAR_GRO
                     r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+|\d歳(?:以上)?\d?)')
 # 組の後ろに付くカタカナ1文字（船橋の「Ｃ１四 五 六ウ」の「ウ」、「イ」「ロ」「ハ」など）もクラス・組の一部とする
 # （格には含めない）
-_NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'[ァ-ヶ]?\s*~?\s*)+$')
+# クラス・組の後ろの「特別」（「ストロベリーキャンドル賞Ｃ１ ４歳以上特別」）もクラス・組の部分に含める
+_NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'[ァ-ヶ]?\s*~?\s*)+(?:特別)?$')
 _NAR_CLASS_TOKEN_RE = re.compile(_NAR_CLASS_TOKEN)
 
 
@@ -963,14 +964,25 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
     """地方のレースの表示用のレース名と格：
     レース名の末尾にクラス・組があれば、レース名は名前だけにして、クラス・組を格にする（複数なら「・」でつなぐ）。
     レース名がクラス・組だけなら、レース名はそのまま（先頭の「3歳以上」などは除く）で格は無し。
-    レース名にクラス・組が無ければ、格組（class_mark）を格にする（レース名に格組が含まれる場合は無し）。
+    レース名にクラス・組が無ければ、格組（class_mark。年齢条件を除いたもの）を格にする（レース名に格組が含まれる場合は無し）。
     重賞はグレード（grade_label）を格にする"""
-    base, tokens = split_nar_race_name(name)
+    shown = nar_display_name(name)
+    base, tokens = split_nar_race_name(shown)
     if not base:
-        return re.sub(r'^[0-9０-９]歳(?:以上)?[\s　]+', '', str(name or '').strip()), grade_label
+        return shown, grade_label
     if tokens:
         return base, grade_label or '・'.join(tokens)
     return base, grade_label or ('' if nar_name_has_class(name, race_class) else class_mark)
+
+
+def nar_display_name(name):
+    """地方のレース名・格の表示：（）で囲われた副題・読み（「頬白（ほおじろ）賞」の「（ほおじろ）」）と、
+    「３歳以上」「４歳上」などの年齢条件を除く（「全日本２歳優駿」「３歳１３０万円以下」のような「〇歳」だけの
+    ものは除かない。すべて除くと空になる場合はそのまま）"""
+    text = re.sub(r'[（(][^（）()]*[）)]', '', str(name or ''))
+    text = re.sub(r'(?<![0-9０-９])[0-9０-９]歳(?:以上|上)', '', text)
+    text = re.sub(r'[\s　]+', ' ', text).strip()
+    return text or str(name or '').strip()
 
 
 def apply_nar_class(race, race_class):
