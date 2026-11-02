@@ -2635,10 +2635,13 @@ def race_label(r):
     d = r['date']
     place = f"{r['place']}着" if str(r['place']).isdigit() else r['place']
     if r.get('nar'):
-        # 地方のレースは、レース名にクラスの表記が無ければクラスを付ける
-        rank = nar_grade_label(r.get('grade')) or ('' if RR.nar_name_has_class(r['name'], r.get('class'))
-                                                   else nar_class_mark(r.get('class')))
-        name = (r['name'] or rank) + (f"({rank})" if rank and r['name'] else '')
+        # 地方のレースは、レース名の末尾のクラス・組（無ければ格組）を格にする
+        if r['name']:
+            title, rank = RR.nar_title_and_rank(r['name'], nar_grade_label(r.get('grade')), r.get('class'),
+                                                nar_class_mark(r.get('class')))
+            name = title + (f"({rank})" if rank else '')
+        else:
+            name = nar_class_mark(r.get('class'))
     elif r['name']:
         rank = race_rank(r['name'], r.get('grade'), r.get('class'))
         name = r['name'] + (f"({rank})" if rank else '')
@@ -2728,9 +2731,12 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
     if nar:
         name = re.sub(r'\s*九州産$', '', str(name or '')) or name   # 九州産は「九州」のマークで表す
         name = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
-        # 地方のレースは、レース名にクラスの表記が無い場合だけクラスを付ける（重賞はグレード）
-        rank = nar_grade_label(grade) or ('' if RR.nar_name_has_class(name, race_class) else nar_class_mark(race_class))
-        return (short_race_name(name), rank) if name else (rank, '')
+        if not name:
+            return nar_class_mark(race_class), ''
+        # 地方のレースは、レース名の末尾のクラス・組を格にする（レース名にクラスの表記が無ければ格組。重賞はグレード）。
+        # 地方のレース名は空白より前を冠として除かない（「Ｃ１二 三」のように組の間に空白がある）
+        title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade), race_class, nar_class_mark(race_class))
+        return short_race_name(title, strip_prefix=False), rank
     if name:
         cond = _CONDITION_RACE_RE.match(name)
         if cond and not grade:
@@ -2847,7 +2853,9 @@ def history_race_name_and_rank(r):
         title, rank = '新馬戦', ''   # メイクデビュー〇〇は新馬戦として表示する
     name_html = race_title_html(title, '', result_detail_url(r),
                                 race_mark_list(r.get('rule'), '', r.get('name')))   # 重量のマークは斤量の列に付ける
-    rank_html = str(race_title_html('', rank)).strip() if rank else ''
+    # 地方のレースの格が複数のクラス・組（「C3-3・C4-1」）なら1つずつ改行して並べる
+    ranks = rank.split('・') if r.get('nar') and rank else ([rank] if rank else [])
+    rank_html = '<br>'.join(str(race_title_html('', x)).strip() for x in ranks)
     return name_html, Markup(rank_html)
 
 app.jinja_env.globals['history_race_name_and_rank'] = history_race_name_and_rank
@@ -3220,13 +3228,14 @@ def strip_race_name_prefix(name):
     parts = re.split(r'[\s　]+', str(name or '').strip())
     return parts[-1] if parts else ''
 
-def short_race_name(name):
-    """レース名の表示：冠（空白より前）を取り除き、レース名変換表で変換する（「ステークス」を「Ｓ」にするなど）"""
+def short_race_name(name, strip_prefix=True):
+    """レース名の表示：冠（空白より前）を取り除き、レース名変換表で変換する（「ステークス」を「Ｓ」にするなど）。
+    strip_prefix=False なら冠は除かない（地方のレース）"""
     exact, partial = race_name_rules()
     full = str(name or '').strip()
     if full in exact:
         return exact[full]
-    name = strip_race_name_prefix(full)
+    name = strip_race_name_prefix(full) if strip_prefix else full
     if name in exact:
         return exact[name]
     for long, short in partial:
