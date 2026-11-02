@@ -1084,6 +1084,15 @@ def entry_horse_class(results, race_date, jump, birth_year):
     return '未勝利' if cls in ('新馬', '未出走', '未勝利') else cls
 
 
+def is_transfer_race(r):
+    """地方・外国の所属馬として出走したレースか（JRAに移籍する前のレース）"""
+    if r.get('nar'):
+        return r.get('affiliation') != 'JRA'
+    if r.get('overseas'):
+        return r.get('trained') not in ('', 'JPN')
+    return False
+
+
 def entry_order(horses, rule, race_date, jump=False, venue=''):
     """出走決定順を付ける。horses：[{'key', 'results'（出走成績）, 'birth_year', 'weight', 'area'（美浦・栗東）}]。
     {key: (順位, 条件の番号)} を返す（どの条件にも当てはまらない馬は含めない）。同じ順位は同じ番号"""
@@ -1102,8 +1111,9 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
             'prev_weeks': week - race_week_index(prev['date']) if prev else None,
             'prev_place': int(prev['place']) if prev and str(prev.get('place', '')).isdigit() else None,
             'unraced': not past,
-            # JRAに移籍後初戦：地方（または外国）で出走経験があり、最後の出走が地方のレース
-            'transfer': bool(past) and bool(past[0].get('nar')),
+            # JRAに移籍後初戦：最後の出走が地方（または外国）の所属馬としてのレース
+            # （JRA所属のまま出走した地方の交流競走・日本の調教馬として出走した海外のレースは除く）
+            'transfer': bool(past) and is_transfer_race(past[0]),
             # 出走間隔（節）。初出走馬は最も長い
             'interval': week - race_week_index(past[0]['date']) if past else 10 ** 6,
             'weight': float(h['weight']) if re.fullmatch(r'\d+(\.\d+)?', str(h.get('weight') or '')) else None,
