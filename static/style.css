@@ -142,7 +142,6 @@ input, select {
     display: flex;
     justify-content: center;
     align-items: center;
-    width: 80px;
     height: 80px;
     background: white;
     border-radius: 8px;
