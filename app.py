@@ -2856,6 +2856,15 @@ def history_race_name_and_rank(r):
                                 race_mark_list(r.get('rule'), '', r.get('name')))   # 重量のマークは斤量の列に付ける
     # 地方のレースの格が複数のクラス・組（「C3-3・C4-1」）なら1つずつ改行して並べる
     ranks = rank.split('・') if r.get('nar') and rank else ([rank] if rank else [])
+    # JRA所属馬として出走した地方の交流競走（重賞以外）は、交流競走クラスのシートの中央のクラスも並べる
+    if r.get('nar') and r.get('affiliation') == 'JRA' and not r.get('grade'):
+        try:
+            jra_class = nar_koryu_jra_class(r.get('venue', ''), r.get('class', ''), r.get('name', ''))
+        except Exception:
+            jra_class = ''
+        jra_class = re.sub(r'^(\d勝)クラス$', r'\1ク', jra_class)
+        if jra_class and jra_class not in ranks:
+            ranks.append(jra_class)
     rank_html = '<br>'.join(str(race_title_html('', x)).strip() for x in ranks)
     return name_html, Markup(rank_html)
 
@@ -3025,7 +3034,7 @@ _NAME_VARIANTS = {
     '徳': '德', '国': '國', '広': '廣', '桜': '櫻', '真': '眞', '恵': '惠', '栄': '榮', '竜': '龍', '富': '冨',
     '昇': '曻', '戸': '戶', '槙': '槇', '浅': '淺', '増': '增', '黒': '黑', '関': '關', '鉄': '鐵', '条': '條',
     '寿': '壽', '桧': '檜', '亀': '龜', '蔵': '藏', '芦': '蘆', '万': '萬', '与': '與', '竹': '竹', '巌': '巖',
-    '晃': '晄', '吉': '𠮷', '祐': '祐', '隆': '隆', '神': '神', '福': '福', '礼': '禮', '弥': '彌', '県': '縣',
+    '晃': '晄', '萱': '萓', '吉': '𠮷', '祐': '祐', '隆': '隆', '神': '神', '福': '福', '礼': '禮', '弥': '彌', '県': '縣',
     '滝': '瀧', '塩': '鹽', '沼': '沼', '凛': '凜', '舘': '館', '峰': '峯', '嵐': '嵐', '桑': '桒', '柳': '栁',
 }
 _NAME_VARIANT_TABLE = str.maketrans({v: k for k, vs in _NAME_VARIANTS.items() for v in vs if v != k})
