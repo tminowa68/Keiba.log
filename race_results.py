@@ -930,8 +930,9 @@ def nar_name_has_class(name, race_class):
 #   組：一 二 三、十二 十三、-1、1組、一組（「C3-3C4-1」「A4-2~B3」のように複数のことがある）。
 #   組の後ろにカタカナ1文字が付くことがある（船橋の「Ｃ１四 五 六ウ」、「イ」「ロ」「ハ」など）
 _NAR_GROUP = r'(?:\s*(?:[一二三四五六七八九十]+組?|-\s*\d+組?|\d+組))'
-_NAR_CLASS_TOKEN = (r'(?:オープン|OP|[A-C]\d(?:\((?:上|下)\))?' + _NAR_GROUP + r'*'
-                    r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+|\d歳(?:以上)?\d?)')
+# 「Ａ－２以下」のように後ろに「以下」「以上」が付くことがある（格には「A-2下」と短くして表示する）
+_NAR_CLASS_TOKEN = (r'(?:(?:オープン|OP|[A-C]\d(?:\((?:上|下)\))?' + _NAR_GROUP + r'*'
+                    r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+)(?:以下|以上)?|\d歳(?:以上)?\d?)')
 # 組の後ろに付くカタカナ1文字（船橋の「Ｃ１四 五 六ウ」の「ウ」、「イ」「ロ」「ハ」など）もクラス・組の一部とする
 # （格には含めない）
 # クラス・組の後ろの「特別」「選抜馬」（「ストロベリーキャンドル賞Ｃ１ ４歳以上特別」「ミズナラ賞Ａ２Ｂ１選抜馬」）も
@@ -954,6 +955,7 @@ def split_nar_race_name(name):
     tokens = []
     for t in _NAR_CLASS_TOKEN_RE.finditer(m.group(0)):
         t = re.sub(r'\s+', '', t.group(0))
+        t = re.sub(r'以(下|上)$', r'\1', t) if not re.fullmatch(r'\d歳(?:以上)?\d?', t) else t
         if tokens and re.fullmatch(r'\d歳(?:以上)?', tokens[-1]):
             tokens[-1] += t   # 「3歳」「3歳以上」の後のクラスは続けて1つにする（「3歳オープン」「3歳以上C4-5」）
         elif t:
@@ -973,6 +975,8 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
         return shown, grade_label
     if tokens:
         return base, grade_label or '・'.join(tokens)
+    # 格組の「以下」「以上」は「下」「上」と短くする（「A-2以下」→「A-2下」）
+    class_mark = re.sub(r'(?<!歳)以(下|上)$', r'\1', class_mark or '')
     return base, grade_label or ('' if nar_name_has_class(name, race_class) else class_mark)
 
 
@@ -980,7 +984,11 @@ def nar_display_name(name):
     """地方のレース名・格の表示：（）で囲われた副題・読み（「頬白（ほおじろ）賞」の「（ほおじろ）」）と、
     「３歳以上」「４歳上」などの年齢条件を除く（「全日本２歳優駿」「３歳１３０万円以下」のような「〇歳」だけの
     ものは除かない。すべて除くと空になる場合はそのまま）"""
-    text = re.sub(r'[（(][^（）()]*[）)]', '', str(name or ''))
+    # （「Ｃ３（下）」のようなクラスの（上）（下）は残す）
+    text = re.sub(r'[（(](?![上下][）)])[^（）()]*[）)]', '', str(name or ''))
+    # 「ＪＲＡ交流 逆瀬川特別登録馬」→「逆瀬川特別」（先頭の「JRA交流」と末尾の「登録馬」を除く）
+    text = re.sub(r'^[\s　]*(?:ＪＲＡ|JRA)交流[\s　]*', '', text)
+    text = re.sub(r'登録馬[\s　]*$', '', text)
     text = re.sub(r'(?<![0-9０-９])[0-9０-９]歳(?:以上|上)', '', text)
     text = re.sub(r'[\s　]+', ' ', text).strip()
     return text or str(name or '').strip()
