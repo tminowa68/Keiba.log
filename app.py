@@ -1601,11 +1601,18 @@ def api_fetch_jra_horse():
 # --- 地方競馬情報サイト（keiba.go.jp）の競走馬情報ページ ---
 NAR_ALLOWED_HOSTS = ("keiba.go.jp",)
 
+# 全角のアルファベットを半角にする（地方競馬情報サイトの名前は全角のアルファベットのことがある）
+_HALFWIDTH_ALPHA = str.maketrans({chr(c): chr(c - 0xFEE0) for c in list(range(0xFF21, 0xFF3B)) + list(range(0xFF41, 0xFF5B))})
+
+def halfwidth_alpha(text):
+    return (text or '').translate(_HALFWIDTH_ALPHA)
+
 def normalize_nar_company_name(text):
     """馬主名・生産牧場名の表記を揃える：（）→()、株式会社→(株)、有限会社→(有)、
-    ）の後のスペースは除去し、他の全角スペースは半角スペースにする"""
-    text = (text or '').replace('（', '(').replace('）', ')')
+    (の前と)の後のスペースは除去し、他の全角スペースは半角スペースにする。アルファベットは半角にする"""
+    text = halfwidth_alpha(text).replace('（', '(').replace('）', ')')
     text = text.replace('株式会社', '(株)').replace('有限会社', '(有)')
+    text = re.sub(r'[\s\u3000]+\(', '(', text)
     text = re.sub(r'\)[\s\u3000]+', ')', text)
     text = text.replace('\u3000', ' ')
     return re.sub(r' {2,}', ' ', text).strip()
@@ -1620,7 +1627,8 @@ def normalize_nar_owner_name(text):
 def parse_nar_horse_page(soup):
     """地方競馬情報サイトの競走馬情報ページから、父・母・生年月日・馬主名・産地・生産牧場を取り出す"""
     def clean(el):
-        return el.get_text(' ', strip=True).strip() if el else ''
+        # アルファベットは半角にする（父・母などの外国の馬名）
+        return halfwidth_alpha(el.get_text(' ', strip=True).strip()) if el else ''
 
     def raw_text(el):
         # 馬主名の全角スペースはそのまま残す（前後の空白・改行だけ除く）
