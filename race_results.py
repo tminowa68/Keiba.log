@@ -1138,11 +1138,17 @@ def entry_order_rule(race_date, jump, category, race_class, grade='', race_name=
                 interval('2勝クラス'),
                 step('transfer', '地方や外国での出走経験があり、JRAに移籍後初戦の1勝クラス馬', '1勝クラス'),
                 interval('1勝クラス'), step('unraced', '未出走馬'), interval('未勝利')]
+    def by_class(classes):
+        # クラスごとに、JRAに移籍後初戦の馬 → 出走間隔の長い馬（2勝クラスと同じ扱い）
+        out = []
+        for c in classes:
+            out += [step('transfer', f"地方や外国での出走経験があり、JRAに移籍後初戦の{c}馬", c), interval(c)]
+        return out
     if cls == '3勝クラス' and not young and year >= 2022:
-        steps = [form('3勝クラス', 8 if year >= 2025 else 4, 3)] + [interval(c) for c in _CLASS_ORDER[1:]]
+        steps = [form('3勝クラス', 8 if year >= 2025 else 4, 3)] + by_class(_CLASS_ORDER[1:])
         return ([handicap] if weight_rule == 'ハンデ' else []) + steps
     if cls == 'オープン' and not young and not grade and year >= 2023:
-        steps = [form('オープン', 8, 3)] + [interval(c) for c in _CLASS_ORDER]
+        steps = [form('オープン', 8, 3)] + by_class(_CLASS_ORDER)
         return ([handicap] if weight_rule == 'ハンデ' else []) + steps
     return None
 
