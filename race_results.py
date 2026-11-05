@@ -939,7 +939,8 @@ _NAR_CLASS_TOKEN = (r'(?:(?:オープン|OP|[A-C]\d(?:\((?:上|下)\))?' + _NAR_
 # （格には含めない）
 # クラス・組の後ろの「特別」「選抜馬」（「ストロベリーキャンドル賞Ｃ１ ４歳以上特別」「ミズナラ賞Ａ２Ｂ１選抜馬」）も
 # クラス・組の部分に含める
-_NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'[ァ-ヶ]?\s*~?\s*)+(?:特別|選抜馬?)?$')
+# 「新馬」「未勝利」（「ライラックデビュー２歳新馬ア」）も同じ（格には含めない）
+_NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'[ァ-ヶ]?\s*~?\s*)+(?:特別|選抜馬?|新馬|未勝利)?[ァ-ヶ]?$')
 _NAR_CLASS_TOKEN_RE = re.compile(_NAR_CLASS_TOKEN)
 
 
@@ -975,6 +976,9 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
     重賞はグレード（grade_label）を格にする"""
     shown = nar_display_name(name)
     base, tokens = split_nar_race_name(shown)
+    # 格の「オープン」は「OP」と表示する（「3歳オープン」→「3歳OP」）
+    tokens = [t.replace('オープン', 'OP') for t in tokens]
+    class_mark = (class_mark or '').replace('オープン', 'OP')
     if not base:
         return shown, grade_label
     if tokens:
