@@ -3125,7 +3125,7 @@ def pasture_note(pasture_history, start, end):
     return '／'.join(parts)
 
 def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=(),
-                       entry_dates=()):
+                       registration_date=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
@@ -3171,13 +3171,19 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
-    # 地方からJRAに移籍した日（競走馬登録日・再転入の日）に「JRAへ転入」の行を入れる（同じ日の転厩などより下）
-    entries = {d: 'JRAへ転入' for d in entry_dates if d}
+    # JRAへ転入した日（Changesシートの再転入。JRAの競走馬情報の「JRAへ転入」）と競走馬登録日の行を入れる
+    # （同じ日の転厩などより下）。転入の記録が無く、競走馬登録日より前に地方所属で出走している馬は、
+    # 競走馬登録日を転入の日として扱う（転入の日を競走馬登録日として記録した馬）
+    entries = {}
     for c in changes_history:
         if str(c.get('項目', '')).strip() == '再転入':
             d = parse_full_date(str(c.get('年月日', '')))
             if d:
-                entries.setdefault(d, 'JRAへ再転入')
+                entries[d] = 'JRAへ転入'
+    if registration_date and registration_date not in entries:
+        transferred = not entries and any(r.get('nar') and r.get('affiliation') != 'JRA'
+                                          and r['date'] <= registration_date for r in race_results)
+        entries[registration_date] = 'JRAへ転入' if transferred else '競走馬登録'
     for d, text in entries.items():
         items.append(((d, 0, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
@@ -8552,12 +8558,10 @@ def horse_detail(name, active_tab):
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
             section_errors.append('出走履歴')
-    # 地方から転入した馬（競走馬登録日より前に地方のレースに出走している馬）は、登録日に「JRAへ転入」を表示する
+    # 競走馬登録日（地方から転入した馬はJRAへ転入の日も）の行を表示する
     reg_date = parse_full_date(str(horse[H_REGISTRATION] if len(horse) > H_REGISTRATION else ''))
-    entry_dates = [reg_date] if reg_date and any(r.get('nar') and r.get('affiliation') != 'JRA' and r['date'] <= reg_date
-                                                  for r in race_results) else []
     race_history = build_race_history(race_results, changes_history, base_birth_year,
-                                      pasture_history, cancel_dates, entry_dates)
+                                      pasture_history, cancel_dates, reg_date)
 
     return render_template('horse_detail.html', 
                            horse=horse, section_errors=section_errors,
