@@ -1118,6 +1118,11 @@ def entry_order_rule(race_date, jump, category, race_class, grade='', race_name=
     if jump:
         if cls == 'オープン' and not grade and not is_special_race_name(race_name) and year >= 2026:
             return [form('オープン', 8, 3), interval('オープン'), interval('未勝利')]
+        if cls == '未勝利':
+            # 障害の未勝利競走（Ⅴ２(2)チ）
+            return [step('form', '4節以内の前走（障害競走）5着以内の馬', None, within=4, place=5),
+                    step('transfer_unraced', '地方や外国での出走経験があり、JRAに移籍後初戦の馬および未出走馬'),
+                    step('interval', '出走間隔の長い馬')]
         return None
     who = lambda b: {'own': '自ブロック所属馬', 'other': '他ブロック所属馬'}.get(b, '馬')
     if cls == '未勝利':
@@ -1139,17 +1144,23 @@ def entry_order_rule(race_date, jump, category, race_class, grade='', race_name=
                 step('transfer', '地方や外国での出走経験があり、JRAに移籍後初戦の1勝クラス馬', '1勝クラス'),
                 interval('1勝クラス'), step('unraced', '未出走馬'), interval('未勝利')]
     def by_class(classes):
-        # クラスごとに、JRAに移籍後初戦の馬 → 出走間隔の長い馬（2勝クラスと同じ扱い）
+        # 競馬番組一般事項 Ⅴ２(2)ハ・ニ：クラスごとに、JRAに移籍後初戦の馬 → 出走間隔の長い馬。
+        # 1勝クラスまで続け、そのあと未出走馬、未勝利馬のうち出走間隔の長い馬
         out = []
         for c in classes:
-            out += [step('transfer', f"地方や外国での出走経験があり、JRAに移籍後初戦の{c}馬", c), interval(c)]
-        return out
+            out += [step('transfer', f"地方や外国での出走経験があり、JRAに移籍後初戦の{c}馬", c),
+                    step('interval', f"{c}馬のうち、出走間隔の長い馬" + ('（未勝利馬を除く）' if c == '1勝クラス' else ''), c)]
+        return out + [step('unraced', '未出走馬'), step('interval', '未勝利馬のうち、出走間隔の長い馬', '未勝利')]
     if cls == '3勝クラス' and not young and year >= 2022:
-        steps = [form('3勝クラス', 8 if year >= 2025 else 4, 3)] + by_class(_CLASS_ORDER[1:])
+        steps = [form('3勝クラス', 8 if year >= 2025 else 4, 3)] + by_class(['3勝クラス', '2勝クラス', '1勝クラス'])
         return ([handicap] if weight_rule == 'ハンデ' else []) + steps
     if cls == 'オープン' and not young and not grade and year >= 2023:
-        steps = [form('オープン', 8, 3)] + by_class(_CLASS_ORDER)
+        steps = [form('オープン', 8, 3)] + by_class(['オープン', '3勝クラス', '2勝クラス', '1勝クラス'])
         return ([handicap] if weight_rule == 'ハンデ' else []) + steps
+    # 2歳または3歳のオープン競走（Ⅴ２(2)イ）：収得賞金の多い馬。函館・新潟・中京・札幌2歳Sと春季の3歳GIは別の方法
+    if (cls == 'オープン' or grade) and young and not re.search(r'(函館|新潟|中京|札幌)\s*2歳', race_name or '') \
+            and not (grade == 'G1' and (category or '').strip() == '3歳' and race_date.month <= 6):
+        return [step('shutoku', '収得賞金の多い馬')]
     return None
 
 
@@ -1185,8 +1196,10 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
     for h in horses:
         past = sorted([r for r in h.get('results') or [] if r.get('date') and r['date'] < race_date],
                       key=lambda r: r['date'], reverse=True)
-        jra_same = [r for r in past if not r.get('nar') and not r.get('overseas') and bool(r.get('jump')) == bool(jump)]
-        prev = jra_same[0] if jra_same else None
+        # 前走成績の対象：出馬投票の直前に出走した競走が中央競馬の平地競走（障害は障害競走）の場合だけ
+        # （直前が地方競馬指定交流競走・外国の競馬の競走・障害（平地）の馬は対象外）
+        prev = past[0] if past and not past[0].get('nar') and not past[0].get('overseas') \
+            and bool(past[0].get('jump')) == bool(jump) else None
         area = (h.get('area') or '').strip()
         info[h['key']] = {
             'class': entry_horse_class(past, race_date, jump, h.get('birth_year')),
@@ -1194,6 +1207,9 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
             'prev_weeks': week - race_week_index(prev['date']) if prev else None,
             'prev_place': int(prev['place']) if prev and str(prev.get('place', '')).isdigit() else None,
             'unraced': not past,
+            # 収得賞金（2歳・3歳のオープン競走の出走決定順）
+            'shutoku': summarize_results(past, birth_year=h.get('birth_year'), today=race_date)[
+                'jump' if jump else 'flat']['shutoku'] if past else 0,
             # JRAに移籍後初戦：最後の出走が地方（または外国）の所属馬としてのレース
             # （JRA所属のまま出走した地方の交流競走・日本の調教馬として出走した海外のレースは除く）
             'transfer': bool(past) and is_transfer_race(past[0]),
@@ -1221,6 +1237,10 @@ def entry_order(horses, rule, race_date, jump=False, venue=''):
             group = [(k, 0) for k, v in cands.items() if v['transfer']]
         elif step['kind'] == 'unraced':
             group = [(k, 0) for k, v in cands.items() if v['unraced']]
+        elif step['kind'] == 'transfer_unraced':
+            group = [(k, 0) for k, v in cands.items() if v['transfer'] or v['unraced']]
+        elif step['kind'] == 'shutoku':
+            group = [(k, -v['shutoku']) for k, v in cands.items()]
         else:
             group = [(k, -v['interval']) for k, v in cands.items()]
         group.sort(key=lambda x: x[1])
