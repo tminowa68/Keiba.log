@@ -254,6 +254,7 @@ function switchTab(key, remember = true) {
         const key = ctrl.querySelector('.sort-key').value;
         const dir = ctrl.querySelector('.sort-dir').value === 'desc' ? -1 : 1;
         const tbody = table.tBodies[0];
+        tbody.querySelectorAll('tr.capacity-row').forEach(tr => tr.remove());
         const headers = Array.from(tbody.querySelectorAll('tr.order-group-row'));
         headers.forEach(tr => tr.remove());
         let lastGroup = null;
@@ -273,36 +274,42 @@ function switchTab(key, remember = true) {
         });
         markCapacity(table, key === 'order' && dir === 1);
     }
-    // 出走決定順で並べたときに、出走可能頭数を超える順位のところに太線を引き、
-    // 出走可能な範囲の最下位の順位で同じ順位の馬が範囲を超える場合は、その馬をまとめて「抽選」と表示する
+    // 出走決定順で並べたときに、出走可能頭数を超える馬の前に行を入れる：
+    //   出走可能な範囲の最下位の順位で同じ順位の馬が範囲を超える場合は、その最初の馬の前に
+    //   「以下、抽選対象見込み（出走可能数／抽選対象数）」、それより後の順位の馬の前に「以下、除外見込み」
     function markCapacity(table, active) {
         if (!table.querySelector('th.order-col')) return;
-        const rows = Array.from(table.tBodies[0].rows).filter(r => !r.classList.contains('order-group-row'));
-        // 前回の表示を戻す（順位のセルをまとめていたら各行に戻す）
-        rows.forEach(r => {
-            r.classList.remove('capacity-line');
-            if (!r._orderCell) r._orderCell = r.querySelector('td.order-cell');
-            const cell = r._orderCell;
-            cell.rowSpan = 1;
-            cell.classList.remove('lottery');
-            cell.textContent = r.dataset.order || '';
-            if (cell.parentNode !== r) r.insertBefore(cell, r.firstChild);
-        });
+        const tbody = table.tBodies[0];
+        tbody.querySelectorAll('tr.capacity-row').forEach(tr => tr.remove());
+        const rows = Array.from(tbody.rows).filter(r => !r.classList.contains('order-group-row'));
         const cap = Number(table.dataset.capacity || 0);
         if (!active || !cap) return;
+        const cols = table.tHead.rows[0].cells.length;
+        function insertBefore(row, cls, text) {
+            const tr = document.createElement('tr');
+            tr.className = 'capacity-row ' + cls;
+            const td = document.createElement('td');
+            td.colSpan = cols;
+            td.textContent = text;
+            tr.appendChild(td);
+            // 決定条件の行がすぐ前にあれば、その前に入れる（条件の行と馬の行の間に入れない）
+            const prev = row.previousElementSibling;
+            tbody.insertBefore(tr, prev && prev.classList.contains('order-group-row') ? prev : row);
+        }
         const pos = r => (r.dataset.order ? Number(r.dataset.order) : null);
         const inRange = rows.filter(r => pos(r) !== null && pos(r) <= cap);
-        if (inRange.length && inRange.length < rows.length) inRange[inRange.length - 1].classList.add('capacity-line');
-        const last = inRange.length ? pos(inRange[inRange.length - 1]) : null;
+        if (!inRange.length) return;
+        const last = pos(inRange[inRange.length - 1]);
         const tied = rows.filter(r => pos(r) === last);
-        if (last === null || last + tied.length - 1 <= cap || tied.length < 2) return;
-        // 同じ順位の馬の順位のセルを1つにまとめ、左側に「抽選」と縦に表示する
-        const first = tied[0]._orderCell;
-        first.rowSpan = tied.length;
-        first.classList.add('lottery');
-        first.innerHTML = '<span class="lottery-mark">抽<br>選</span><span class="lottery-num"></span>';
-        first.querySelector('.lottery-num').textContent = String(last);
-        tied.slice(1).forEach(r => r._orderCell.remove());
+        let excludedFrom = rows.indexOf(inRange[inRange.length - 1]) + 1;
+        // 出走可能な順位までの馬が出走可能頭数を超えるなら、最下位の順位の馬は抽選
+        if (tied.length >= 2 && inRange.length > cap) {
+            // 出走可能な残りの頭数（最下位の順位より前の馬で埋まった分を除く）
+            const slots = cap - rows.filter(r => pos(r) !== null && pos(r) < last).length;
+            insertBefore(tied[0], 'lottery-row', `以下、抽選対象見込み（${slots}／${tied.length}）`);
+            excludedFrom = rows.indexOf(tied[tied.length - 1]) + 1;
+        }
+        if (excludedFrom < rows.length) insertBefore(rows[excludedFrom], 'excluded-row', '以下、除外見込み');
     }
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
         ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;

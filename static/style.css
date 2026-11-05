@@ -2523,28 +2523,14 @@ td.col-last-race {
     font-size: 0.9em;
     text-align: left;
 }
-/* 出走決定順：出走可能頭数を超える順位の境目の太線と、出走可能な範囲の最下位の「抽選」 */
-.race-result-table tr.capacity-line td { border-bottom: 3px solid #333; }
-.race-result-table td.order-cell.lottery {
-    position: relative;
-    vertical-align: middle;
-    padding-left: 1.8em;
-}
-.race-result-table td.order-cell.lottery .lottery-mark {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 1.5em;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #fff3e0;
-    color: #e65100;
+/* 出走決定順：出走可能頭数を超える馬の前の「以下、抽選対象見込み」「以下、除外見込み」の行 */
+.race-result-table tr.capacity-row td {
     font-weight: bold;
-    font-size: 0.85em;
-    line-height: 1.2;
+    font-size: 0.9em;
+    text-align: left;
 }
+.race-result-table tr.lottery-row td { background: #fff3e0; color: #e65100; }
+.race-result-table tr.excluded-row td { background: #eeeeee; color: #c62828; }
 /* 出馬表・出走履歴の見出し（頭数・馬番・人気・着順）を縦書きにする */
 .race-result-table th.th-vertical { line-height: 1.15; padding-left: 4px; padding-right: 4px; }
 /* 週間レポート：放牧入厩・変更の区分の絞り込みボタン */
