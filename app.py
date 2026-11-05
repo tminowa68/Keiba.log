@@ -3124,7 +3124,8 @@ def pasture_note(pasture_history, start, end):
         parts.append('→'.join(texts))
     return '／'.join(parts)
 
-def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=()):
+def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=(),
+                       entry_dates=()):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
@@ -3170,6 +3171,15 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
+    # 地方からJRAに移籍した日（競走馬登録日・再転入の日）に「JRAへ転入」の行を入れる（同じ日の転厩などより下）
+    entries = {d: 'JRAへ転入' for d in entry_dates if d}
+    for c in changes_history:
+        if str(c.get('項目', '')).strip() == '再転入':
+            d = parse_full_date(str(c.get('年月日', '')))
+            if d:
+                entries.setdefault(d, 'JRAへ再転入')
+    for d, text in entries.items():
+        items.append(((d, 0, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -3181,8 +3191,8 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     i = 0
     while i < len(history):
         j = i
-        while j < len(history) and history[j]['kind'] in ('change', 'cancel') \
-                and history[i]['kind'] in ('change', 'cancel') and history[j]['date'] == history[i]['date']:
+        while j < len(history) and history[j]['kind'] in ('change', 'cancel', 'entry') \
+                and history[i]['kind'] in ('change', 'cancel', 'entry') and history[j]['date'] == history[i]['date']:
             j += 1
         if j - i > 1:
             label = next((x['date_label'] for x in history[i:j] if x['date_label']), '')
@@ -3503,6 +3513,14 @@ def update_horse_class_columns(match=None, offset=0, limit=None):
             sex, area, stable = latest_horse_state(res, change_rows.get(h['name'], []), stables)
             cur = lambda c: str(r[c]).strip() if len(r) > c else ''
             row_no = h['key'] + 2
+            # 最新のレースが地方所属として出走した地方のレースでも、その後JRAに転入した馬（競走馬登録日がそのレース以降、
+            # または今の拠点が美浦・栗東で抹消されていない馬）は、地方の厩舎にしない
+            last = max(res, key=lambda x: x['date']) if res else None
+            reg = reg_dates.get(h['name']) if 'reg_dates' in locals() else None
+            if stable and last and last.get('nar') and last.get('affiliation') != 'JRA' \
+                    and _trainer_key(stable) == _trainer_key(last.get('trainer')) and (
+                    (reg and reg >= last['date']) or (cur(H_AREA) in JRA_AREAS and cur(H_STATUS) != '抹消')):
+                stable = ''
             if sex and sex != cur(H_GENDER) and cur(H_GENDER) != 'せん':
                 updates.append({'range': f"{col_letter(H_GENDER)}{row_no}", 'values': [[sex]]})
             if stable and (area, stable) != (cur(H_AREA), cur(H_STABLE)):
@@ -8534,8 +8552,12 @@ def horse_detail(name, active_tab):
         except Exception as e:
             print(f"レース結果の読み込みエラー: {e}")
             section_errors.append('出走履歴')
+    # 地方から転入した馬（競走馬登録日より前に地方のレースに出走している馬）は、登録日に「JRAへ転入」を表示する
+    reg_date = parse_full_date(str(horse[H_REGISTRATION] if len(horse) > H_REGISTRATION else ''))
+    entry_dates = [reg_date] if reg_date and any(r.get('nar') and r.get('affiliation') != 'JRA' and r['date'] <= reg_date
+                                                  for r in race_results) else []
     race_history = build_race_history(race_results, changes_history, base_birth_year,
-                                      pasture_history, cancel_dates)
+                                      pasture_history, cancel_dates, entry_dates)
 
     return render_template('horse_detail.html', 
                            horse=horse, section_errors=section_errors,
