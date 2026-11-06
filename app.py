@@ -3053,11 +3053,23 @@ def normalize_person_name(name):
     name = unicodedata.normalize('NFKC', str(name or '')).translate(_NAME_VARIANT_TABLE)
     return re.sub(r'[\s　]', '', name)
 
+# 地方競馬情報サイトの馬主名は20文字までしか表示されない（「（株）　ノルマンディーサラブレッドレーシ」）。
+# 比較用にそろえた名前でこの文字数以上が一致し、短い方が長い方の先頭と同じなら同じ馬主とみなす
+NAR_OWNER_PREFIX_MIN = 15
+
+def same_owner_name(a, b):
+    """馬主名が同じか：異体字・全角半角・空白の違いを除いて同じか、地方競馬情報サイトで途中までしか表示されない
+    長い名前（短い方が長い方の先頭と同じ）"""
+    a, b = normalize_person_name(a), normalize_person_name(b)
+    if not a or not b:
+        return a == b
+    short, long_ = sorted((a, b), key=len)
+    return a == b or (len(short) >= NAR_OWNER_PREFIX_MIN and long_.startswith(short))
+
 def is_same_owner_change(kind, old, new):
-    """表記の違いだけの馬主変更（「高瀬 真尚」→「髙瀬 真尚」など異体字・全角半角・空白の違い）か。
-    Changesシートの記録は残し、変更履歴・出走履歴・週間レポートには表示しない"""
-    return str(kind or '').strip() == '馬主変更' and bool(str(old or '').strip()) and \
-        normalize_person_name(old) == normalize_person_name(new)
+    """表記の違いだけの馬主変更（「高瀬 真尚」→「髙瀬 真尚」など異体字・全角半角・空白の違いや、地方競馬情報サイトで
+    20文字までしか表示されない名前）か。Changesシートの記録は残し、変更履歴・出走履歴・週間レポートには表示しない"""
+    return str(kind or '').strip() == '馬主変更' and bool(str(old or '').strip()) and same_owner_name(old, new)
 
 def _trainer_key(name):
     """調教師名の比較用（空白と拠点「美浦・」を除き、異体字をそろえる）"""
@@ -4710,7 +4722,8 @@ def nar_horse_races(horse_url, entry_dates=()):
             same = [i for i, c in enumerate(change_rows) if c[C_NAME].strip() == name
                     and c[C_TYPE].strip() == '馬主変更' and key(c[C_OLD]) == key(nar_owner) and key(c[C_NEW]) == key(owner)]
             when_label = 'JRAに転入した日' if entry else '地方抹消の日'
-            if nar_owner and owner and key(nar_owner) != key(owner) and not same:
+            # 表記の違いだけ（異体字・20文字までの表示）の馬主は馬主変更にしない
+            if nar_owner and owner and not same_owner_name(nar_owner, owner) and not same:
                 new_rows.append(changes_row(owner_d8, name, '馬主変更', nar_owner, owner, tentative=True))
                 messages.append(f"{name}：馬主変更（{nar_owner}→{owner}）をChangesシートに記録（日付は{when_label}・仮）")
             for i in same:
