@@ -2576,15 +2576,3 @@ td.col-last-race {
     color: #fff;
     font-size: 0.8em;
 }
-/* 出走履歴：地方からJRAへ転入した日の行 */
-.race-result-table tr.entry-row td {
-    text-align: left;
-    background: #e8f5e9;
-    color: #1b5e20;
-    font-weight: bold;
-}
-.race-result-table tr.entry-row td.year-cell {
-    background: #f7f7f7;
-    color: inherit;
-    text-align: center;
-}
