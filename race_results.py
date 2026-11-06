@@ -997,6 +997,8 @@ def nar_display_name(name):
     # 「ＪＲＡ交流 逆瀬川特別登録馬」→「逆瀬川特別」（先頭の「JRA交流」と末尾の「登録馬」を除く）
     text = re.sub(r'^[\s　]*(?:ＪＲＡ|JRA)交流[\s　]*', '', text)
     text = re.sub(r'登録馬[\s　]*$', '', text)
+    # 末尾の「ＪＲＡ所属馬」（「ナティレイン特別３歳Ｃ１選抜馬ＪＲＡ所属馬」）も除く
+    text = re.sub(r'[\s　]*(?:ＪＲＡ|JRA)所属馬?[\s　]*$', '', text)
     text = re.sub(r'(?<![0-9０-９])[0-9０-９]歳(?:以上|上)', '', text)
     text = re.sub(r'[\s　]+', ' ', text).strip()
     return text or str(name or '').strip()
