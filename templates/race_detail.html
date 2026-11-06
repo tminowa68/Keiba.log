@@ -234,6 +234,19 @@ function switchTab(key, remember = true) {
     }
 }
 
+// 確定出馬表：値が1つも入っていない列（結果の取り込み前の着順・タイムなど）は非表示にする
+document.querySelectorAll('#tbl_final').forEach(table => {
+    const head = table.tHead && table.tHead.rows[0];
+    const rows = Array.from(table.tBodies[0].rows);
+    if (!head || !rows.length) return;
+    for (let i = head.cells.length - 1; i >= 0; i--) {
+        const empty = rows.every(tr => !tr.cells[i] || !tr.cells[i].textContent.trim());
+        if (!empty) continue;
+        head.cells[i].style.display = 'none';
+        rows.forEach(tr => { if (tr.cells[i]) tr.cells[i].style.display = 'none'; });
+    }
+});
+
 // 出馬表の並び替え（値が無い行は最後。同じ値なら馬名順）
 (function() {
     const numeric = { num: true, age: true, weight: true, prevplace: true, shutoku: true, place: true, order: true };
