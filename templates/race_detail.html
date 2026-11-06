@@ -101,7 +101,7 @@
         </div>
         {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
         {# 前走レース（日付｜開催｜レース名｜着順）・間隔・収得賞金 #}
-        {% macro prev_ths() %}<th class="bl">前走日付</th><th>開催</th><th>前走レース</th><th class="th-vertical">着<br>順</th><th class="bl">間隔</th><th class="bl">収得賞金<br>（万円）</th>{% endmacro %}
+        {% macro prev_ths(rs='') %}{% set a = (' rowspan="' ~ rs ~ '"') if rs else '' %}<th class="bl"{{ a|safe }}>前走日付</th><th{{ a|safe }}>開催</th><th{{ a|safe }}>前走レース</th><th class="th-vertical"{{ a|safe }}>着<br>順</th><th class="bl"{{ a|safe }}>間隔</th><th class="bl"{{ a|safe }}>収得賞金<br>（万円）</th>{% endmacro %}
         {% macro prev_cells(h) %}{% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
                     <td class="num nowrap bl">{{ h.prev_when }}</td>
                     <td class="nowrap">{{ h.prev_venue }}</td>
@@ -117,24 +117,26 @@
         {% if t.key == 'final' %}
         <table class="race-list-table race-result-table" id="tbl_{{ t.key }}">
             <thead>
+                {# 騎手は「減」（減量の記号）と「騎手名」の2段。特別戦は減量が無いため騎手名だけ #}
                 <tr>
-                    <th class="th-vertical">着<br>順</th>
-                    <th>枠</th>
-                    <th class="th-vertical">馬<br>番</th>
-                    <th>馬名</th>
-                    <th>性齢</th>
-                    <th>斤量</th>
-                    <th>騎手</th>
-                    <th class="bl">タイム</th>
-                    <th>着差</th>
-                    <th>通過</th>
-                    <th>上り</th>
-                    <th class="th-vertical">人<br>気</th>
-                    <th class="bl">馬体重</th>
-                    <th>増減</th>
-                    <th>調教師</th>
-                    {{ prev_ths() }}
+                    <th class="th-vertical" rowspan="2">着<br>順</th>
+                    <th rowspan="2">枠</th>
+                    <th class="th-vertical" rowspan="2">馬<br>番</th>
+                    <th rowspan="2">馬名</th>
+                    <th rowspan="2">性齢</th>
+                    <th rowspan="2">斤量</th>
+                    {% if no_allowance %}<th rowspan="2">騎手名</th>{% else %}<th colspan="2">騎手</th>{% endif %}
+                    <th class="bl" rowspan="2">タイム</th>
+                    <th rowspan="2">着差</th>
+                    <th rowspan="2">通過</th>
+                    <th rowspan="2">上り</th>
+                    <th class="th-vertical" rowspan="2">人<br>気</th>
+                    <th class="bl" rowspan="2">馬体重</th>
+                    <th rowspan="2">増減</th>
+                    <th rowspan="2">調教師</th>
+                    {{ prev_ths(2) }}
                 </tr>
+                <tr>{% if not no_allowance %}<th>減</th><th>騎手名</th>{% endif %}</tr>
             </thead>
             <tbody>
                 {% for r in t.runners %}
@@ -145,7 +147,9 @@
                     <td class="nowrap">{{ chiho_mark(r.horse_name) }}{% if r.registered %}<a href="/horse/{{ r.horse_name|urlencode }}"><strong>{{ r.horse_name }}</strong></a>{% else %}{{ r.horse_name }}{% endif %}</td>
                     <td class="nowrap center"><span class="{{ 'female-text' if r.sex == '牝' else '' }}">{{ r.sex }}</span>{{ r.age }}</td>
                     <td>{{ r.weight }}</td>
-                    <td class="nowrap">{{ r.mark }}{{ r.jockey }}</td>
+                    {% set jockey_mark, jockey_name = jockey_mark_and_name(r.mark, r.jockey) %}
+                    {% if not no_allowance %}<td class="center">{{ jockey_mark }}</td>{% endif %}
+                    <td class="nowrap">{{ jockey_name }}</td>
                     <td class="bl">{{ r.time }}</td>
                     <td class="nowrap">{{ r.margin }}</td>
                     <td class="nowrap corners">{{ r.corners|corners_html }}</td>
@@ -153,7 +157,7 @@
                     <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                     <td class="num nowrap bl">{{ r.body_weight }}</td>
                     <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
-                    <td class="nowrap">{{ r.trainer }}</td>
+                    <td class="nowrap">{{ trainer_html(r.trainer) }}</td>
 {{ prev_cells(r) }}
                 </tr>
                 {% endfor %}
@@ -234,6 +238,33 @@ function switchTab(key, remember = true) {
     }
 }
 
+// 確定出馬表：値が1つも入っていない列（結果の取り込み前の着順・タイムなど）は非表示にする
+document.querySelectorAll('#tbl_final').forEach(table => {
+    const rows = Array.from(table.tBodies[0].rows);
+    if (!table.tHead || !rows.length) return;
+    // 見出しは2段（騎手の下に「減」「騎手名」）：列ごとの見出しのセルと、まとめた見出しのセル
+    const [top, sub] = table.tHead.rows;
+    const leaves = [];
+    let k = 0;
+    Array.from(top.cells).forEach(th => {
+        if (th.colSpan > 1 && sub) {
+            for (let j = 0; j < th.colSpan; j++) leaves.push({ th: sub.cells[k++], group: th });
+        } else {
+            leaves.push({ th: th, group: null });
+        }
+    });
+    leaves.forEach((leaf, i) => {
+        if (!rows.every(tr => !tr.cells[i] || !tr.cells[i].textContent.trim())) return;
+        leaf.th.style.display = 'none';
+        rows.forEach(tr => { if (tr.cells[i]) tr.cells[i].style.display = 'none'; });
+        if (leaf.group) {
+            leaf.group.colSpan -= 1;   // まとめた見出しは残りの列の数にする（すべて隠れたら見出しも隠す）
+            if (leaf.group.colSpan < 1 || leaves.filter(l => l.group === leaf.group).every(l => l.th.style.display === 'none'))
+                leaf.group.style.display = 'none';
+        }
+    });
+});
+
 // 出馬表の並び替え（値が無い行は最後。同じ値なら馬名順）
 (function() {
     const numeric = { num: true, age: true, weight: true, prevplace: true, shutoku: true, place: true, order: true };
@@ -312,7 +343,14 @@ function switchTab(key, remember = true) {
         if (excludedFrom < rows.length) insertBefore(rows[excludedFrom], 'excluded-row', '以下、除外見込み');
     }
     document.querySelectorAll('.sort-controls').forEach(ctrl => {
-        ctrl.querySelector('.sort-key').value = ctrl.querySelector('.sort-default').value;
+        const def = ctrl.querySelector('.sort-default');
+        const table = document.getElementById(ctrl.dataset.table);
+        if (table && def.value === 'place') {
+            // 確定出馬表：着順が1つも無ければ馬番、馬番も無ければ馬名で並べる
+            const rows = Array.from(table.tBodies[0].rows);
+            if (!rows.some(tr => tr.dataset.place)) def.value = rows.some(tr => tr.dataset.num) ? 'num' : 'name';
+        }
+        ctrl.querySelector('.sort-key').value = def.value;
         ctrl.querySelector('.sort-dir').value = ctrl.querySelector('.sort-default-dir').value;
         ctrl.querySelectorAll('select').forEach(sel => sel.addEventListener('change', () => apply(ctrl)));
         apply(ctrl);
