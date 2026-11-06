@@ -2992,6 +2992,20 @@ def stable_html(label, name=None):
         area, stable = label.split('・', 1) if '・' in label else ('', label)
     return Markup(f"{area_mark_html(area)}{escape(stable)}")
 
+def trainer_html(name):
+    """調教師名に所属（拠点）のマークを付ける：「川崎・山崎 裕也」はそのまま、拠点の無い名前は美浦・栗東の厩舎の一覧で探す"""
+    name = str(name or '').strip()
+    if not name:
+        return ''
+    if '・' not in name:
+        try:
+            name = trainer_label(name, get_stables_list())
+        except Exception:
+            pass
+    return stable_html(name)
+
+app.jinja_env.globals['trainer_html'] = trainer_html
+
 _AREA_IN_TEXT_RE = re.compile(r'(^|[\s：→])([^\s：→・（()]{1,5})・')
 
 def area_marks_in_text(text):
@@ -9039,7 +9053,10 @@ def race_detail():
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
                            program_race=program_race, result_race=result_race, tabs=tabs, default_tab=default_tab,
-                           heading=heading, **nav)
+                           heading=heading,
+                           # 特別戦（重賞を含む）は騎手の減量が無い（メイクデビュー〇〇は新馬戦のため減量がある）
+                           no_allowance=special_race and not str((race or {}).get('name', '')).startswith('メイクデビュー'),
+                           **nav)
 
 @app.route('/save_entry', methods=['POST'])
 @login_required
