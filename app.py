@@ -3053,6 +3053,12 @@ def normalize_person_name(name):
     name = unicodedata.normalize('NFKC', str(name or '')).translate(_NAME_VARIANT_TABLE)
     return re.sub(r'[\s　]', '', name)
 
+def is_same_owner_change(kind, old, new):
+    """表記の違いだけの馬主変更（「高瀬 真尚」→「髙瀬 真尚」など異体字・全角半角・空白の違い）か。
+    Changesシートの記録は残し、変更履歴・出走履歴・週間レポートには表示しない"""
+    return str(kind or '').strip() == '馬主変更' and bool(str(old or '').strip()) and \
+        normalize_person_name(old) == normalize_person_name(new)
+
 def _trainer_key(name):
     """調教師名の比較用（空白と拠点「美浦・」を除き、異体字をそろえる）"""
     name = str(name or '').split('・', 1)[-1]
@@ -3172,7 +3178,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
     # JRAへ転入した日（Changesシートの再転入。JRAの競走馬情報の「JRAへ転入」）と競走馬登録日の行を入れる
-    # （同じ日の転厩などより下）。転入の記録が無く、競走馬登録日より前に地方所属で出走している馬は、
+    # （同じ日の中では一番上）。転入の記録が無く、競走馬登録日より前に地方所属で出走している馬は、
     # 競走馬登録日を転入の日として扱う（転入の日を競走馬登録日として記録した馬）
     entries = {}
     for c in changes_history:
@@ -3185,7 +3191,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
                                           and r['date'] <= registration_date for r in race_results)
         entries[registration_date] = 'JRAへ転入' if transferred else '競走馬登録'
     for d, text in entries.items():
-        items.append(((d, 0, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
+        items.append(((d, 3, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
     for item in history:
@@ -7003,7 +7009,8 @@ def weekly():
         for r in horse_sheet_values("Changes")[1:]:
             d = parse_full_date(cell(r, C_DATE))
             # 騎手変更（全出走馬を記録している）は週間レポートには表示しない
-            if in_week(d) and cell(r, C_TYPE) not in ('抹消', '騎手変更') and cell(r, C_TENTATIVE) != '仮':
+            if in_week(d) and cell(r, C_TYPE) not in ('抹消', '騎手変更') and cell(r, C_TENTATIVE) != '仮' \
+                    and not is_same_owner_change(cell(r, C_TYPE), cell(r, C_OLD), cell(r, C_NEW)):
                 changes.append({'date': d, 'name': cell(r, C_NAME), 'type': cell(r, C_TYPE), 'old': cell(r, C_OLD),
                                 'new': cell(r, C_NEW), 'tentative': cell(r, C_TENTATIVE) == '仮'})
 
@@ -8463,7 +8470,7 @@ def horse_detail(name, active_tab):
         records = horse_sheet_records("Changes")
         for r in records:
             # 該当馬の変更履歴をすべて取得（馬主変更・転厩含む）
-            if str(r.get("馬名", "")) == name:
+            if str(r.get("馬名", "")) == name and not is_same_owner_change(r.get("項目"), r.get("旧"), r.get("新")):
                 changes_history.append(r)
     except Exception:
         pass
