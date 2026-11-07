@@ -2073,7 +2073,7 @@ def save_entries(entries):
                 old_jockey[i + 2] = str((list(jockeys[i]) + [''])[0] if i < len(jockeys) else '').strip()
             elif k[0]:
                 results_done.add((k[1], k[2], str(k[3]).strip()))
-        updates, new_rows = [], []
+        updates, new_rows, stale = [], [], []
         cap_c = RUNNER_COL['頭数']
         for e in items:
             race, status = e['race'], e['status']
@@ -2083,6 +2083,13 @@ def save_entries(entries):
                 continue
             key = entry_key(race['date'], race['venue'], race['num'])
             have = recorded.setdefault(key, {})
+            if e.get('listed'):
+                # 出馬表に載っていない馬の「確定」「非当選」「非抽選」の記録（以前、出馬表のページの下の
+                # 「過去5年の成績」の馬まで記録していたものなど）は消す
+                for n, (row_no, old) in list(have.items()):
+                    if row_no and n not in e['listed'] and old in ('確定',) + ENTRY_EXCLUDED:
+                        stale.append(row_no)
+                        del have[n]
             added = updated = 0
             if race.get('capacity'):
                 # 記録済みの馬の行にも出走可能頭数を書き込む
@@ -2120,6 +2127,8 @@ def save_entries(entries):
             with_sheets_retry(ws_runner.batch_update, updates)
         if new_rows:
             with_sheets_retry(ws_runner.append_rows, new_rows, value_input_option='RAW')
+        if stale:
+            _delete_row_blocks(ws_runner, _number_blocks(stale))
     if jockey_changes:
         try:
             record_jockey_changes(jockey_changes)
@@ -2305,7 +2314,8 @@ def denma_entries(pages):
     for p in pages:
         race = dict(p['race'])
         race['marks'] = race.get('rule', '')
-        entries.append({'race': race, 'horses': p['horses'], 'status': '確定'})
+        listed = {h['name'] for h in p['horses']} | {h['name'] for h in p.get('excluded') or []}
+        entries.append({'race': race, 'horses': p['horses'], 'status': '確定', 'listed': listed})
         # 非当選・非抽選の馬も、その登録として記録する
         for status in ENTRY_EXCLUDED:
             excluded = [h for h in p.get('excluded') or [] if h['status'] == status]

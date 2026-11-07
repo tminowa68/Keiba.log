@@ -634,12 +634,29 @@ def parse_special_list_page(html_or_soup):
     return races
 
 
+# 出馬表・特別レース登録馬のページの下にある、出走馬ではない馬の表（過去5年の成績・コースレコードなど）
+_NOT_ENTRY_TABLE_RE = re.compile(r'過去|レコード|前年|昨年')
+
+
+def _entry_rows(soup, selector):
+    """出馬表・特別レース登録馬のページの出走馬（登録馬）の表のセル（selector）だけを返す。
+    ページの下の「過去5年の成績」「コースレコード」などの表の馬は含めない"""
+    out = []
+    for el in soup.select(selector):
+        table = el.find_parent('table')
+        cap = table.find('caption') if table else None
+        if cap and not cap.select_one('.race_header') and _NOT_ENTRY_TABLE_RE.search(_text(cap)):
+            continue
+        out.append(el)
+    return out
+
+
 def parse_special_race_page(html_or_soup):
     """特別レース登録馬の各レースのページから、登録馬 [{'name', 'url', 'horse_id', 'weight', 'added'}] と、
     ページから読み取れたレースの情報（年月日・競馬場・回・日・レース番号・レース名・グレードなど。読み取れない項目は無し）を返す"""
     soup = _soup(html_or_soup)
     horses = []
-    for td in soup.select('td.horse'):
+    for td in _entry_rows(soup, 'td.horse'):
         a = td.find('a')
         name = _text(a or td)
         if not name or name == '馬名':
@@ -1306,7 +1323,7 @@ def parse_denma_page(html_or_soup):
     if not race.get('date') or not race.get('venue'):
         raise ValueError('レースの年月日・競馬場を読み取れませんでした。')
     horses = []
-    for tr in soup.select('table.basic tbody tr'):
+    for tr in _entry_rows(soup, 'table.basic tbody tr'):
         name_td = tr.select_one('td.horse')
         if not name_td:
             continue
