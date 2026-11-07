@@ -3118,7 +3118,11 @@ def stable_at(results, changes_rows, when, stables):
     return min(after, key=lambda e: (e[0], e[1]))[2] if after else ''
 
 def interval_weeks_between(before, after):
-    """2つのレースの間隔（中○週）：7日以下は0（連闘）、8〜14日は中1週、15〜21日は中2週…"""
+    """2つのレースの間隔（中○週）：7日以下は0（連闘）、8〜14日は中1週、15〜21日は中2週…。
+    前のレースが日曜・月曜（土日・祝日の月曜の開催）なら、その週の土曜日から数える
+    （同じ週の土曜・日曜のレースからの間隔を同じにする。例：11/8のレースは10/17・10/18のどちらからも中3週）"""
+    if before.weekday() in (6, 0):   # 日曜・月曜
+        before = before - timedelta(days=1 if before.weekday() == 6 else 2)
     return ((after - before).days - 1) // 7
 
 def rest_label(before, after):
