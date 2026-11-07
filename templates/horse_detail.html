@@ -474,7 +474,8 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
                     {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
-                    <td class="bl" colspan="21">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
+                    <td></td>{# 中間隔の列（空） #}
+                    <td class="bl" colspan="20">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
