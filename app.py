@@ -3119,10 +3119,10 @@ def stable_at(results, changes_rows, when, stables):
 
 def interval_weeks_between(before, after):
     """2つのレースの間隔（中○週）：開催の週（木曜日から水曜日。土日・祝日の月曜の開催は同じ週）の差で数え、
-    次の週なら0（連闘）、2週後なら中2週、3週後なら中3週…（10/17・18→11/7・8は中3週、10/10・11・12→11/7・8は中4週、
+    次の週なら0（連闘）、2週後なら中1週、3週後なら中2週…（10/17・18→11/7・8は中2週、10/10・11・12→11/7・8は中3週、
     10/24・25→10/31・11/1は連闘）"""
     weeks = RR.race_week_index(after) - RR.race_week_index(before)
-    return weeks if weeks >= 2 else 0
+    return max(weeks - 1, 0)
 
 def rest_label(before, after):
     """2つのレースの間隔が中6週以上なら「2ヶ月半」のような休養の期間を返す。中2週ごとに半月ずつ増やす
