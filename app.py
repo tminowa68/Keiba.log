@@ -9001,7 +9001,9 @@ def race_detail():
                                      horse_num=e['horse_num'], horse_id=e['horse_id'],
                                      **({} if e['horse_name'] in horses or not e['horse_id'][:4].isdigit()
                                         else {'age': race_date.year - int(e['horse_id'][:4])}))
-                                for e in entries if ENTRY_STAGE_RANK[e['stage']] >= i],
+                                # 想定・特別登録のタブには、登録が確定になった馬（確定出馬表・レース結果の馬）も表示する
+                                for e in (runners if key in ('estimated', 'special') else entries)
+                                if ENTRY_STAGE_RANK.get(e['stage'], 3) >= i],
                      # 次の段階に進める候補（この段階の馬）
                      'candidates': [e['horse_name'] for e in entries if e['stage'] == key]})
     # 出走可能頭数（特別登録のページから記録した、想定・特別登録などの記録の行の頭数の列）
