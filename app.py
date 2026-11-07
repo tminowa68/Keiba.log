@@ -2073,7 +2073,7 @@ def save_entries(entries):
                 old_jockey[i + 2] = str((list(jockeys[i]) + [''])[0] if i < len(jockeys) else '').strip()
             elif k[0]:
                 results_done.add((k[1], k[2], str(k[3]).strip()))
-        updates, new_rows = [], []
+        updates, new_rows, stale = [], [], []
         cap_c = RUNNER_COL['頭数']
         for e in items:
             race, status = e['race'], e['status']
@@ -2083,6 +2083,13 @@ def save_entries(entries):
                 continue
             key = entry_key(race['date'], race['venue'], race['num'])
             have = recorded.setdefault(key, {})
+            if e.get('listed'):
+                # 出馬表に載っていない馬の「確定」「非当選」「非抽選」の記録（以前、出馬表のページの下の
+                # 「過去5年の成績」の馬まで記録していたものなど）は消す
+                for n, (row_no, old) in list(have.items()):
+                    if row_no and n not in e['listed'] and old in ('確定',) + ENTRY_EXCLUDED:
+                        stale.append(row_no)
+                        del have[n]
             added = updated = 0
             if race.get('capacity'):
                 # 記録済みの馬の行にも出走可能頭数を書き込む
@@ -2120,6 +2127,8 @@ def save_entries(entries):
             with_sheets_retry(ws_runner.batch_update, updates)
         if new_rows:
             with_sheets_retry(ws_runner.append_rows, new_rows, value_input_option='RAW')
+        if stale:
+            _delete_row_blocks(ws_runner, _number_blocks(stale))
     if jockey_changes:
         try:
             record_jockey_changes(jockey_changes)
@@ -2305,7 +2314,8 @@ def denma_entries(pages):
     for p in pages:
         race = dict(p['race'])
         race['marks'] = race.get('rule', '')
-        entries.append({'race': race, 'horses': p['horses'], 'status': '確定'})
+        listed = {h['name'] for h in p['horses']} | {h['name'] for h in p.get('excluded') or []}
+        entries.append({'race': race, 'horses': p['horses'], 'status': '確定', 'listed': listed})
         # 非当選・非抽選の馬も、その登録として記録する
         for status in ENTRY_EXCLUDED:
             excluded = [h for h in p.get('excluded') or [] if h['status'] == status]
@@ -2537,7 +2547,9 @@ def runner_row_to_result(r):
     rule = re.sub(r'\s*(?:所属|国|調教国|収得):\S+', '', c('記号')).strip()
     return {
         'race_id': c('レースID'), 'date': race_date, 'date_label': format_date_jp(race_date, weekday=True),
-        'venue': c('場'), 'num': c('R'), 'name': c('レース名'), 'grade': c('グレード'),
+        'venue': c('場'), 'num': c('R'), 'name': c('レース名'),
+        # 地方の国際格付けの重賞（「東京大賞典ＧＩ」）は、グレードの列が空でもレース名からグレードを読む
+        'grade': c('グレード') or (RR.nar_intl_grade(c('レース名')) if nar else ''),
         'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': rule,
         'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
         'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
@@ -2645,7 +2657,7 @@ def race_label(r):
     if r.get('nar'):
         # 地方のレースは、レース名の末尾のクラス・組（無ければ格組）を格にする
         if r['name']:
-            title, rank = RR.nar_title_and_rank(r['name'], nar_grade_label(r.get('grade')), r.get('class'),
+            title, rank = RR.nar_title_and_rank(r['name'], nar_grade_label(r.get('grade'), r['name']), r.get('class'),
                                                 nar_class_mark(RR.nar_display_name(r.get('class'))))
             name = title + (f"({rank})" if rank else '')
         else:
@@ -2722,8 +2734,11 @@ _OVERSEAS_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+海外:(\S+)()\
 _RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス|[^()\s]{1,12})\)$')
 _CONDITION_RACE_RE = re.compile(r'^(障害)?\d歳(以上)?(.+)$')
 
-def nar_grade_label(grade):
-    """地方の重賞の格付けの表示（G1〜G3として記録したものを Jpn1〜Jpn3 にする）"""
+def nar_grade_label(grade, name=''):
+    """地方の重賞の格付けの表示（G1〜G3として記録したものを Jpn1〜Jpn3 にする。
+    レース名に国際格付け（「ＧＩ」）があるレースは G1〜G3 のまま）"""
+    if RR.nar_intl_grade(name):
+        return RR.nar_intl_grade(name)
     return f"Jpn{grade[1:]}" if re.fullmatch(r'G[1-3]', str(grade or '')) else str(grade or '')
 
 def nar_class_mark(race_class):
@@ -2747,7 +2762,7 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
             return nar_class_mark(race_class), ''
         # 地方のレースは、レース名の末尾のクラス・組を格にする（レース名にクラスの表記が無ければ格組。重賞はグレード）。
         # 地方のレース名は空白より前を冠として除かない（「Ｃ１二 三」のように組の間に空白がある）
-        title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade), race_class,
+        title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade, name), race_class,
                                             nar_class_mark(RR.nar_display_name(race_class)))
         return short_race_name(title, strip_prefix=False), rank
     if name:
@@ -8891,7 +8906,7 @@ def read_race_result(race_date, venue, num):
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
                 'marks': c('記号'), 'weight_rule': c('重量'), 'surface': c('コース'),
                 # 地方のレースは、グレードの無いレースにもクラスのマークを付ける
-                'grade_text': nar_grade_label(c('グレード')) if c('レースID').startswith('N') else c('グレード'),
+                'grade_text': nar_grade_label(c('グレード'), c('レース名')) if c('レースID').startswith('N') else c('グレード'),
                 'prizes': prize_list([c(f"{i}着本賞金") for i in range(1, 6)]),
                 'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード')
                 and not RR.nar_name_has_class(c('レース名'), c('クラス')) else ''}
