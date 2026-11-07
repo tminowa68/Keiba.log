@@ -973,8 +973,10 @@ def split_nar_race_name(name):
             tokens[-1] += t   # 「3歳」「3歳以上」の後のクラスは続けて1つにする（「3歳オープン」「3歳以上C4-5」）
         elif t:
             tokens.append(t)
-    if tokens and '選抜牝馬' in m.group(0):
-        tokens[-1] += '選抜'   # 「ひいらぎ特別Ｃ１選抜牝馬」の格は「C1選抜」（牝馬限定はレース名のマークで表す）
+    if tokens and '選抜' in m.group(0):
+        # 「選抜馬」「選抜牝馬」は格に「選抜」を付ける（「ひいらぎ特別Ｃ１選抜牝馬」→「C1選抜」、
+        # 「ミズナラ賞Ａ２Ｂ１選抜馬」→「A2」「B1選抜」。牝馬限定はレース名のマークで表す）
+        tokens[-1] += '選抜'
     return name[:m.start()].strip(), tokens
 
 
