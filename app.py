@@ -3225,6 +3225,30 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
             continue
         items.append(((after['date'], 0, -1), {'kind': 'rest', 'date': after['date'], 'tentative': True,
                                                'date_label': '', 'text': text}))
+    # 最初のレースより前と、最後のレースより後（現在の放牧中など）の放牧・入厩も行にする
+    # （レースが無い馬はすべての放牧・入厩）
+    def _pasture_dates(start, end):
+        # 表示する放牧・入厩の日付（放牧から入厩までが短いものは除く）
+        out = []
+        for p in pasture_history:
+            ds = [d for d in (p.get('out'), p.get('in')) if d and (start is None or start < d) and (end is None or d < end)]
+            if len(ds) == 2 and (ds[1] - ds[0]).days <= SHORT_PASTURE_DAYS:
+                continue
+            out += ds
+        return out
+    first = chrono[0]['date'] if chrono else None
+    last = chrono[-1]['date'] if chrono else None
+    if first:
+        note = pasture_note(pasture_history, date.min, first)
+        if note:
+            items.append(((first, 0, -1), {'kind': 'rest', 'date': first, 'tentative': True,
+                                            'date_label': '', 'text': note}))
+    dates = _pasture_dates(last, None)
+    note = pasture_note(pasture_history, last or date.min, None) if dates else ''
+    if note:
+        # 最後のレースより後の放牧・入厩の行は、その最後の日付の位置（最後のレースより上）に入れる
+        d = max(dates)
+        items.append(((d, 0, -1), {'kind': 'rest', 'date': d, 'tentative': True, 'date_label': '', 'text': note}))
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
