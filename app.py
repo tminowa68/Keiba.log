@@ -2664,7 +2664,8 @@ def race_label(r):
 def race_mark_list(marks, weight_rule, name=''):
     """レース名に付けるマーク：牝馬限定なら「牝」、九州産馬限定（記号かレース名に「九州産」）なら「九州」、
     重量が別定・ハンデならその重量（定量・馬齢は付けない）"""
-    out = ['牝'] if is_filly_only(marks) else []
+    # 牝馬限定：記号に「牝」があるか、レース名に「牝馬」がある（地方の「ひいらぎ特別Ｃ１選抜牝馬」など）
+    out = ['牝'] if is_filly_only(marks) or ('牝馬' in str(name or '') and '牡' not in str(name or '')) else []
     if '九州産' in str(marks or '') + str(name or ''):
         out.append('九州')
     if str(weight_rule or '').strip() in ('別定', 'ハンデ'):
