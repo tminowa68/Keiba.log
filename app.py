@@ -3023,11 +3023,25 @@ def area_marks_in_text(text):
     out.append(str(escape(text[pos:])))
     return Markup(''.join(out))
 
-def corners_html(text):
-    """通過順（「11-12-12-14」）の数字をそれぞれ四角で囲み、「-」は表示しない"""
+def corners_html(text, runners=None):
+    """通過順（「11-12-12-14」）の数字をそれぞれ四角で囲み、「-」は表示しない。
+    出走頭数（runners）が分かれば、前から1/4以内の位置は赤（corner-front）、後ろから1/4以内（3/4より後ろ）は青
+    （corner-back）の文字にする"""
     from markupsafe import Markup, escape
-    parts = [p for p in re.split(r'[-－‐]', str(text or '')) if p.strip()]
-    return Markup(''.join(f'<span class="corner-box">{escape(p.strip())}</span>' for p in parts))
+    try:
+        n = int(str(runners or '').strip())
+    except ValueError:
+        n = 0
+    out = []
+    for p in (p.strip() for p in re.split(r'[-－‐]', str(text or '')) if p.strip()):
+        cls = ''
+        if n and p.isdigit():
+            if int(p) <= n / 4:
+                cls = ' corner-front'
+            elif int(p) > n * 3 / 4:
+                cls = ' corner-back'
+        out.append(f'<span class="corner-box{cls}">{escape(p)}</span>')
+    return Markup(''.join(out))
 
 app.jinja_env.filters['corners_html'] = corners_html
 def body_diff_text(diff):

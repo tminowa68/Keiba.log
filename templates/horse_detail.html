@@ -497,7 +497,7 @@
                     <td class="nowrap">{{ jockey_name }}</td>
                     <td class="nowrap">{{ weight_rule_mark(r.weight_rule) }}{{ r.weight }}</td>
                     <td class="bl">{{ r.time }}</td>
-                    <td class="nowrap corners">{{ r.corners|corners_html }}</td>
+                    <td class="nowrap corners">{{ r.corners|corners_html(r.runners) }}</td>
                     <td>{{ r.last }}</td>
                     <td class="num nowrap bl">{{ r.body_weight }}</td>
                     <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
