@@ -2576,3 +2576,6 @@ td.col-last-race {
     color: #fff;
     font-size: 0.8em;
 }
+/* 通過順：前から1/4以内は赤、3/4より後ろは青 */
+.corner-box.corner-front { color: #d32f2f; font-weight: bold; }
+.corner-box.corner-back { color: #1565c0; font-weight: bold; }
