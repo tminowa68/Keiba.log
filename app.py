@@ -2738,7 +2738,10 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
     地方のレース（nar=True）は、すべてのレースにクラス（重賞はグレード）を付ける"""
     if nar:
         name = re.sub(r'\s*九州産$', '', str(name or '')) or name   # 九州産は「九州」のマークで表す
-        name = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
+        stripped = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
+        # 格組を除くと年齢条件だけになる名前（「３歳Ｃ１」）は除かない（クラス・組だけの名前として表示する）
+        if not re.fullmatch(r'[0-9０-９]歳(?:以上|上)?', stripped.strip()):
+            name = stripped
         if not name:
             return nar_class_mark(race_class), ''
         # 地方のレースは、レース名の末尾のクラス・組を格にする（レース名にクラスの表記が無ければ格組。重賞はグレード）。
