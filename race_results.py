@@ -733,6 +733,18 @@ _NAR_RACE_URL_RE = re.compile(r'RaceMarkTable\?k_raceDate=(\d{4})(?:%2F|/)(\d{1,
 # 地方の重賞の格付け「JpnＩ」「JpnII」「JpnⅢ」など。直後に「２歳」などが続いても（「JpnII２歳」）、
 # 格付けの部分だけを取るように長いものから順に試す
 _NAR_GRADE_RE = re.compile(r'(Jpn|JPN|ＪＰＮ|Ｊｐｎ)\s*(Ⅲ|Ⅱ|Ⅰ|III|II|I|ＩＩＩ|ＩＩ|Ｉ|lll|ll|l|[1-3１-３](?![0-9０-９]))')
+# 国際格付けのグレード（「東京大賞典ＧＩ」）。表示は「G1」（Jpnの重賞は「Jpn1」）
+_NAR_INTL_GRADE_RE = re.compile(r'(?<![A-Za-zＡ-Ｚａ-ｚ])(G|Ｇ)\s*(Ⅲ|Ⅱ|Ⅰ|III|II|I|ＩＩＩ|ＩＩ|Ｉ|[1-3１-３](?![0-9０-９]))')
+
+
+def nar_intl_grade(text):
+    """地方のレース名の国際格付けのグレード（「東京大賞典ＧＩ」→「G1」。無ければ空文字）"""
+    m = _NAR_INTL_GRADE_RE.search(text or '')
+    if not m:
+        return ''
+    roman = m.group(2).translate(str.maketrans('ＩI１２３', 'ⅠⅠ123'))
+    roman = {'ⅠⅠⅠ': '3', 'ⅠⅠ': '2', 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3'}.get(roman, roman)
+    return f"G{roman}" if roman in ('1', '2', '3') else ''
 
 
 def nar_text(el):
@@ -772,7 +784,7 @@ def nar_grade(text):
     """「JpnＩ」「JpnⅡ」などをG1〜G3にそろえる（地方重賞の格付け。該当しなければ空文字）"""
     m = _NAR_GRADE_RE.search(text or '')
     if not m:
-        return ''
+        return nar_intl_grade(text)   # 国際格付け（「ＧＩ」）も重賞として G1〜G3 にする
     roman = m.group(2).translate(str.maketrans('ＩIlｌ１２３', 'ⅠⅠⅠⅠ123'))
     roman = {'ⅠⅠⅠ': '3', 'ⅠⅠ': '2', 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3'}.get(roman, roman)
     return f"G{roman}" if roman in ('1', '2', '3') else ''
@@ -1004,6 +1016,10 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
     レース名にクラス・組が無ければ、格組（class_mark。年齢条件を除いたもの）を格にする（レース名に格組が含まれる場合は無し）。
     重賞はグレード（grade_label）を格にする"""
     shown = nar_display_name(name)
+    gm = _NAR_INTL_GRADE_RE.search(shown)
+    if gm and gm.start() > 0:
+        # 国際格付けの重賞（「東京大賞典ＧＩ３上選定馬重賞」）：グレードから後ろ（条件・選定馬・重賞）は表示しない
+        return shown[:gm.start()].strip(), nar_intl_grade(shown)
     base, tokens = split_nar_race_name(shown)
     # 格の「オープン」は「OP」と表示する（「3歳オープン」→「3歳OP」）
     tokens = [t.replace('オープン', 'OP') for t in tokens]
