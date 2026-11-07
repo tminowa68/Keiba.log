@@ -2738,7 +2738,10 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
     地方のレース（nar=True）は、すべてのレースにクラス（重賞はグレード）を付ける"""
     if nar:
         name = re.sub(r'\s*九州産$', '', str(name or '')) or name   # 九州産は「九州」のマークで表す
-        name = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
+        stripped = RR.apply_nar_class({'name': name}, race_class)['name']   # 末尾の格組はマークで表す
+        # 格組を除くと年齢条件だけになる名前（「３歳Ｃ１」）は除かない（クラス・組だけの名前として表示する）
+        if not re.fullmatch(r'[0-9０-９]歳(?:以上|上)?', stripped.strip()):
+            name = stripped
         if not name:
             return nar_class_mark(race_class), ''
         # 地方のレースは、レース名の末尾のクラス・組を格にする（レース名にクラスの表記が無ければ格組。重賞はグレード）。
@@ -3115,8 +3118,11 @@ def stable_at(results, changes_rows, when, stables):
     return min(after, key=lambda e: (e[0], e[1]))[2] if after else ''
 
 def interval_weeks_between(before, after):
-    """2つのレースの間隔（中○週）：7日以下は0（連闘）、8〜14日は中1週、15〜21日は中2週…"""
-    return ((after - before).days - 1) // 7
+    """2つのレースの間隔（中○週）：開催の週（木曜日から水曜日。土日・祝日の月曜の開催は同じ週）の差で数え、
+    次の週なら0（連闘）、2週後なら中1週、3週後なら中2週…（10/17・18→11/7・8は中2週、10/10・11・12→11/7・8は中3週、
+    10/24・25→10/31・11/1は連闘）"""
+    weeks = RR.race_week_index(after) - RR.race_week_index(before)
+    return max(weeks - 1, 0)
 
 def rest_label(before, after):
     """2つのレースの間隔が中6週以上なら「2ヶ月半」のような休養の期間を返す。中2週ごとに半月ずつ増やす

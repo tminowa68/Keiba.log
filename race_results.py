@@ -988,7 +988,8 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
     tokens = [t.replace('オープン', 'OP') for t in tokens]
     class_mark = (class_mark or '').replace('オープン', 'OP')
     if not base:
-        return shown, grade_label
+        # クラス・組だけの名前は、先頭の年齢条件を除く（「３歳Ｃ１」→「Ｃ１」。「３歳１３０万円以下」は除かない）
+        return re.sub(r'^[0-9０-９]歳(?:以上|上)?[\s　]*(?=[A-CＡ-Ｃ])', '', shown), grade_label
     if tokens:
         return base, grade_label or '・'.join(tokens)
     # 格組の「以下」「以上」は「下」「上」と短くする（「A-2以下」→「A-2下」）
