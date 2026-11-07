@@ -3182,8 +3182,12 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
     items = []
+    # 前のレースからの間隔（中○週。最初のレースは空）
+    chrono_races = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
+    intervals = {id(r): interval_weeks_between(p['date'], r['date']) for p, r in zip(chrono_races, chrono_races[1:])}
     for r in race_results:
-        items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0), dict(r, kind='race')))
+        items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0),
+                      dict(r, kind='race', interval_weeks=intervals.get(id(r), ''))))
     # 同じ日の記録は上から JRA・地方抹消、去勢、転厩、馬主変更の順（新しい順に並べるため、上に出すものほど大きい値）
     order = {'去勢': 3, '転厩': 2, '馬主変更': 1}
     for c in changes_history:

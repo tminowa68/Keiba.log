@@ -439,6 +439,7 @@
                 <tr>
                     <th rowspan="2">年</th>
                     <th rowspan="2">日付</th>
+                    <th rowspan="2" class="th-vertical">中<br>間<br>隔</th>
                     <th rowspan="2" class="bl">開催</th>
                     <th colspan="2">出走レース</th>
                     <th rowspan="2">コース</th>
@@ -453,7 +454,7 @@
                     <th rowspan="2" class="bl">タイム</th>
                     <th rowspan="2">通過</th>
                     <th rowspan="2">上り</th>
-                    <th rowspan="2" class="bl th-vertical th-vertical-3">馬<br>体<br>重</th>
+                    <th rowspan="2" class="bl th-vertical">馬<br>体<br>重</th>
                     <th rowspan="2" class="th-vertical">増<br>減</th>
                     <th rowspan="2" class="bl">本賞金<br>（万円）</th>
                     <th rowspan="2">収得賞金<br>（万円）</th>
@@ -473,7 +474,7 @@
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
                     {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
-                    <td class="bl" colspan="20">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
+                    <td class="bl" colspan="21">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
                 {% else %}
                 {% set surface_class = {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') %}
@@ -481,6 +482,7 @@
                 <tr class="{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     <td class="nowrap">{{ r.date_label }}</td>
+                    <td class="center">{{ r.interval_weeks }}</td>
                     <td class="nowrap bl">{{ venue_label(r) }}</td>
                     {% set race_name_html, race_rank_html = history_race_name_and_rank(r) %}
                     <td class="nowrap">{{ race_name_html }}</td>
@@ -507,7 +509,7 @@
                 {% endif %}
                 {% else %}
                 <tr>
-                    <td colspan="22" class="no-data-text">出走履歴がありません。</td>
+                    <td colspan="23" class="no-data-text">出走履歴がありません。</td>
                 </tr>
                 {% endfor %}
             </tbody>
