@@ -2732,7 +2732,8 @@ _RACE_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+(\D+?)(\d+)R\s+(.+)
 _OVERSEAS_LABEL_RE = re.compile(r'^(\d{4})/(\d{1,2})/(\d{1,2})\s+海外:(\S+)()\s+(.+)\s+(\S+)$')
 # 格：G1〜G3・L・OP・〇勝クラス、地方のレースはクラス（「3歳2」「C1」など）
 _RANK_SUFFIX_RE = re.compile(r'^(.*?)\(((?:J・)?G\d|L|OP|\d勝クラス|[^()\s]{1,12})\)$')
-_CONDITION_RACE_RE = re.compile(r'^(障害)?\d歳(以上)?(.+)$')
+# 条件戦のレース名（「3歳以上1勝クラス」「障害4歳以上未勝利」。以前のレースは先頭に「サラ系」が付く）
+_CONDITION_RACE_RE = re.compile(r'^(?:サラ系\s*)?(障害)?\d歳(以上)?(.+)$')
 
 def nar_grade_label(grade, name=''):
     """地方の重賞の格付けの表示（G1〜G3として記録したものを Jpn1〜Jpn3 にする。
