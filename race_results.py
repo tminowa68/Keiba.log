@@ -4,7 +4,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
 収得賞金は競馬番組 一般事項 Ⅰの4の(3)（2026年度）による。
   ・平地競走と障害競走は別々に計算する
   ・第1着と、重賞競走の第2着に算入する（10万円未満の端数は切り捨て）
-  ・2021年6月4日以前の競走は従前の取扱い（第1着本賞金・重賞第2着本賞金の半額。新馬・未勝利の第1着は400万円）
+  ・2018年12月31日以前の競走は従前の取扱い（第1着本賞金・重賞第2着本賞金の半額。新馬・未勝利の第1着は400万円）
 クラスは収得賞金で決まる（降級制度は2019年夏季競馬から廃止）
   1勝クラス：500万円以下 ／ 2勝クラス：1,000万円以下 ／ 3勝クラス：1,600万円以下 ／ オープン：1,600万円超
 """
@@ -16,8 +16,8 @@ from bs4 import BeautifulSoup, Tag
 
 JRA_RESULT_URL = "https://www.jra.go.jp/JRADB/accessS.html?CNAME="
 
-# 2021年6月4日以前は従前の収得賞金の取扱い
-NEW_SHUTOKU_RULE_FROM = date(2021, 6, 5)
+# 平成30年（2018年）12月31日以前に実施された競走は従前の収得賞金の取扱い（2020年の競馬番組一般事項 Ⅰ4(3)ト）
+NEW_SHUTOKU_RULE_FROM = date(2019, 1, 1)
 
 _GRADE_ALIASES = [
     ('G1', ('GⅠ', 'G1', 'JpnⅠ', 'J・GⅠ', 'J・G1')),
@@ -367,7 +367,7 @@ def nar_shutoku_amount(place, prize, grade, affiliation, jra_class='', race_clas
 def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule, place, prize,
                    nar=False, affiliation='', jra_class=''):
     """1回の出走で収得賞金に算入する額（万円）。算入しない場合は0。
-    地方競馬のレース（nar=True）は nar_shutoku_amount（2021年6月4日以前も同じ扱い）"""
+    地方競馬のレース（nar=True）は nar_shutoku_amount（2018年以前も同じ扱い）"""
     if place not in (1, 2):
         return 0
     if nar:
