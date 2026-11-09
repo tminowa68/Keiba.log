@@ -364,6 +364,27 @@ def nar_shutoku_amount(place, prize, grade, affiliation, jra_class='', race_clas
     return 0
 
 
+def overseas_shutoku_amount(place, prize, grade, trained=''):
+    """外国の競馬の競走の収得賞金（万円。2026年の競馬番組一般事項 Ⅰ4(3)イ・ハ・ホ）。prize は通貨換算表で円に換算した本賞金。
+    第1着：1,200万円以上は半額、400万円以上は400万円、10万円以上は全額、10万円未満は10万円。
+    第2着（外国の重賞競走、または外国所属であった期間の本賞金100万円以上の第2着）：480万円以上は半額、
+    160万円以上は160万円、それ未満は全額。いずれも10万円未満は切り捨て"""
+    prize = prize or 0
+    if place == 1:
+        if prize >= 1200:
+            return _floor10(prize / 2)
+        if prize >= 400:
+            return 400
+        return _floor10(prize) if prize >= 10 else 10
+    graded = grade in ('G1', 'G2', 'G3')
+    foreign = bool(trained) and trained != 'JPN'
+    if place == 2 and (graded or (foreign and prize >= 100)):
+        if prize >= 480:
+            return _floor10(prize / 2)
+        return 160 if prize >= 160 else _floor10(prize)
+    return 0
+
+
 def shutoku_amount(race_date, jump, category, race_class, grade, race_name, rule, place, prize,
                    nar=False, affiliation='', jra_class=''):
     """1回の出走で収得賞金に算入する額（万円）。算入しない場合は0。
@@ -486,8 +507,15 @@ def summarize_results(results, birth_year=None, today=None):
                 kokyu = {'date': kokyu_date, 'before': shutoku, 'after': shutoku // 2}
                 shutoku //= 2
             place = int(r['place']) if str(r.get('place', '')).isdigit() else None
-            # 海外のレースは、競走馬情報の収得賞金との差から記録した額（overseas_shutoku）
-            r['shutoku'] = int(r.get('overseas_shutoku') or 0) if r.get('overseas') else shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
+            # 海外のレースは、換算した本賞金から一般事項の規程どおりに計算する。本賞金が分からなければ、
+            # 競走馬情報の収得賞金との差から記録した額（overseas_shutoku）
+            if r.get('overseas'):
+                r['shutoku'] = (overseas_shutoku_amount(place, float(r.get('prize') or 0), r.get('grade', ''),
+                                                        r.get('trained', ''))
+                                if r.get('prize') and place in (1, 2) else int(r.get('overseas_shutoku') or 0))
+                shutoku += r['shutoku']
+                continue
+            r['shutoku'] = shutoku_amount(r.get('date'), jump, r.get('category', ''), r.get('class', ''),
                                           r.get('grade', ''), r.get('name', ''), r.get('rule', ''),
                                           place, r.get('prize') or 0, nar=bool(r.get('nar')),
                                           affiliation=r.get('affiliation', ''), jra_class=r.get('nar_jra_class', ''))

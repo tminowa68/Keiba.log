@@ -4450,7 +4450,8 @@ def record_overseas_from_horse_page(horse_url, html):
 def fill_overseas_prizes(name, horse_id, birth_year, info):
     """競走馬情報の内海外賞金・収得賞金（平地）から、海外のレースの本賞金・収得賞金を記録する。
     本賞金：内海外賞金のうち記録した本賞金で説明できない額を、本賞金が分からない入着のレースが1つだけならそのレースに。
-    収得賞金：競走馬情報の収得賞金と国内のレースから計算した収得賞金の差を、海外のレースで1着・2着の最も新しいレースに"""
+    収得賞金：本賞金が分かる海外のレースは一般事項の規程どおりに計算する。本賞金が分からない海外の1着・2着のレースが
+    あれば、競走馬情報の収得賞金と計算した収得賞金の差を、そのうち最も新しいレースに"""
     results, _ = get_horse_race_results(name, horse_id, birth_year)
     overseas = [r for r in results if r.get('overseas') and r.get('trained') == 'JPN']
     messages = []
@@ -4465,10 +4466,13 @@ def fill_overseas_prizes(name, horse_id, birth_year, info):
             update_overseas_runner_cells(r['race_id'], r['date'], r['horse_name'], {'本賞金': _fmt_num(rest / 10000)})
             messages.append(f"{name}：{r['name']}の本賞金（{rest / 10000:,.2f}万円）を内海外賞金から記録")
     if info.get('shutoku_flat') is not None:
-        domestic = RR.summarize_results([r for r in results if not r.get('overseas')],
-                                        birth_year=birth_year)['flat']['shutoku']
-        diff = max(0, info['shutoku_flat'] // 10000 - domestic)
-        placed = sorted([r for r in overseas if not r['jump'] and str(r['place']) in ('1', '2')],
+        # 本賞金が分かる海外のレースは一般事項の規程どおりに計算するので、競走馬情報の収得賞金との差は、
+        # 本賞金が分からない海外の1着・2着のレースだけに割り当てる
+        known = [r for r in overseas if r['prize']]
+        counted = RR.summarize_results([r for r in results if not r.get('overseas')] + known,
+                                       birth_year=birth_year)['flat']['shutoku']
+        diff = max(0, info['shutoku_flat'] // 10000 - counted)
+        placed = sorted([r for r in overseas if not r['jump'] and str(r['place']) in ('1', '2') and not r['prize']],
                         key=lambda r: r['date'], reverse=True)
         for i, r in enumerate(placed):
             want = diff if i == 0 else 0
