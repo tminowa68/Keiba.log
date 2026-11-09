@@ -963,7 +963,7 @@ _NAR_GROUP = r'(?:\s*(?:[一二三四五六七八九十]+組?|-\s*\d+組?|\d+組
 # 「Ａ２下」「Ｂ１上」のように「下」「上」だけが付くこともある。交流競走の「中央１勝クラス」「中央３歳未勝利」
 # （中央のクラス）もある
 _NAR_CLASS_TOKEN = (r'(?:(?:オープン|OP|[A-C]\d+(?:\((?:上|下)\))?' + _NAR_GROUP + r'*'
-                    r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+)(?:以下|以上|下|上)?|\d歳(?:以上)?\d?'
+                    r'|[A-C](?:\((?:上|下)\))?' + _NAR_GROUP + r'+)(?:以下|以上|下|上)?(?:級馬?)?|\d歳(?:以上)?\d?'
                     r'|中央(?:\d歳(?:以上)?)?(?:\d勝クラス|オープン|未勝利))')
 # 組の後ろに付くカタカナ1文字（船橋の「Ｃ１四 五 六ウ」の「ウ」、「イ」「ロ」「ハ」など）もクラス・組の一部とする
 # （格には含めない）
@@ -998,7 +998,13 @@ def split_nar_race_name(name):
         if central:
             # 中央のクラスは年齢条件を除き（「中央３歳未勝利」→「未勝利」）、「1勝ク」のように短くする
             t = re.sub(r'^(\d勝)クラス$', r'\1ク', re.sub(r'^\d歳(?:以上)?', '', t[2:]))
-        if tokens and not central and re.fullmatch(r'\d歳(?:以上)?', tokens[-1]):
+        if re.search(r'級馬?$', t):
+            # 「３歳Ｃ１級馬」（3歳のC1級の馬）は、格を「C1」とし、前の年齢条件は付けない
+            t = re.sub(r'級馬?$', '', t)
+            if tokens and re.fullmatch(r'\d歳(?:以上)?', tokens[-1]):
+                tokens.pop()
+            tokens.append(t)
+        elif tokens and not central and re.fullmatch(r'\d歳(?:以上)?', tokens[-1]):
             tokens[-1] += t   # 「3歳」「3歳以上」の後のクラスは続けて1つにする（「3歳オープン」「3歳以上C4-5」）
         elif t:
             tokens.append(t)
