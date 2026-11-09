@@ -4174,7 +4174,8 @@ def record_builtin_exchange_rates(ws_rate=None):
         y = re.sub(r'\D', '', str(r[0]))
         if y:
             have.add((int(y), normalize_currency(r[1])))
-    rows = [[str(y), cur, f"{rate:.10f}".rstrip('0').rstrip('.')] for y, cur, rate in builtin_exchange_rows()
+    # レートは桁数を丸めずに書き込む（Pythonの浮動小数点数の値をそのまま。例：0.10865561694290976）
+    rows = [[str(y), cur, repr(rate)] for y, cur, rate in builtin_exchange_rows()
             if (y, cur) not in have and rate]
     if rows:
         with_sheets_retry(ws_rate.append_rows, rows, value_input_option='RAW')
