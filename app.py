@@ -3177,10 +3177,11 @@ def rest_label(before, after):
 SHORT_PASTURE_DAYS = 10   # 放牧から入厩までがこの日数以下の放牧は表示しない
 
 def pasture_note(pasture_history, start, end):
-    """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を
+    """前のレースの翌日〜次のレースの日（end が無ければ以降すべて）の放牧・入厩を
     「放牧：3月20日→入厩：4月10日／放牧：5月1日→入厩：6月1日」にする。
     放牧入厩シートの1行ごとに分けて表示し（片方しか無ければその片方だけ）、放牧から入厩までが10日以下のものは表示しない"""
-    in_range = lambda d: bool(d) and start < d and (end is None or d < end)
+    # レースと同じ日の放牧・入厩は、そのレースの前のものとして扱う（前のレースの翌日〜そのレースの日）
+    in_range = lambda d: bool(d) and start < d and (end is None or d <= end)
     parts = []
     for p in sorted(pasture_history, key=lambda p: p.get('out') or p.get('in')):
         out_date = p.get('out') if in_range(p.get('out')) else None
@@ -3247,7 +3248,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         # 表示する放牧・入厩の日付（放牧から入厩までが短いものは除く）
         out = []
         for p in pasture_history:
-            ds = [d for d in (p.get('out'), p.get('in')) if d and (start is None or start < d) and (end is None or d < end)]
+            ds = [d for d in (p.get('out'), p.get('in')) if d and (start is None or start < d) and (end is None or d <= end)]
             if len(ds) == 2 and (ds[1] - ds[0]).days <= SHORT_PASTURE_DAYS:
                 continue
             out += ds
@@ -3264,7 +3265,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     if note:
         # 最後のレースより後の放牧・入厩の行は、その最後の日付の位置（最後のレースより上）に入れる
         d = max(dates)
-        items.append(((d, 0, -1), {'kind': 'rest', 'date': d, 'tentative': True, 'date_label': '', 'text': note}))
+        items.append(((d, 1, 99), {'kind': 'rest', 'date': d, 'tentative': True, 'date_label': '', 'text': note}))
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
@@ -4071,13 +4072,97 @@ OVERSEAS_PRIZE_COLS = [f"{i}着賞金" for i in range(1, 6)]
 # 外国の通貨の円への換算（年ごとに決まっているレート。通貨は海外競馬発売のページの表記：米ドル、ユーロなど）
 RATE_SHEET = "為替レート"
 RATE_COLUMNS = ["年", "通貨", "円"]
+# 競馬番組（別）の「外国の競馬の競走における本賞金の換算について」の通貨換算表：各国の1通貨単位当たりのユーロ。
+# 日本円への換算は「当該通貨の値÷日本（100円）の値×100」。韓国は100ウォン当たり。ユーロの国（フランス・アイルランドなど）は1
+JRA_FX_EURO = {
+    2024: {'米ドル': 0.90498, 'アルゼンチンペソ': 0.00112, '英ポンド': 1.15068, '豪ドル': 0.61489, 'カタールリヤル': 0.24901, 
+        'カナダドル': 0.68297, '韓国ウォン': 0.07000, 'シンガポールドル': 0.68535, 'スイスフラン': 1.07991, 'スウェーデンクローナ': 0.09012, 
+        'チリペソ': 0.00103, 'チェコ・コルナ': 0.04045, 'チュニジア・ディナール': 0.29520, 'デンマーク・クローネ': 0.13418, 'トルコリラ': 0.03062, 
+        'JPY100': 0.64000, 'NZドル': 0.57130, 'ノルウェー・クローネ': 0.08896, 'バーレーン・ディナール': 2.40558, 
+        'ハンガリー・フォリント': 0.00261, 'ブラジルレアル': 0.18650, 'ブルガリア・レフ': 0.51130, 'ポーランド・ズウォティ': 0.23044, 
+        '香港ドル': 0.11586, '南アフリカランド': 0.04915, 'モロッコ・ディルハム': 0.09163, 'UAEディルハム': 0.24684},
+    2025: {'米ドル': 0.96256, 'アルゼンチンペソ': 0.00094, '英ポンド': 1.20601, '豪ドル': 0.59623, 'カタールリヤル': 0.26497, 
+        'カナダドル': 0.66899, '韓国ウォン': 0.06500, 'シンガポールドル': 0.70602, 'スイスフラン': 1.06247, 'スウェーデンクローナ': 0.08727, 
+        'チリペソ': 0.00097, 'チェコ・コルナ': 0.03971, 'チュニジア・ディナール': 0.30240, 'デンマーク・クローネ': 0.13409, 'トルコリラ': 0.02722, 
+        'JPY100': 0.61300, 'NZドル': 0.53961, 'ノルウェー・クローネ': 0.08478, 'バーレーン・ディナール': 2.55774, 
+        'ハンガリー・フォリント': 0.00243, 'ブラジルレアル': 0.15563, 'ブルガリア・レフ': 0.51130, 'ポーランド・ズウォティ': 0.23392, 
+        '香港ドル': 0.12394, '南アフリカランド': 0.05097, 'モロッコ・ディルハム': 0.09554, 'UAEディルハム': 0.26261},
+    2026: {'米ドル': 0.85106, 'アルゼンチンペソ': 0.00059, '英ポンド': 1.14600, '豪ドル': 0.56880, 'カタールリヤル': 0.23333, 
+        'カナダドル': 0.62158, '韓国ウォン': 0.05900, 'シンガポールドル': 0.66203, 'スイスフラン': 1.07365, 'スウェーデンクローナ': 0.09241, 
+        'チリペソ': 0.00095, 'チェコ・コルナ': 0.04126, 'チュニジア・ディナール': 0.29219, 'デンマーク・クローネ': 0.13389, 'トルコリラ': 0.01981, 
+        'JPY100': 0.54300, 'NZドル': 0.49068, 'ノルウェー・クローネ': 0.08444, 'バーレーン・ディナール': 2.26244, 
+        'ハンガリー・フォリント': 0.00260, 'ブラジルレアル': 0.15537, 'ブルガリア・レフ': 0.51130, 'ポーランド・ズウォティ': 0.23691, 
+        '香港ドル': 0.10933, '南アフリカランド': 0.05143, 'モロッコ・ディルハム': 0.09344, 'UAEディルハム': 0.23217},
+}
+# 通貨の表記の違い（海外競馬発売のページ・手入力）→ 通貨換算表の通貨名
+CURRENCY_ALIASES = {
+    'ドル': '米ドル', 'USドル': '米ドル', 'アメリカドル': '米ドル', 'USD': '米ドル', 'ポンド': '英ポンド', 'GBP': '英ポンド',
+    'イギリスポンド': '英ポンド', 'EUR': 'ユーロ', 'オーストラリアドル': '豪ドル', 'AUD': '豪ドル', 'HKドル': '香港ドル',
+    'HKD': '香港ドル', 'ディルハム': 'UAEディルハム', 'AED': 'UAEディルハム', 'UAEディルハム': 'UAEディルハム',
+    'リヤル': 'カタールリヤル', 'カタール・リヤル': 'カタールリヤル', 'ウォン': '韓国ウォン', 'カナダ・ドル': 'カナダドル',
+    'シンガポール・ドル': 'シンガポールドル', 'ニュージーランドドル': 'NZドル', 'ニュージーランド・ドル': 'NZドル',
+    'ディナール': 'バーレーン・ディナール', 'バーレーンディナール': 'バーレーン・ディナール', 'フラン': 'スイスフラン',
+}
+
+def normalize_currency(name):
+    """通貨の表記をそろえる（「ドル」「USドル」→「米ドル」など）"""
+    import unicodedata
+    name = unicodedata.normalize('NFKC', str(name or '')).strip()
+    return CURRENCY_ALIASES.get(name, name)
+
+def builtin_exchange_rate(year, currency):
+    """競馬番組の通貨換算表から、その年のその通貨の1単位当たりの円（表に無ければ None）"""
+    table = JRA_FX_EURO.get(int(year))
+    cur = normalize_currency(currency)
+    if not table or not cur:
+        return None
+    euro = 1.0 if cur == 'ユーロ' else table.get(cur)
+    if euro is None:
+        return None
+    if cur == '韓国ウォン':
+        euro /= 100   # 表は100ウォン当たり
+    return round(euro / table['JPY100'] * 100, 6)
+
+def builtin_exchange_rows():
+    """通貨換算表のすべての年・通貨の (年, 通貨, 円)"""
+    rows = []
+    for year, table in sorted(JRA_FX_EURO.items()):
+        for cur in ['ユーロ'] + [c for c in table if c != 'JPY100']:
+            rows.append((year, cur, builtin_exchange_rate(year, cur)))
+    return rows
 
 def overseas_race_id(race_date, name):
     return 'O' + race_date.strftime('%Y%m%d') + re.sub(r'\s+', '', str(name or ''))
 
+_builtin_rates_recorded = False
+
 def ensure_overseas_sheets():
     sh = gc.open(horse_data)
-    return get_or_create_worksheet(sh, OVERSEAS_SHEET, OVERSEAS_COLUMNS), get_or_create_worksheet(sh, RATE_SHEET, RATE_COLUMNS)
+    ws_meta = get_or_create_worksheet(sh, OVERSEAS_SHEET, OVERSEAS_COLUMNS)
+    ws_rate = get_or_create_worksheet(sh, RATE_SHEET, RATE_COLUMNS)
+    record_builtin_exchange_rates(ws_rate)
+    return ws_meta, ws_rate
+
+def record_builtin_exchange_rates(ws_rate=None):
+    """競馬番組の通貨換算表の年・通貨のうち、為替レートシートに無いものを書き込む（手入力した行は書き換えない）。
+    書き込んだ行の数を返す"""
+    global _builtin_rates_recorded
+    if _builtin_rates_recorded:
+        return 0
+    ws_rate = ws_rate or get_or_create_worksheet(gc.open(horse_data), RATE_SHEET, RATE_COLUMNS)
+    have = set()
+    for r in with_sheets_retry(ws_rate.get_all_values)[1:]:
+        r = list(r) + [''] * 3
+        y = re.sub(r'\D', '', str(r[0]))
+        if y:
+            have.add((int(y), normalize_currency(r[1])))
+    rows = [[str(y), cur, f"{rate:.6f}".rstrip('0').rstrip('.')] for y, cur, rate in builtin_exchange_rows()
+            if (y, cur) not in have and rate]
+    if rows:
+        with_sheets_retry(ws_rate.append_rows, rows, value_input_option='RAW')
+        remember_sheet_values(RATE_SHEET)
+    _builtin_rates_recorded = True
+    return len(rows)
 
 def overseas_meta():
     """海外レースシートの行（{列名: 値, '_row': 行番号}）の一覧"""
@@ -4093,19 +4178,22 @@ def overseas_meta():
     return out
 
 def exchange_rates():
-    """{(年, 通貨): 1単位あたりの円}"""
+    """{(年, 通貨): 1単位あたりの円}。為替レートシートの値（通貨の表記はそろえる）に、シートに無い年・通貨は
+    競馬番組の通貨換算表の値を足す"""
+    rates = {(y, cur): rate for y, cur, rate in builtin_exchange_rows() if rate}
     try:
         values = horse_sheet_values(RATE_SHEET)
     except gspread.WorksheetNotFound:
-        return {}
-    rates = {}
+        return rates
     for r in values[1:]:
         r = list(r) + [''] * 3
         y = re.sub(r'\D', '', str(r[0]))
         try:
-            rates[(int(y), str(r[1]).strip())] = float(str(r[2]).replace(',', '').strip())
+            rate = float(str(r[2]).replace(',', '').strip())
         except ValueError:
-            pass
+            continue
+        rates[(int(y), str(r[1]).strip())] = rate
+        rates[(int(y), normalize_currency(r[1]))] = rate
     return rates
 
 def _fmt_num(v):
@@ -4129,7 +4217,7 @@ def overseas_prize_man(meta, place, year, rates):
     cur = meta.get('通貨', '')
     if amount is None or not cur:
         return None
-    rate = 1.0 if cur in ('円', '日本円') else rates.get((int(year), cur))
+    rate = 1.0 if cur in ('円', '日本円') else (rates.get((int(year), cur)) or rates.get((int(year), normalize_currency(cur))))
     return round(amount * rate / 10000, 2) if rate else None
 
 def find_overseas_meta(meta, race_date, country, abbr='', name='', horse_names=()):
@@ -4409,7 +4497,7 @@ def import_overseas_result(html, url=''):
         n = save_overseas_race(race_row, rows, replace=True)
         d = race['date']
         cur = m.get('通貨', '')
-        has_rate = cur in ('円', '日本円') or (d.year, cur) in rates
+        has_rate = cur in ('円', '日本円') or (d.year, cur) in rates or (d.year, normalize_currency(cur)) in rates
         out.append({'label': f"{d.year}年{d.month}月{d.day}日 {race['venue']} {race['name']}", 'saved': n,
                     'japanese': jpn,
                     'message': '' if has_rate else f"為替レートシートに{d.year}年の{cur or '通貨'}のレートがありません"})
@@ -8980,7 +9068,8 @@ def overseas_race_detail(race_id):
     place_key = lambda x: (0, int(x['place'])) if str(x['place']).isdigit() else (1, 0)
     runners.sort(key=lambda x: (place_key(x), int(x['horse_num']) if str(x['horse_num']).isdigit() else 99))
     rates = exchange_rates()
-    rate = rates.get((d.year, meta.get('通貨', ''))) if meta.get('通貨') else None
+    rate = (rates.get((d.year, meta['通貨'])) or rates.get((d.year, normalize_currency(meta['通貨'])))) \
+        if meta.get('通貨') else None
     return render_template('overseas_race_detail.html', race=race, meta=meta, runners=runners, date=d,
                            countries=sorted(set(RR.COUNTRY_ABBR.values())), rate=rate,
                            prize_cols=OVERSEAS_PRIZE_COLS)
