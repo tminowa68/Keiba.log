@@ -3180,7 +3180,8 @@ def pasture_note(pasture_history, start, end):
     """前のレースの翌日〜次のレースの前日（end が無ければ以降すべて）の放牧・入厩を
     「放牧：3月20日→入厩：4月10日／放牧：5月1日→入厩：6月1日」にする。
     放牧入厩シートの1行ごとに分けて表示し（片方しか無ければその片方だけ）、放牧から入厩までが10日以下のものは表示しない"""
-    in_range = lambda d: bool(d) and start < d and (end is None or d < end)
+    # レースと同じ日の放牧・入厩は、そのレースの後のものとして扱う（レースの日に放牧に出た馬など）
+    in_range = lambda d: bool(d) and start <= d and (end is None or d < end)
     parts = []
     for p in sorted(pasture_history, key=lambda p: p.get('out') or p.get('in')):
         out_date = p.get('out') if in_range(p.get('out')) else None
@@ -3247,7 +3248,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         # 表示する放牧・入厩の日付（放牧から入厩までが短いものは除く）
         out = []
         for p in pasture_history:
-            ds = [d for d in (p.get('out'), p.get('in')) if d and (start is None or start < d) and (end is None or d < end)]
+            ds = [d for d in (p.get('out'), p.get('in')) if d and (start is None or start <= d) and (end is None or d < end)]
             if len(ds) == 2 and (ds[1] - ds[0]).days <= SHORT_PASTURE_DAYS:
                 continue
             out += ds
@@ -3264,7 +3265,8 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     if note:
         # 最後のレースより後の放牧・入厩の行は、その最後の日付の位置（最後のレースより上）に入れる
         d = max(dates)
-        items.append(((d, 0, -1), {'kind': 'rest', 'date': d, 'tentative': True, 'date_label': '', 'text': note}))
+        # 最後のレースと同じ日でも、そのレースより上に出す
+        items.append(((d, 1, 99), {'kind': 'rest', 'date': d, 'tentative': True, 'date_label': '', 'text': note}))
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
