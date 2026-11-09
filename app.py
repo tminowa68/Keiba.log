@@ -4124,7 +4124,7 @@ def builtin_exchange_rate(year, currency):
         return None
     if cur == '韓国ウォン':
         euro /= 100   # 表は100ウォン当たり
-    return round(euro / table['JPY100'] * 100, 6)
+    return euro / table['JPY100'] * 100   # 丸めない（賞金額を掛けてから100円未満を切り捨てる）
 
 def builtin_exchange_rows():
     """通貨換算表のすべての年・通貨の (年, 通貨, 円)"""
@@ -4174,7 +4174,8 @@ def record_builtin_exchange_rates(ws_rate=None):
         y = re.sub(r'\D', '', str(r[0]))
         if y:
             have.add((int(y), normalize_currency(r[1])))
-    rows = [[str(y), cur, f"{rate:.6f}".rstrip('0').rstrip('.')] for y, cur, rate in builtin_exchange_rows()
+    # レートは桁数を丸めずに書き込む（Pythonの浮動小数点数の値をそのまま。例：0.10865561694290976）
+    rows = [[str(y), cur, repr(rate)] for y, cur, rate in builtin_exchange_rows()
             if (y, cur) not in have and rate]
     if rows:
         with_sheets_retry(ws_rate.append_rows, rows, value_input_option='RAW')
@@ -4210,6 +4211,10 @@ def exchange_rates():
             rate = float(str(r[2]).replace(',', '').strip())
         except ValueError:
             continue
+        # 通貨換算表から書き込んだ値（丸めた値）なら、丸めない値を使う
+        builtin = builtin_exchange_rate(int(y), r[1])
+        if builtin and abs(builtin - rate) < 1e-5:
+            rate = builtin
         rates[(int(y), str(r[1]).strip())] = rate
         rates[(int(y), normalize_currency(r[1]))] = rate
     return rates
@@ -4236,7 +4241,11 @@ def overseas_prize_man(meta, place, year, rates):
     if amount is None or not cur:
         return None
     rate = 1.0 if cur in ('円', '日本円') else (rates.get((int(year), cur)) or rates.get((int(year), normalize_currency(cur))))
-    return round(amount * rate / 10000, 2) if rate else None
+    if not rate:
+        return None
+    # 円に換算して100円未満を切り捨て、万円にする（例：3億2,000万ウォン×0.05900÷0.54300÷100＝34,769,797円→3,476.97万円）
+    yen = int(amount * rate + 1e-6) // 100 * 100
+    return yen / 10000
 
 def find_overseas_meta(meta, race_date, country, abbr='', name='', horse_names=()):
     """同じ日・同じ国の海外のレースの記録を探す（略称・レース名が同じもの、または出走馬が重なるもの）"""
