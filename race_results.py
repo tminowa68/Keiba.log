@@ -858,7 +858,9 @@ def parse_nar_race_page(html_or_soup, url=''):
         'baba_code': baba, 'date': race_date, 'kai': '', 'nichi': '', 'venue': venue, 'num': num,
         'name': name, 'grade': grade, 'jump': surface == '障',
         'category': cm.group(1) if cm else '', 'class': race_class,
-        'rule': ' '.join(x for x in ('牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first) else '',
+        # 牝馬限定：条件の欄の「牝」、またはレース名の見出しの「牝馬」（「マリーンカップJpnIII３歳牝馬オープン」）
+        'rule': ' '.join(x for x in ('牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first)
+                                     or ('牝馬' in name_text and '牡' not in name_text) else '',
                                      '九州産' if kyushu else '') if x),
         'weight_rule': rm.group(1) if rm else '',
         'distance': int(dm.group(2).replace(',', '')) if dm else '', 'surface': surface,
