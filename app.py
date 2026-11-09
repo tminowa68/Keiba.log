@@ -4066,9 +4066,12 @@ def record_horse_transfers(horse_url, transfers):
 # 「略称」は競走馬情報の出走レースの表のレース名（「ケンタッキD」）で、同じ略称・国のレースには同じ名前を使う。
 # 賞金は外貨のまま記録し、為替レートシートの年ごとのレートで円に換算する
 OVERSEAS_SHEET = "海外レース"
+# 海外のレースは6着以降にも賞金が出ることがあるため、URLの列の後ろに6〜20着の賞金の列を置く
+OVERSEAS_MAX_PRIZE_PLACE = 20
 OVERSEAS_COLUMNS = ["レースID", "年月日", "国", "競馬場", "レース名", "略称", "グレード", "通貨",
-                    "1着賞金", "2着賞金", "3着賞金", "4着賞金", "5着賞金", "URL"]
-OVERSEAS_PRIZE_COLS = [f"{i}着賞金" for i in range(1, 6)]
+                    "1着賞金", "2着賞金", "3着賞金", "4着賞金", "5着賞金", "URL"] + \
+    [f"{i}着賞金" for i in range(6, OVERSEAS_MAX_PRIZE_PLACE + 1)]
+OVERSEAS_PRIZE_COLS = [f"{i}着賞金" for i in range(1, OVERSEAS_MAX_PRIZE_PLACE + 1)]
 # 外国の通貨の円への換算（年ごとに決まっているレート。通貨は海外競馬発売のページの表記：米ドル、ユーロなど）
 RATE_SHEET = "為替レート"
 RATE_COLUMNS = ["年", "通貨", "円"]
@@ -4135,10 +4138,25 @@ def overseas_race_id(race_date, name):
     return 'O' + race_date.strftime('%Y%m%d') + re.sub(r'\s+', '', str(name or ''))
 
 _builtin_rates_recorded = False
+_overseas_header_ready = False
+
+def ensure_overseas_header(ws):
+    """海外レースシートの見出しに、後から足した列（6〜20着賞金）が無ければ足す"""
+    global _overseas_header_ready
+    if _overseas_header_ready:
+        return
+    header = with_sheets_retry(ws.row_values, 1)
+    if list(header[:len(OVERSEAS_COLUMNS)]) != OVERSEAS_COLUMNS:
+        ensure_columns(ws, len(OVERSEAS_COLUMNS))
+        with_sheets_retry(ws.update, range_name=f"A1:{col_letter(len(OVERSEAS_COLUMNS) - 1)}1",
+                          values=[OVERSEAS_COLUMNS], value_input_option='RAW')
+        remember_sheet_values(OVERSEAS_SHEET)
+    _overseas_header_ready = True
 
 def ensure_overseas_sheets():
     sh = gc.open(horse_data)
     ws_meta = get_or_create_worksheet(sh, OVERSEAS_SHEET, OVERSEAS_COLUMNS)
+    ensure_overseas_header(ws_meta)
     ws_rate = get_or_create_worksheet(sh, RATE_SHEET, RATE_COLUMNS)
     record_builtin_exchange_rates(ws_rate)
     return ws_meta, ws_rate
@@ -4211,7 +4229,7 @@ def _num(text):
 
 def overseas_prize_man(meta, place, year, rates):
     """海外のレースの着順の本賞金（万円）。外貨の賞金と為替レートが分からなければ None"""
-    if not meta or not str(place).isdigit() or not 1 <= int(place) <= 5:
+    if not meta or not str(place).isdigit() or not 1 <= int(place) <= OVERSEAS_MAX_PRIZE_PLACE:
         return None
     amount = _num(meta.get(f"{int(place)}着賞金", ''))
     cur = meta.get('通貨', '')
@@ -9070,9 +9088,13 @@ def overseas_race_detail(race_id):
     rates = exchange_rates()
     rate = (rates.get((d.year, meta['通貨'])) or rates.get((d.year, normalize_currency(meta['通貨'])))) \
         if meta.get('通貨') else None
+    # 賞金の入力欄は、記録されている馬の最も後ろの着順（入力済みの賞金があればその着順）まで表示する
+    places = [int(x['place']) for x in runners if str(x['place']).isdigit()]
+    filled = [i for i, c in enumerate(OVERSEAS_PRIZE_COLS, start=1) if meta.get(c)]
+    n = min(max(places + filled + [5 if not places else 1]), OVERSEAS_MAX_PRIZE_PLACE)
     return render_template('overseas_race_detail.html', race=race, meta=meta, runners=runners, date=d,
                            countries=sorted(set(RR.COUNTRY_ABBR.values())), rate=rate,
-                           prize_cols=OVERSEAS_PRIZE_COLS)
+                           prize_cols=OVERSEAS_PRIZE_COLS[:n])
 
 @app.route('/race_detail')
 def race_detail():

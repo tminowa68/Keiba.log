@@ -80,7 +80,8 @@
             <label>グレード <input name="グレード" value="{{ meta['グレード'] }}" size="4" placeholder="G1"></label>
             <label>通貨 <input name="通貨" value="{{ meta['通貨'] }}" size="8" placeholder="米ドル"></label>
             <br>
-            {% for c in prize_cols %}<label>{{ c }} <input name="{{ c }}" value="{{ meta[c] }}" size="12" inputmode="decimal"></label>{% endfor %}
+            {# 賞金の入力欄は5着ごとに改行する #}
+            {% for c in prize_cols %}<label>{{ c }} <input name="{{ c }}" value="{{ meta.get(c, '') }}" size="12" inputmode="decimal"></label>{% if loop.index % 5 == 0 and not loop.last %}<br>{% endif %}{% endfor %}
             <br>
             <button type="submit" class="update-btn">保存</button>
             <span id="overseasStatus"></span>
