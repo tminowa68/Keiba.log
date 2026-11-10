@@ -9044,7 +9044,7 @@ def nar_race_list():
 def overseas_race_list():
     """海外競馬：年ごとに、登録済みの海外のレース（海外レースシート・年_レース結果のレースIDが「O〜」の行）を
     国で切り替えて表示する"""
-    prefetch_horse_sheets(["Horses", OVERSEAS_SHEET])
+    prefetch_horse_sheets(["Horses", OVERSEAS_SHEET, RACE_NAME_SHEET])
     this_year = datetime.now().year
     year = request.args.get('year', default=this_year, type=int)
     country = request.args.get('country', '').strip()
@@ -9083,7 +9083,7 @@ def overseas_race_list():
             registered = {h[H_NAME].strip() for h in get_all_horses() if len(h) > H_NAME and h[H_NAME].strip()}
             for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, cond, keep):
                 x = runner_row_to_result(r)
-                if not x or not x['overseas'] or not x['is_result'] or x['date'].year != year:
+                if not x or not x['overseas'] or x['date'].year != year:
                     continue
                 race = races.setdefault(x['race_id'], {'id': x['race_id'], 'date': x['date'], 'venue': '',
                                                        'country': x['country'], 'name': x['name'],
@@ -9091,7 +9091,11 @@ def overseas_race_list():
                                                        'num': x['num']})
                 if not race.get('country'):
                     race['country'] = x['country']
+                # 出走馬は日本の調教馬だけ
+                if not x['is_result'] or x['trained'] != 'JPN':
+                    continue
                 race['horses'].append({'name': x['horse_name'], 'place': x['place'],
+                                       'place_label': f"{x['place']}着" if str(x['place']).isdigit() else x['place'],
                                        'registered': x['horse_name'] in registered})
         except Exception as e:
             print(f"海外のレースの読み込みエラー: {e}")
@@ -9103,11 +9107,21 @@ def overseas_race_list():
     countries = sorted({r['country'] for r in races.values() if r['country']})
     if country not in countries:
         country = ''
-    shown = sorted((r for r in races.values() if not country or r['country'] == country),
-                   key=lambda r: (r['date'], r['name']))
-    for r in shown:
-        r['title_html'] = race_title_html(r['name'], r['grade'], f"/race_detail?id={quote(r['id'])}")
+    for r in races.values():
         r.setdefault('num', '')
+    num_key = lambda r: int(r['num']) if str(r['num']).isdigit() else 99
+    shown = sorted((r for r in races.values() if not country or r['country'] == country),
+                   key=lambda r: (r['date'], r['country'], r['venue'], num_key(r), r['name']))
+    for i, r in enumerate(shown):
+        # レース名はレース名変換表で変換する（冠は除かない）
+        r['title_html'] = race_title_html(short_race_name(r['name'], strip_prefix=False), r['grade'],
+                                          f"/race_detail?id={quote(r['id'])}")
+        # 同じ日・同じ国と競馬場のレースは、日付と開催のセルを結合する（最初の行に結合する行の数）
+        key = (r['date'], r['country'], r['venue'])
+        if i and (shown[i - 1]['date'], shown[i - 1]['country'], shown[i - 1]['venue']) == key:
+            r['rowspan'] = 0
+        else:
+            r['rowspan'] = sum(1 for x in shown[i:] if (x['date'], x['country'], x['venue']) == key)
     return render_template('overseas_race_list.html', year=year, years=sorted(years), country=country,
                            countries=countries, races=shown)
 

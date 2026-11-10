@@ -2593,3 +2593,5 @@ td.col-last-race {
 }
 .overseas-country-btn.active { background-color: #28a745; color: white; }
 .overseas-race-table td { vertical-align: middle; }
+.overseas-venue-cell { white-space: nowrap; }
+.overseas-venue-cell div + div { margin-top: 2px; font-size: 0.9em; color: #555; }
