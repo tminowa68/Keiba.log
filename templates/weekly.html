@@ -10,7 +10,7 @@
         {% endif %}
     {% endwith %}
 
-    {% set stable_q = ('&stable=' ~ (stable|urlencode)) if stable else '' %}
+    {% set stable_q = (('&stable=' ~ (stable|urlencode)) if stable else '') ~ (('&section=' ~ section) if section else '') %}
     <div style="margin-bottom: 12px;">
         <a href="/weekly?date={{ prev_week }}{{ stable_q }}">← 前の週</a>
         <a href="/weekly?{{ stable_q[1:] }}" style="margin-left: 10px;">今週</a>
@@ -18,8 +18,15 @@
         <form method="GET" action="/weekly" style="display: inline-block; margin-left: 15px;">
             <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px;">
             {% if stable %}<input type="hidden" name="stable" value="{{ stable }}">{% endif %}
+            {% if section %}<input type="hidden" name="section" value="{{ section }}">{% endif %}
             <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
         </form>
+    </div>
+    {# 表示する情報（どれか1つ）。押したときにその情報だけを読み込む #}
+    <div class="weekly-sections">
+        {% for key, label in [('registered', '登録馬'), ('cancelled', '抹消馬'), ('pasture', '放牧入厩'), ('changes', '変更')] %}
+        <a class="weekly-section-btn{% if section == key %} active{% endif %}" href="/weekly?date={{ date_for_input }}&section={{ key }}{{ ('&stable=' ~ (stable|urlencode)) if stable else '' }}">{{ label }}</a>
+        {% endfor %}
     </div>
 
     <div class="select-stables">
@@ -50,10 +57,11 @@
     </div>
 
     <h2 style="margin-top: 15px;">{{ week_label }}{% if stable %}　{{ stable|stable_html }}{% endif %}</h2>
-    <p style="margin: 0; color: #555;">
-        登録馬 {{ registered|length }}頭／抹消馬 {{ cancelled|length }}頭／放牧入厩 {{ pasture|length }}件／変更 {{ changes|length }}件
-    </p>
+    {% if section %}
     {% with target_source='weekly', target_count=unregistered_count, target_label='未登録の馬をJRAから登録', target_date=date_for_input %}{% include "_auto_register.html" %}{% endwith %}
+    {% else %}
+    <p style="margin: 8px 0 0; color: #555;">表示する情報（登録馬・抹消馬・放牧入厩・変更）を選んでください。</p>
+    {% endif %}
 </section>
 
 {# 日付・馬名・性別・馬齢（data-col は並び順で選んだ列の背景色を変えるための目印） #}
@@ -129,6 +137,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             <td>{% if h.parent_type %}{% if not h.has_url %}<a href="/add_parent?p_type={{ h.parent_type }}&p_name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif h.stable %}{{ h.stable|stable_html }}{% elif h.parent_type == 'Sire' %}<span class="parent-sire">種馬</span>{% else %}<span class="parent-dam">繁殖</span>{% endif %}{% elif not h.linkable %}<a href="/add_horse?name={{ h.name|urlencode }}" class="btn-url">URL</a>{% elif not h.has_url %}<a href="/edit_horse/{{ h.name }}" class="btn-url">URL</a>{% else %}{{ h.stable|stable_html }}{% endif %}</td>
 {%- endmacro %}
 
+{% if section == 'registered' %}
 <section>
     <div class="section-title">
         <h3 class="m-0">登録馬（{{ registered|length }}頭）</h3>
@@ -161,7 +170,9 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     <p class="weekly-empty">この週の登録馬はまだ登録されていません。<br>通常、月曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
+{% endif %}
 
+{% if section == 'cancelled' %}
 <section>
     <div class="section-title">
         <h3 class="m-0">抹消馬（{{ cancelled|length }}頭）</h3>
@@ -190,7 +201,9 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     <p class="weekly-empty">この週の抹消馬はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
+{% endif %}
 
+{% if section == 'pasture' %}
 <section>
     <div class="section-title">
         <h3 class="m-0">放牧入厩（{{ pasture|length }}件）</h3>
@@ -219,7 +232,9 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     <p class="weekly-empty">この週の放牧・入厩はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
+{% endif %}
 
+{% if section == 'changes' %}
 <section>
     <div class="section-title">
         <h3 class="m-0">変更（{{ changes|length }}件）</h3>
@@ -250,6 +265,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
     <p class="weekly-empty">この週の変更はまだ登録されていません。<br>通常、月曜日と木曜日に更新されます。<a href="/import_horses">データ更新</a></p>
     {% endif %}
 </section>
+{% endif %}
 <script>
 // 各表の並べ替えと最大表示件数。並び順が同じ値の行は、日付（古い順）・馬齢（高い順）・馬名の順に並べる。
 // 値が無い行（最新レース・総本賞金が無い馬など）は、昇順・降順のどちらでも最後にする
@@ -314,6 +330,10 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
             }
             apply(ctrl);
         }));
+        // 出走履歴の日付から開いたときは、その項目（放牧・入厩・去勢・馬主変更など）だけを選んだ状態にする
+        const kindParam = {{ kind | tojson }};
+        const target = kindParam && buttons.find(b => b.dataset.kind === kindParam);
+        if (target) buttons.forEach(b => b.classList.toggle('active', b === target));
         apply(ctrl);
     });
 })();
@@ -321,6 +341,7 @@ data-date="{{ h.date.isoformat() }}" data-name="{{ h.name }}" data-age="{{ h.age
 const allStables = {{ stables | tojson | safe }};
 const selectedStable = {{ stable | tojson }};
 const currentDate = {{ date_for_input | tojson }};
+const currentSection = {{ section | tojson }};
 
 const rowMap = {
     'あ': ['あ', 'い', 'う', 'え', 'お'],
@@ -430,11 +451,12 @@ function onStableChange() {
     const value = document.getElementById('reg_stable_select').value;
     let url = '/weekly?date=' + encodeURIComponent(currentDate);
     if (value) url += '&stable=' + encodeURIComponent(value);
+    if (currentSection) url += '&section=' + currentSection;
     location.href = url;
 }
 
 function resetFilter() {
-    location.href = '/weekly?date=' + encodeURIComponent(currentDate);
+    location.href = '/weekly?date=' + encodeURIComponent(currentDate) + (currentSection ? '&section=' + currentSection : '');
 }
 
 window.onload = function() {

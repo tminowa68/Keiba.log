@@ -2578,3 +2578,10 @@ td.col-last-race {
 /* 通過順：前から1/4以内は赤、3/4より後ろは青の背景に白い文字 */
 .corner-box.corner-front { background: #d32f2f; border-color: #d32f2f; color: #fff; font-weight: bold; }
 .corner-box.corner-back { background: #1565c0; border-color: #1565c0; color: #fff; font-weight: bold; }
+/* 週間レポート：表示する情報（登録馬・抹消馬・放牧入厩・変更）のボタン（1つだけ選ぶ） */
+.weekly-sections { margin: 4px 0 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.weekly-section-btn {
+    display: inline-block; padding: 6px 16px; border: 1px solid #1565c0; border-radius: 4px;
+    color: #1565c0; background: #fff; text-decoration: none; font-weight: bold;
+}
+.weekly-section-btn.active { background: #1565c0; color: #fff; }

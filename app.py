@@ -3193,6 +3193,10 @@ def rest_label(before, after):
 
 SHORT_PASTURE_DAYS = 10   # 放牧から入厩までがこの日数以下の放牧は表示しない
 
+def weekly_url(d, section, kind=''):
+    """その日の週間レポート（section：registered／cancelled／pasture／changes、kind：項目の絞り込み）のURL"""
+    return f"/weekly?date={d.isoformat()}&section={section}" + (f"&kind={quote(kind)}" if kind else '')
+
 def pasture_note(pasture_history, start, end):
     """前のレースの翌日〜次のレースの日（end が無ければ以降すべて）の放牧・入厩を
     「放牧：3月20日→入厩：4月10日／放牧：5月1日→入厩：6月1日」にする。
@@ -3207,15 +3211,19 @@ def pasture_note(pasture_history, start, end):
             continue
         if out_date and in_date and (in_date - out_date).days <= SHORT_PASTURE_DAYS:
             continue
-        texts = [f"{label}：{d.month}月{d.day}日" for label, d in (('放牧', out_date), ('入厩', in_date)) if d]
+        # 日付はその日の週間レポート（放牧入厩の放牧・入厩を選んだ状態）へのリンクにする
+        texts = [f'{label}：<a href="{weekly_url(d, "pasture", label)}">{d.month}月{d.day}日</a>'
+                 for label, d in (('放牧', out_date), ('入厩', in_date)) if d]
         parts.append('→'.join(texts))
-    return '／'.join(parts)
+    from markupsafe import Markup
+    return Markup('／'.join(parts))
 
 def build_race_history(race_results, changes_history, birth_year=None, pasture_history=(), cancel_dates=(),
                        registration_date=None):
     """出走履歴の表示用：レースと、Changesシートの転厩・去勢の記録を日付順（新しい順）に並べる。
     記録の日付と同じ日のレースは、記録より後（その記録の後に出走したレース）として扱う。
     日付は月日・曜日だけにし、年ごとにまとめて先頭の行に「2026年／3歳」の欄（year_label・year_rowspan）を付ける"""
+    from markupsafe import Markup
     items = []
     # 前のレースからの間隔（中○週。最初のレースは空）
     chrono_races = sorted(race_results, key=lambda r: (r['date'], int(r['num']) if str(r['num']).isdigit() else 0))
@@ -3251,7 +3259,7 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         label = rest_label(before['date'], after['date'])
         note = pasture_note(pasture_history, before['date'], after['date'])
         if label:
-            text = f"休養：{label}" + (f"（{note}）" if note else '')
+            text = Markup(f"休養：{label}" + (f"（{note}）" if note else ''))
         elif note:
             # 休養（中6週以上）に当たらない間の放牧は、放牧だけの行にする
             text = note
@@ -3303,6 +3311,19 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
         items.append(((d, 3, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
     history = [item for _, item in items]
+    # 日付のリンク：JRAのレースはその日・その競馬場の番組表、記録はその日の週間レポート（記録の種類の情報を選んだ状態）
+    for item in history:
+        d = item['date']
+        if item['kind'] == 'race':
+            if not item.get('nar') and not item.get('overseas') and item.get('venue'):
+                item['date_url'] = f"/races?date={d.isoformat()}&venue={quote(item['venue'])}"
+        elif item['kind'] == 'change':
+            item['date_url'] = weekly_url(d, 'changes', item.get('type', ''))
+        elif item['kind'] == 'cancel':
+            item['date_url'] = weekly_url(d, 'cancelled') if item.get('text') == 'JRA登録を抹消' \
+                else weekly_url(d, 'changes', '地方抹消')
+        elif item['kind'] == 'entry':
+            item['date_url'] = weekly_url(d, 'registered')
     for item in history:
         if item['kind'] == 'race':
             item['date_label'] = format_month_day(item['date'])
@@ -7183,6 +7204,21 @@ def weekly():
     stable_filter = request.args.get('stable', '').strip()
     week_start = thursday_of_race_week(base)
     week_end = week_start + timedelta(days=6)
+    # 表示する情報（登録馬・抹消馬・放牧入厩・変更のどれか1つ）。選んだ情報のシートだけを読み込む。
+    # kind：放牧入厩・変更の項目の絞り込み（出走履歴の日付から開いたとき）
+    section = request.args.get('section', '').strip()
+    if section not in ('registered', 'cancelled', 'pasture', 'changes'):
+        section = ''
+    kind = request.args.get('kind', '').strip()
+    page_args = dict(section=section, kind=kind,
+                     week_label=f"{format_date_jp(week_start, weekday=True)}〜{format_date_jp(week_end, weekday=True)}",
+                     stable=stable_filter, date_for_input=base.strftime('%Y-%m-%d'),
+                     prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
+                     next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
+    if not section:
+        # 最初は情報を読み込まず、ボタンだけを表示する
+        return render_template('weekly.html', unregistered_count=0, registered=[], cancelled=[], pasture=[],
+                               changes=[], stables=get_stables_list(), **page_args)
 
     def in_week(d):
         return d is not None and week_start <= d <= week_end
@@ -7197,7 +7233,9 @@ def weekly():
     try:
         sh = gc.open(horse_data)
 
-        prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes", "抹消", "放牧入厩"])
+        # Changesシートはマル地のマークにも使うため、どの情報でも読み込む
+        prefetch_horse_sheets(["Horses", "Sire", "Dam", "Changes"] + {'registered': [], 'cancelled': ["抹消"],
+                                                                      'pasture': ["放牧入厩"], 'changes': []}[section])
         horses_data = horse_sheet_values("Horses")[1:]
         if not horses_data:
             sheet_not_ready("Horsesシートのデータが0件です")
@@ -7218,7 +7256,7 @@ def weekly():
                 r = list(r) + [''] * (len(HORSE_COLUMNS) - len(r))
                 r[H_REG_STATUS] = '早期'
             reg_date = parse_full_date(cell(r, H_REGISTRATION))
-            if in_week(reg_date):
+            if section == 'registered' and in_week(reg_date):
                 # 状態は登録した時の値（O列）で固定する。O列が無い馬は、競走馬登録日と生年から
                 # 登録時の状態（早期／空欄）を求める
                 status = cell(r, H_REG_STATUS)
@@ -7243,7 +7281,7 @@ def weekly():
                             'total': cell(r, P_TOTAL_PRIZE), 'horse_id': RR.horse_id_from_url(cell(r, P_JRA_URL))}
                     # Horsesシートから移した馬も、競走馬登録日の週の登録馬に表示する
                     reg_date = parse_full_date(cell(r, P_REGISTRATION))
-                    if in_week(reg_date) and display_name_of_row(r):
+                    if section == 'registered' and in_week(reg_date) and display_name_of_row(r):
                         registered.append({'date': reg_date, 'name': display_name_of_row(r), 'sire': cell(r, P_SIRE),
                                            'dam': cell(r, P_DAM), 'status': cell(r, P_REG_STATUS),
                                            'sheet': p_type, 'row_no': row_no, 'row': parent_row_as_horse(r, gender),
@@ -7260,7 +7298,7 @@ def weekly():
 
         # Changesシートには馬名変更・去勢・転厩・馬主変更を記録する（抹消は抹消シート）
         # 「仮」の記録（レースの結果から推定した日付）は表示しない
-        for r in horse_sheet_values("Changes")[1:]:
+        for r in (horse_sheet_values("Changes")[1:] if section == 'changes' else []):
             d = parse_full_date(cell(r, C_DATE))
             # 騎手変更（全出走馬を記録している）は週間レポートには表示しない
             if in_week(d) and cell(r, C_TYPE) not in ('抹消', '騎手変更') and cell(r, C_TENTATIVE) != '仮' \
@@ -7270,7 +7308,7 @@ def weekly():
 
         cancelled_keys = set()
         try:
-            for r in horse_sheet_values("抹消")[1:]:
+            for r in (horse_sheet_values("抹消")[1:] if section == 'cancelled' else []):
                 d = parse_full_date(cell(r, 0))
                 if in_week(d) and (d, cell(r, 1)) not in cancelled_keys:
                     cancelled_keys.add((d, cell(r, 1)))
@@ -7279,7 +7317,7 @@ def weekly():
             pass
 
         try:
-            for r in horse_sheet_values("放牧入厩")[1:]:
+            for r in (horse_sheet_values("放牧入厩")[1:] if section == 'pasture' else []):
                 out_date, in_date = parse_full_date(cell(r, PS_OUT)), parse_full_date(cell(r, PS_IN))
                 # 「仮」の記録（実際の日付とは限らないもの）は表示しない
                 if in_week(out_date) and cell(r, PS_OUT_TENTATIVE) != '仮':
@@ -7412,11 +7450,7 @@ def weekly():
     return render_template('weekly.html',
                            unregistered_count=unregistered_count,
                            registered=registered, cancelled=cancelled, pasture=pasture, changes=changes,
-                           week_label=f"{format_date_jp(week_start, weekday=True)}〜{format_date_jp(week_end, weekday=True)}",
-                           stables=get_stables_list(), stable=stable_filter,
-                           date_for_input=base.strftime('%Y-%m-%d'),
-                           prev_week=(week_start - timedelta(days=7)).strftime('%Y%m%d'),
-                           next_week=(week_start + timedelta(days=7)).strftime('%Y%m%d'))
+                           stables=get_stables_list(), **page_args)
 
 
 @app.route('/add_horse', methods=['POST'])
