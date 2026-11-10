@@ -314,8 +314,8 @@ def is_special_race_name(race_name):
     return bool(name) and not re.match(r'^(障害)?\d歳', name)
 
 def prize_sum(prizes):
-    """本賞金（万円）の合計。地方競馬の本賞金は1万円未満の端数があるため小数1桁にし、整数ならintで返す"""
-    total = round(sum(float(p or 0) for p in prizes), 1)
+    """本賞金（万円）の合計。地方競馬・海外の本賞金は1万円未満の端数（100円単位）があるため小数2桁にし、整数ならintで返す"""
+    total = round(sum(float(p or 0) for p in prizes), 2)
     return int(total) if total == int(total) else total
 
 
