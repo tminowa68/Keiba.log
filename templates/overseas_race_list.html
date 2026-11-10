@@ -33,24 +33,29 @@
         <thead>
             <tr>
                 <th>日付</th>
-                <th>国</th>
-                <th>競馬場</th>
+                <th>開催</th>
+                <th>R</th>
                 <th>レース名</th>
                 <th>コース</th>
-                <th>出走馬（着順）</th>
+                <th>日本馬（着順）</th>
             </tr>
         </thead>
         <tbody>
             {% for r in races %}
             <tr>
-                <td>{{ r.date|mdate }}</td>
-                <td>{{ r.country }}</td>
-                <td>{{ r.venue }}</td>
+                {% if r.rowspan %}
+                <td rowspan="{{ r.rowspan }}" class="nowrap">{{ r.date|mdate }}</td>
+                <td rowspan="{{ r.rowspan }}" class="overseas-venue-cell">
+                    <div>{{ r.country }}</div>
+                    {% if r.venue %}<div>{{ r.venue }}</div>{% endif %}
+                </td>
+                {% endif %}
+                <td>{% if r.num %}{{ r.num }}R{% endif %}</td>
                 <td class="col-details"><span class="race-name">{{ r.title_html }}</span></td>
                 <td>{% if r.course %}<span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') }}">{{ r.course }}</span>{% endif %}</td>
                 <td>
                     {% for h in r.horses %}
-                    <div>{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}{% if h.place %}（{{ h.place }}着）{% endif %}</div>
+                    <div>{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}{% if h.place_label %}（{{ h.place_label }}）{% endif %}</div>
                     {% endfor %}
                 </td>
             </tr>
