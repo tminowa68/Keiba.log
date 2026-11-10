@@ -35,6 +35,7 @@
                 <th>日付</th>
                 <th>国</th>
                 <th>競馬場</th>
+                <th>R</th>
                 <th>レース名</th>
                 <th>コース</th>
                 <th>出走馬（着順）</th>
@@ -46,6 +47,7 @@
                 <td>{{ r.date|mdate }}</td>
                 <td>{{ r.country }}</td>
                 <td>{{ r.venue }}</td>
+                <td>{% if r.num %}{{ r.num }}R{% endif %}</td>
                 <td class="col-details"><span class="race-name">{{ r.title_html }}</span></td>
                 <td>{% if r.course %}<span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') }}">{{ r.course }}</span>{% endif %}</td>
                 <td>

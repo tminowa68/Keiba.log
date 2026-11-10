@@ -4025,13 +4025,18 @@ def api_race_results_import_overseas():
 @app.route('/api/overseas_race/update', methods=['POST'])
 @login_required
 def api_overseas_race_update():
-    """race_detail から海外のレースの情報（国・競馬場・レース名・グレード・通貨・1〜5着賞金）を手直しする"""
+    """race_detail から海外のレースの情報（国・競馬場・レース番号・レース名・グレード・通貨・賞金）を手直しする"""
     data = request.get_json(silent=True) or {}
     race_id = str(data.get('race_id') or '').strip()
     if not is_overseas_id(race_id):
         return jsonify({'error': '海外のレースではありません。'}), 400
-    values = {c: str(data.get(c) or '').strip() for c in ('国', '競馬場', 'レース名', 'グレード', '通貨')
+    values = {c: str(data.get(c) or '').strip() for c in ('国', '競馬場', 'R', 'レース名', 'グレード', '通貨')
               + tuple(OVERSEAS_PRIZE_COLS)}
+    import unicodedata
+    values['R'] = re.sub(r'[RＲrｒ]$', '', unicodedata.normalize('NFKC', values['R']).strip())
+    if values['R'] and not values['R'].isdigit():
+        return jsonify({'error': 'レース番号は数字で入力してください。'}), 400
+    values['R'] = str(int(values['R'])) if values['R'] else ''
     for c in OVERSEAS_PRIZE_COLS:
         values[c] = values[c].replace(',', '')
         if values[c] and _num(values[c]) is None:
@@ -4108,7 +4113,7 @@ OVERSEAS_SHEET = "海外レース"
 OVERSEAS_MAX_PRIZE_PLACE = 20
 OVERSEAS_COLUMNS = ["レースID", "年月日", "国", "競馬場", "レース名", "略称", "グレード", "通貨",
                     "1着賞金", "2着賞金", "3着賞金", "4着賞金", "5着賞金", "URL"] + \
-    [f"{i}着賞金" for i in range(6, OVERSEAS_MAX_PRIZE_PLACE + 1)]
+    [f"{i}着賞金" for i in range(6, OVERSEAS_MAX_PRIZE_PLACE + 1)] + ["R"]
 OVERSEAS_PRIZE_COLS = [f"{i}着賞金" for i in range(1, OVERSEAS_MAX_PRIZE_PLACE + 1)]
 # 外国の通貨の円への換算（年ごとに決まっているレート。通貨は海外競馬発売のページの表記：米ドル、ユーロなど）
 RATE_SHEET = "為替レート"
@@ -4203,7 +4208,7 @@ _builtin_rates_recorded = False
 _overseas_header_ready = False
 
 def ensure_overseas_header(ws):
-    """海外レースシートの見出しに、後から足した列（6〜20着賞金）が無ければ足す"""
+    """海外レースシートの見出しに、後から足した列（6〜20着賞金・R（レース番号））が無ければ足す"""
     global _overseas_header_ready
     if _overseas_header_ready:
         return
@@ -4371,7 +4376,7 @@ def overseas_race_dict(meta, extra=None, rates=None):
     prizes = [overseas_prize_man(meta, i, d.year, rates) for i in range(1, 6)]
     country = meta.get('国') or extra.get('country', '')
     race = {'race_id': meta['レースID'], 'date': d, 'venue': meta.get('競馬場') or RR.country_name(country),
-            'kai': '', 'nichi': '', 'num': '', 'name': meta.get('レース名') or meta.get('略称') or extra.get('name', ''),
+            'kai': '', 'nichi': '', 'num': meta.get('R') or extra.get('num', ''), 'name': meta.get('レース名') or meta.get('略称') or extra.get('name', ''),
             'grade': meta.get('グレード') or extra.get('grade', ''), 'jump': extra.get('surface') == '障',
             'category': extra.get('category', ''), 'class': '', 'rule': overseas_rule(country),
             'weight_rule': extra.get('weight_rule', ''), 'distance': extra.get('distance', ''),
@@ -4576,7 +4581,9 @@ def import_overseas_result(html, url=''):
         values = {'レースID': m['レースID'] if m else overseas_race_id(race['date'], race['name']),
                   '年月日': race['date'].strftime('%Y%m%d'), '国': race['country'], '競馬場': race['venue'],
                   'レース名': race['name'], 'グレード': race['grade'], '通貨': race['currency'],
-                  '1着賞金': _fmt_num(race['prizes'][0]) if race['prizes'] else '', 'URL': url}
+                  '1着賞金': _fmt_num(race['prizes'][0]) if race['prizes'] else '', 'URL': url,
+                  'R': race.get('num', '')}
+        # レース番号は、手直しした番号があればそのままにする
         m = upsert_overseas_meta(values, overwrite=('国', '競馬場', 'レース名', 'グレード', 'URL'))
         race_row = overseas_race_dict(m, race, rates)
         rows = []
@@ -4602,7 +4609,7 @@ def update_overseas_race(race_id, values):
     """race_detail から海外のレースの情報（国・競馬場・レース名・グレード・通貨・1〜5着賞金）を手直しする。
     レースシート・成績シートのレース名・場・本賞金も書き直す"""
     meta = upsert_overseas_meta(dict(values, レースID=race_id),
-                                overwrite=('国', '競馬場', 'レース名', 'グレード', '通貨') + tuple(OVERSEAS_PRIZE_COLS))
+                                overwrite=('国', '競馬場', 'R', 'レース名', 'グレード', '通貨') + tuple(OVERSEAS_PRIZE_COLS))
     d = parse_full_date(meta['年月日'])
     rates = exchange_rates()
     ws_race, ws_runner = result_sheets(d.year, create=True)
@@ -4611,7 +4618,7 @@ def update_overseas_race(race_id, values):
     race_numbers, _ = _runner_row_numbers(ws_race, race_id)
     updates = []
     for no in race_numbers:
-        for col, v in (('場', venue), ('レース名', name), ('グレード', meta['グレード']),
+        for col, v in (('場', venue), ('R', meta['R']), ('レース名', name), ('グレード', meta['グレード']),
                        ('記号', overseas_rule(meta['国']))):
             updates.append({'range': f"{col_letter(RACE_SHEET_COLUMNS.index(col))}{no}", 'values': [[v]]})
         for i in range(1, 6):
@@ -4627,7 +4634,7 @@ def update_overseas_race(race_id, values):
         rule = row[RUNNER_COL['記号']]
         rule = re.sub(r'(?<!調教)国:\S+', f"国:{RR.country_name(meta['国'])}", rule) \
             if re.search(r'(?<!調教)国:', rule) else (overseas_rule(meta['国']) + ' ' + rule).strip()
-        vals = {'場': venue, 'レース名': name, 'グレード': meta['グレード'], '記号': rule}
+        vals = {'場': venue, 'R': meta['R'], 'レース名': name, 'グレード': meta['グレード'], '記号': rule}
         p = overseas_prize_man(meta, row[RUNNER_COL['着順']], d.year, rates)
         if p is not None:
             vals['本賞金'] = _fmt_num(p)
@@ -9046,7 +9053,8 @@ def overseas_race_list():
         d = parse_full_date(m['年月日'] or m['レースID'][1:9])
         if d and d.year == year:
             races[m['レースID']] = {'id': m['レースID'], 'date': d, 'country': m['国'], 'venue': m['競馬場'],
-                                   'name': m['レース名'] or m['略称'], 'grade': m['グレード'], 'course': '', 'horses': []}
+                                   'name': m['レース名'] or m['略称'], 'grade': m['グレード'], 'course': '', 'horses': [],
+                                   'num': m.get('R', '')}
     years = set()
     for m in overseas_meta():
         d = parse_full_date(m['年月日'] or m['レースID'][1:9])
@@ -9071,6 +9079,7 @@ def overseas_race_list():
                 race['course'] = course_label(c('コース'), c('コース詳細'), c('距離'), c('区分') == '障害') \
                     if c('距離') else ''
                 race['surface'] = c('コース')
+                race['num'] = race.get('num') or c('R')
             registered = {h[H_NAME].strip() for h in get_all_horses() if len(h) > H_NAME and h[H_NAME].strip()}
             for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, cond, keep):
                 x = runner_row_to_result(r)
@@ -9078,7 +9087,8 @@ def overseas_race_list():
                     continue
                 race = races.setdefault(x['race_id'], {'id': x['race_id'], 'date': x['date'], 'venue': '',
                                                        'country': x['country'], 'name': x['name'],
-                                                       'grade': x['grade'], 'course': '', 'horses': []})
+                                                       'grade': x['grade'], 'course': '', 'horses': [],
+                                                       'num': x['num']})
                 if not race.get('country'):
                     race['country'] = x['country']
                 race['horses'].append({'name': x['horse_name'], 'place': x['place'],
@@ -9097,6 +9107,7 @@ def overseas_race_list():
                    key=lambda r: (r['date'], r['name']))
     for r in shown:
         r['title_html'] = race_title_html(r['name'], r['grade'], f"/race_detail?id={quote(r['id'])}")
+        r.setdefault('num', '')
     return render_template('overseas_race_list.html', year=year, years=sorted(years), country=country,
                            countries=countries, races=shown)
 
@@ -9322,7 +9333,7 @@ def overseas_race_detail(race_id):
     going = '　'.join(f"{k}：{v}" for k, v in (('芝', c('芝')), ('ダート', c('ダート'))) if v)
     race = {'id': race_id, 'name': meta.get('レース名') or c('レース名') or meta.get('略称'),
             'abbr': meta.get('略称', ''), 'grade': meta.get('グレード') or c('グレード'),
-            'country': country, 'venue': meta.get('競馬場', ''),
+            'country': country, 'venue': meta.get('競馬場', ''), 'num': meta.get('R') or c('R'),
             'condition': ' '.join(x for x in (c('年齢条件'), c('重量')) if x),
             'course': course_label(c('コース'), c('コース詳細'), c('距離'), c('区分') == '障害') if c('距離') else '',
             'surface': c('コース'), 'time': c('発走時刻'), 'going': going, 'runners': c('頭数'),

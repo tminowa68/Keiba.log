@@ -5,7 +5,7 @@
     <section class="race-header-card">
         <h1>{{ race.name }}{% if race.grade %} <span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}</h1>
         <div class="race-info-main">
-            {{ date|jpdate(weekday=True) }} ／ <span class="overseas-mark">{{ race.country }}</span>{% if race.venue %} {{ race.venue }}{% endif %}
+            {{ date|jpdate(weekday=True) }} ／ <span class="overseas-mark">{{ race.country }}</span>{% if race.venue %} {{ race.venue }}{% endif %}{% if race.num %} ／ {{ race.num }}レース{% endif %}
         </div>
         <div class="race-info-sub">
             {% if race.time %}<span><strong>発走時刻:</strong> {{ race.time }}（現地時間）</span>{% endif %}
@@ -76,6 +76,7 @@
             <label>国 <input name="国" list="countryList" value="{{ meta['国'] }}"></label>
             <datalist id="countryList">{% for c in countries %}<option value="{{ c }}">{% endfor %}</datalist>
             <label>競馬場 <input name="競馬場" value="{{ meta['競馬場'] }}"></label>
+            <label>レース番号 <input name="R" value="{{ meta.get('R') or race.num }}" size="3" inputmode="numeric" placeholder="8"></label>
             <label>レース名 <input name="レース名" value="{{ meta['レース名'] or race.name }}"></label>
             <label>グレード <input name="グレード" value="{{ meta['グレード'] }}" size="4" placeholder="G1"></label>
             <label>通貨 <input name="通貨" value="{{ meta['通貨'] }}" size="8" placeholder="米ドル"></label>

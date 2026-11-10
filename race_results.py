@@ -9,6 +9,7 @@ JRAのレース結果ページの読み取りと、収得賞金・クラスの�
   1勝クラス：500万円以下 ／ 2勝クラス：1,000万円以下 ／ 3勝クラス：1,600万円以下 ／ オープン：1,600万円超
 """
 import re
+import unicodedata
 from datetime import date, timedelta
 from urllib.parse import urljoin
 
@@ -1527,8 +1528,16 @@ def parse_overseas_result_page(html_or_soup, url=''):
         venue_text = _text(date_el).replace(_text(country_el), '') if country_el else _text(date_el)
         vm = re.search(r'[)）]\s*(.+?)(?:競馬場)?\s*$', venue_text)
         venue = vm.group(1).strip() if vm else ''
-        num_img = cap.find('img', alt=re.compile(r'\d+レース'))
-        num = re.search(r'\d+', num_img['alt']).group(0) if num_img else ''
+        # レース番号（<div class="race_number"><img alt="8レース"></div>）。見出しの中に無ければ、表の前の
+        # （前のレースの表より後の）レース番号を使う
+        num_img = cap.find('img', alt=re.compile(r'\d+\s*レース'))
+        if not num_img:
+            el = table.find_previous(class_='race_number')
+            prev_table = table.find_previous('table', class_='overseas')
+            if el and el.find_parent('table') is None and \
+                    (prev_table is None or el.find_previous('table', class_='overseas') is prev_table):
+                num_img = el.find('img', alt=re.compile(r'\d+\s*レース'))
+        num = re.search(r'\d+', unicodedata.normalize('NFKC', num_img['alt'])).group(0) if num_img else ''
         name_el = cap.find(class_='race_name')
         name_text = _text(name_el) if name_el else ''
         gm = re.search(r'[（(]\s*((?:G|Ｇ)\s*[1-3１-３ⅠⅡⅢ]|L|Ｌ|リステッド)\s*[）)]\s*$', name_text)
