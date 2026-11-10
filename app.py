@@ -2816,13 +2816,16 @@ def result_detail_url(r):
         return f"/race_detail?id={quote(r['race_id'])}"
     return race_detail_url(r['date'], r['venue'], r['num'])
 
-def venue_label(r):
-    """出走履歴などの開催：「東京11R」。海外のレースは国名の略称のマークと競馬場（「[米] チャーチルダウンズ」）"""
+def overseas_country_mark(country):
+    """海外のレースの開催：国名（略称なら国名にして）の先頭4文字を四角で囲んだマーク（「アメリカ」「サウジア」）"""
     from markupsafe import Markup, escape
+    name = RR.country_name(country) or str(country or '')
+    return Markup(f'<span class="overseas-mark">{escape(name[:4])}</span>')
+
+def venue_label(r):
+    """出走履歴などの開催：「東京11R」。海外のレースは国名の先頭4文字のマークだけ（競馬場はレースのページに表示する）"""
     if r.get('overseas'):
-        abbr = RR.country_abbr(r.get('country')) or r.get('venue', '')
-        venue = r.get('venue', '') if r.get('venue') not in (r.get('country'), abbr) else ''
-        return Markup(f'<span class="overseas-mark">{escape(abbr)}</span>{escape(venue)}')
+        return overseas_country_mark(r.get('country') or r.get('venue', ''))
     return f"{r.get('venue', '')}{r.get('num', '')}R"
 
 app.jinja_env.globals['venue_label'] = venue_label
@@ -2853,8 +2856,10 @@ def race_parts(text, year_only=False):
     url = race_detail_url(p['date'], p['venue'], p['num']) if p['date'] else ''
     if p['date'] and p['venue'] and not p['num']:
         url += '&name=' + quote(p['title'])   # 海外のレース
+    # 開催：「東京5R」。海外のレース（レース番号が無い）は国名の先頭4文字のマーク
+    venue_num = (f"{p['venue']}{p['num']}R" if p['num'] else overseas_country_mark(p['venue'])) if p['venue'] else ''
     return {'when': when, 'title_html': race_title_html(p['title'], p['rank'], url, p['marks']), 'place': p['place'],
-            'venue_num': (f"{p['venue']}{p['num']}R" if p['num'] else p['venue']) if p['venue'] else ''}
+            'venue_num': venue_num}
 
 def race_inline_html(text):
     """indexの最新レース：「10/4 東京5R 未勝利 1着」（レース名はrace_detailへのリンク）"""
@@ -9112,12 +9117,18 @@ def overseas_race_detail(race_id):
     rates = exchange_rates()
     rate = (rates.get((d.year, meta['通貨'])) or rates.get((d.year, normalize_currency(meta['通貨'])))) \
         if meta.get('通貨') else None
+    # 本賞金：海外レースシートに賞金を入力した着順はすべて（換算できなければレースシートの1〜5着）
+    prize_items = [(i, overseas_prize_man(meta, i, d.year, rates)) for i in range(1, OVERSEAS_MAX_PRIZE_PLACE + 1)
+                   if meta.get(f"{i}着賞金")]
+    prize_items = [(i, v) for i, v in prize_items if v is not None] or list(enumerate(race['prizes'], start=1))
+    race['prize_items'] = prize_items
     # 賞金の入力欄は、記録されている馬の最も後ろの着順（入力済みの賞金があればその着順）まで表示する
     places = [int(x['place']) for x in runners if str(x['place']).isdigit()]
     filled = [i for i, c in enumerate(OVERSEAS_PRIZE_COLS, start=1) if meta.get(c)]
     n = min(max(places + filled + [5 if not places else 1]), OVERSEAS_MAX_PRIZE_PLACE)
     return render_template('overseas_race_detail.html', race=race, meta=meta, runners=runners, date=d,
                            countries=sorted(set(RR.COUNTRY_ABBR.values())), rate=rate,
+                           rate_text=repr(rate) if rate else '',
                            prize_cols=OVERSEAS_PRIZE_COLS[:n])
 
 @app.route('/race_detail')

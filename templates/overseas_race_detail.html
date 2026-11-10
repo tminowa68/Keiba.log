@@ -14,9 +14,9 @@
             {% if race.going %}<span><strong>馬場:</strong> {{ race.going }}</span>{% endif %}
             {% if race.runners %}<span><strong>頭数:</strong> {{ race.runners }}頭</span>{% endif %}
         </div>
-        {% if race.prizes %}
+        {% if race.prize_items %}
         <div class="race-info-prize">
-            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ p|man }}{% endfor %}
+            <strong>本賞金（万円）</strong>{% for i, p in race.prize_items %}　{{ i }}着：{{ p|man }}{% endfor %}
         </div>
         {% endif %}
         {% if race.url %}<div class="race-info-sub"><a href="{{ race.url }}" target="_blank" rel="noopener">JRAの海外競馬発売のページ</a></div>{% endif %}
@@ -71,7 +71,7 @@
     <section class="overseas-edit">
         <h3>レースの情報の手直し</h3>
         <p class="overseas-note">ここで直したレース名・競馬場は、同じ国・同じ略称（{{ race.abbr or 'なし' }}）のレースを後から記録するときにも使います。
-            賞金は外貨のまま入力し、為替レートシートの{{ date.year }}年のレートで万円に換算します{% if meta['通貨'] %}（{{ meta['通貨'] }}：{{ '%g'|format(rate) ~ '円' if rate else 'レート未登録' }}）{% endif %}。</p>
+            賞金は外貨のまま入力し、為替レートシートの{{ date.year }}年のレートで万円に換算します{% if meta['通貨'] %}（{{ meta['通貨'] }}：{{ rate_text ~ '円' if rate else 'レート未登録' }}）{% endif %}。</p>
         <form id="overseasForm" class="overseas-form">
             <label>国 <input name="国" list="countryList" value="{{ meta['国'] }}"></label>
             <datalist id="countryList">{% for c in countries %}<option value="{{ c }}">{% endfor %}</datalist>
