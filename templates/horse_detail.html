@@ -473,7 +473,7 @@
                 <tr class="{{ {'rest': 'rest-row', 'cancel': 'cancel-row'}.get(r.kind, 'transfer-row') }}{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
                     {# 同じ日の記録は日付の欄を1つにまとめる #}
-                    {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{{ r.date_label }}</td>{% endif %}
+                    {% if not r.date_merged %}<td class="nowrap"{% if r.date_rowspan %} rowspan="{{ r.date_rowspan }}"{% endif %}>{% if r.date_url and r.date_label %}<a href="{{ r.date_url }}">{{ r.date_label }}</a>{% else %}{{ r.date_label }}{% endif %}</td>{% endif %}
                     <td></td>{# 中間隔の列（空） #}
                     <td class="bl" colspan="20">{{ r.text|area_marks if r.type == '転厩' else r.text }}</td>
                 </tr>
@@ -482,7 +482,7 @@
                 {% set rank_class = {'1': 'rank-1', '2': 'rank-2', '3': 'rank-3'} %}
                 <tr class="{{ year_start }}">
                     {% if r.year_rowspan %}<td class="year-cell" rowspan="{{ r.year_rowspan }}">{{ r.year }}年{% if r.age is not none %}<br>{{ r.age }}歳{% endif %}</td>{% endif %}
-                    <td class="nowrap">{{ r.date_label }}</td>
+                    <td class="nowrap">{% if r.date_url %}<a href="{{ r.date_url }}">{{ r.date_label }}</a>{% else %}{{ r.date_label }}{% endif %}</td>
                     <td class="center">{{ r.interval_weeks }}</td>
                     <td class="nowrap bl">{{ venue_label(r) }}</td>
                     {% set race_name_html, race_rank_html = history_race_name_and_rank(r) %}
