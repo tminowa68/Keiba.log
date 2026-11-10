@@ -2765,7 +2765,8 @@ def race_title(name, grade='', race_class='', jump=False, nar=False):
         # 地方のレース名は空白より前を冠として除かない（「Ｃ１二 三」のように組の間に空白がある）
         title, rank = RR.nar_title_and_rank(name, nar_grade_label(grade, name), race_class,
                                             nar_class_mark(RR.nar_display_name(race_class)))
-        return short_race_name(title, strip_prefix=False), rank
+        # 地方のレース名の英数字は半角にする（レース名変換表の「Ｃ」なども）
+        return RR.halfwidth_alnum(short_race_name(title, strip_prefix=False)), rank
     if name:
         cond = _CONDITION_RACE_RE.match(name)
         if cond and not grade:
@@ -9034,7 +9035,9 @@ def read_race_result(race_date, venue, num):
         jump = c('区分') == '障害'
         detail = c('コース詳細')
         going = '　'.join(f"{k}：{v}" for k, v in (('芝', c('芝')), ('ダート', c('ダート'))) if v)
-        race = {'name': c('レース名'), 'grade': c('グレード'), 'kai': c('回'), 'nichi': c('日'),
+        # 地方のレース名の英数字は半角にする
+        race = {'name': RR.halfwidth_alnum(c('レース名')) if c('レースID').startswith('N') else c('レース名'),
+                'grade': c('グレード'), 'kai': c('回'), 'nichi': c('日'),
                 'num': f"{int(num)}レース", 'race_num': int(num), 'jump': jump,
                 'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
                                                   c('記号'), c('重量')) if x),
