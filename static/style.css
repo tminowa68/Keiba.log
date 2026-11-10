@@ -2585,3 +2585,11 @@ td.col-last-race {
     color: #1565c0; background: #fff; text-decoration: none; font-weight: bold;
 }
 .weekly-section-btn.active { background: #1565c0; color: #fff; }
+
+/* 海外競馬：国の切り替えボタン */
+.overseas-country-btn {
+    display: inline-block; padding: 6px 16px; margin: 0 8px 6px 0; text-decoration: none;
+    border: 1px solid #28a745; border-radius: 4px; font-weight: bold; background-color: white; color: #28a745;
+}
+.overseas-country-btn.active { background-color: #28a745; color: white; }
+.overseas-race-table td { vertical-align: middle; }

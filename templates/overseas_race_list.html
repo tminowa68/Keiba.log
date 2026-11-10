@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block title %}海外競馬 {{ year }}年 - keiba.log{% endblock %}
+{% block content %}
+<section>
+    {% set country_q = ('&country=' ~ (country|urlencode)) if country else '' %}
+    <div style="margin-bottom: 12px;">
+        <a href="/overseas_races?year={{ year - 1 }}{{ country_q }}">← 前の年</a>
+        <a href="/overseas_races" style="margin-left: 10px;">今年</a>
+        <a href="/overseas_races?year={{ year + 1 }}{{ country_q }}" style="margin-left: 10px;">次の年 →</a>
+        <form method="GET" action="/overseas_races" style="display: inline-block; margin-left: 15px;">
+            <select name="year" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+                {% for y in years %}<option value="{{ y }}"{% if y == year %} selected{% endif %}>{{ y }}年</option>{% endfor %}
+            </select>
+            <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
+        </form>
+    </div>
+
+    <h1>{{ year }}年 海外競馬{% if country %}（{{ country }}）{% endif %}</h1>
+
+    {% if countries %}
+    <div style="margin-bottom: 12px;">
+        <a href="/overseas_races?year={{ year }}" class="overseas-country-btn{% if not country %} active{% endif %}">すべて</a>
+        {% for c in countries %}
+        <a href="/overseas_races?year={{ year }}&country={{ c|urlencode }}"
+           class="overseas-country-btn{% if country == c %} active{% endif %}">{{ c }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <hr>
+
+    {% if races %}
+    <table class="race-table overseas-race-table">
+        <thead>
+            <tr>
+                <th>日付</th>
+                <th>国</th>
+                <th>競馬場</th>
+                <th>レース名</th>
+                <th>コース</th>
+                <th>出走馬（着順）</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in races %}
+            <tr>
+                <td>{{ r.date|mdate }}</td>
+                <td>{{ r.country }}</td>
+                <td>{{ r.venue }}</td>
+                <td class="col-details"><span class="race-name">{{ r.title_html }}</span></td>
+                <td>{% if r.course %}<span class="course-label {{ {'芝': 'course-turf', 'ダ': 'course-dirt', '障': 'course-jump'}.get(r.surface, '') }}">{{ r.course }}</span>{% endif %}</td>
+                <td>
+                    {% for h in r.horses %}
+                    <div>{% if h.registered %}<a href="/horse/{{ h.name|urlencode }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}{% if h.place %}（{{ h.place }}着）{% endif %}</div>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="no-data-text">{{ year }}年に登録済みの海外のレースはありません。</p>
+    {% endif %}
+</section>
+{% endblock %}

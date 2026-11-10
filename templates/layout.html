@@ -17,17 +17,22 @@
         <a href="/" class="{% if request.path == '/' or request.path.startswith('/horse/') %}active{% endif %}">
             <span>競走馬</span><span>一覧</span>    
         </a>
-        <a href="/races" class="{% if request.path == '/races' or request.path == '/race_detail' %}active{% endif %}">
-            <span>レース</span><span>情報</span>
+        {% set nar_page = request.path == '/nar_races' or (request.path == '/race_detail' and nar) %}
+        {% set overseas_page = request.path == '/overseas_races' or (request.path == '/race_detail' and request.args.get('id', '').startswith('O')) %}
+        <a href="/races" class="{% if request.path == '/races' or (request.path == '/race_detail' and not nar_page and not overseas_page) %}active{% endif %}">
+            <span>中央</span><span>競馬</span>
+        </a>
+        <a href="/nar_races" class="{% if nar_page %}active{% endif %}">
+            <span>地方</span><span>競馬</span>
+        </a>
+        <a href="/overseas_races" class="{% if overseas_page %}active{% endif %}">
+            <span>海外</span><span>競馬</span>
         </a>
         <a href="/weekly" class="{% if request.path == '/weekly' %}active{% endif %}">
             <span>週間</span><span>レポート</span>
         </a>
         <a href="/register" class="{% if request.path in ['/register', '/add_horse', '/add_parent', '/add_stable', '/stable_capacity', '/import_horses'] %}active{% endif %}">
             <span>データ</span><span>登録</span>
-        </a>
-        <a href="/update_horses" id="nav-update-horses" class="{% if request.path == '/update_horses' %}active{% endif %}" onclick="return confirmUpdateHorses(event)">
-            <span>データ</span><span>更新</span>
         </a>
         
         {% if session.get('login') %}
@@ -67,146 +72,6 @@
     </div>
     <p class="copyright">&copy; 2026 keiba.log All Rights Reserved.</p>
 </footer>
-
-<!-- データ更新：実行確認ポップアップ -->
-<div id="updateConfirmModal" class="custom-modal-overlay">
-    <div class="custom-modal-content update-modal-content">
-        <h3 class="custom-modal-header m-0">データ更新</h3>
-        <p>データ更新を実行しますか？</p>
-        <p class="update-progress-note">JRA公式サイトから最新情報を取得します。馬の頭数によっては時間がかかる場合があります。</p>
-        <div class="modal-btn-group">
-            <button type="button" class="btn-cancel" onclick="closeUpdateConfirmModal()">キャンセル</button>
-            <button type="button" class="btn-submit" onclick="startHorseUpdate()">実行する</button>
-        </div>
-    </div>
-</div>
-
-<!-- データ更新：実行中の進捗表示（他の操作をブロックする全画面オーバーレイ） -->
-<div id="updateProgressOverlay" class="custom-modal-overlay update-progress-overlay">
-    <div class="custom-modal-content update-modal-content">
-        <div class="update-spinner"></div>
-        <p id="updateProgressText" class="update-progress-text">データ更新を開始しています...</p>
-        
-        <!-- プログレスバーを追加（初期状態は非表示） -->
-        <progress id="updateProgressBar" value="0" max="100" style="width: 100%; height: 20px; display: none; margin-top: 15px;"></progress>
-        
-        <p class="update-progress-note" style="margin-top: 15px;">更新が完了するまでこの画面のまましばらくお待ちください。</p>
-    </div>
-</div>
-
-<script>
-function confirmUpdateHorses(e) {
-    e.preventDefault();
-    document.getElementById('updateConfirmModal').style.display = 'block';
-    return false;
-}
-
-function closeUpdateConfirmModal() {
-    document.getElementById('updateConfirmModal').style.display = 'none';
-}
-
-function preventLeaveDuringUpdate(e) {
-    e.preventDefault();
-    e.returnValue = '';
-}
-
-// 案2: フロントエンド主導で1件ずつAPIを叩く処理
-async function startHorseUpdate() {
-    closeUpdateConfirmModal();
-
-    const overlay = document.getElementById('updateProgressOverlay');
-    const textEl = document.getElementById('updateProgressText');
-    const progressBar = document.getElementById('updateProgressBar');
-    
-    overlay.style.display = 'block';
-    textEl.textContent = "更新対象のリストを取得しています...";
-    progressBar.style.display = 'none';
-
-    // 更新中に誤ってタブを閉じたりリロードしたりしないよう警告を出す
-    window.addEventListener('beforeunload', preventLeaveDuringUpdate);
-
-    try {
-        // 1. 対象馬リストの取得
-        const listRes = await fetch('/api/get_target_horses', {
-            method: 'GET',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' }
-        });
-        
-        // セッション切れリダイレクト対応
-        if (listRes.redirected && listRes.url.indexOf('/login') !== -1) {
-            window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
-            window.location.href = listRes.url;
-            return;
-        }
-
-        const listData = await listRes.json();
-        const total = listData.total;
-        const horseIds = listData.horse_ids;
-
-        if (total === 0) {
-            finishHorseUpdate({ message: '更新対象の馬データがありませんでした。' });
-            return;
-        }
-
-        // プログレスバーの準備
-        progressBar.max = total;
-        progressBar.value = 0;
-        progressBar.style.display = 'block';
-
-        let completed = 0;
-        textEl.textContent = `データ更新中... (${completed} / ${total} 件完了)`;
-
-        // 2. 1頭ずつ更新処理を実行
-        for (let i = 0; i < total; i++) {
-            const horseId = horseIds[i];
-            
-            try {
-                const updateRes = await fetch(`/api/update_single_horse/${horseId}`, {
-                    method: 'POST',
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                });
-
-                if (updateRes.redirected && updateRes.url.indexOf('/login') !== -1) {
-                    window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
-                    window.location.href = updateRes.url;
-                    return;
-                }
-            } catch (err) {
-                console.error(`ID: ${horseId} の更新に失敗しました:`, err);
-                // エラーが起きても処理は止めず、次の馬に進む
-            }
-
-            // UIの更新
-            completed++;
-            progressBar.value = completed;
-            textEl.textContent = `データ更新中... (${completed} / ${total} 件完了)`;
-        }
-
-        await fetch('/api/finish_update_horses', {
-            method: 'POST',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' }
-        });
-
-        finishHorseUpdate({ message: 'すべてのデータ更新が完了しました。' });
-
-    } catch (error) {
-        console.error(error);
-        finishHorseUpdate({ status: 'error', message: '通信エラーが発生しました。時間をおいて再度お試しください。' });
-    }
-}
-
-function finishHorseUpdate(data) {
-    window.removeEventListener('beforeunload', preventLeaveDuringUpdate);
-
-    const textEl = document.getElementById('updateProgressText');
-    textEl.textContent = (data && data.message) ? data.message : 'データ更新が完了しました。';
-
-    // 結果を少し表示してからトップページ（一覧）へ遷移し、最終更新日時を反映する
-    setTimeout(() => {
-        window.location.href = '/';
-    }, 1500);
-}
-</script>
 
 {# 競走馬一覧・詳細・登録・編集・週間レポートを開く間は「データベースと接続中...」のグレー画面を表示する #}
 <div class="db-loading-overlay" id="db_loading_overlay">

@@ -8943,6 +8943,163 @@ def race_week_nav(base, venue):
             'prev_week': (week_start - timedelta(days=7)).isoformat(),
             'next_week': (week_start + timedelta(days=7)).isoformat()}
 
+def nar_week_start(d):
+    """地方競馬の週の初日（月曜日）。地方は月〜日を1週とする"""
+    return d - timedelta(days=d.weekday())
+
+def get_nar_program_for_dates(dates):
+    """登録済みの地方のレース（年_レース結果のレースシートのレースIDが「N〜」の行。レースの行が無いレースは
+    成績シートの行から）を {日付: {競馬場: {レース番号: レース}}} で返す（地方は番組シートが無いため）"""
+    wanted = sorted(set(dates))
+    result = {}
+    for year in sorted({d.year for d in wanted}):
+        days = [d.strftime('%Y%m%d') for d in wanted if d.year == year]
+        book = get_result_book(year)
+        if not book or not days:
+            continue
+        conds = [f"{col_letter(1)} = {_gviz_quote(x)}" for x in days]
+        keep = lambda r, i=1: len(r) > i and r[i] in days
+        races = {}
+        for r in query_sheet_rows(book, RACE_SHEET, RACE_SHEET_COLUMNS, conds, keep):
+            r = [str(v).strip() for v in list(r) + [''] * len(RACE_SHEET_COLUMNS)]
+            if not r[0].startswith('N') or r[1] not in days:
+                continue
+            c = lambda name: r[RACE_SHEET_COLUMNS.index(name)]
+            races.setdefault((c('年月日'), c('場'), c('R')), {
+                'name': c('レース名'), 'grade': c('グレード'), 'category': c('年齢条件'), 'class': c('クラス'),
+                'marks': c('記号'), 'weight_rule': c('重量'), 'distance': c('距離'), 'surface': c('コース'),
+                'detail': c('コース詳細'), 'jump': c('区分') == '障害', 'time': c('発走時刻')})
+        rkeep = lambda r, i=RUNNER_COL['年月日']: len(r) > i and r[i] in days
+        rconds = [f"{col_letter(RUNNER_COL['年月日'])} = {_gviz_quote(x)}" for x in days]
+        for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, rconds, rkeep):
+            x = runner_row_to_result(r)
+            if not x or not x['nar'] or x['date'].strftime('%Y%m%d') not in days:
+                continue
+            races.setdefault((x['date'].strftime('%Y%m%d'), x['venue'], x['num']), {
+                'name': x['name'], 'grade': x['grade'], 'category': x['category'], 'class': x['class'],
+                'marks': x['rule'], 'weight_rule': '', 'distance': x['distance'], 'surface': x['surface'],
+                'detail': '', 'jump': x['jump'], 'time': ''})
+        for (day, venue, num), e in races.items():
+            d = parse_full_date(day)
+            if not d or not venue or not str(num).isdigit():
+                continue
+            title, rank = race_title(e['name'], e['grade'], e['class'], e['jump'], nar=True)
+            marks = [m for m in ('牝', '別定', 'ハンデ') if m in e['marks'] or m in e['weight_rule']]
+            result.setdefault(d, {}).setdefault(venue, {})[int(num)] = {
+                'race_num': int(num), 'time': e['time'], 'name': e['name'], 'grade': e['grade'],
+                'title_html': race_title_html(title, rank, '', marks),
+                'condition': ' '.join(dict.fromkeys(x for x in (RR.halfwidth_alnum(e['category']),
+                                                               nar_class_mark(e['class'])) if x)),
+                'course': course_label(e['surface'], e['detail'], e['distance'], e['jump']) if e['distance'] else e['surface'],
+                'surface': e['surface']}
+    # 競馬場はRR.NAR_VENUESの並び（北から）にする
+    order = {v: i for i, v in enumerate(RR.NAR_VENUES)}
+    return {d: dict(sorted(v.items(), key=lambda kv: order.get(kv[0], 99))) for d, v in sorted(result.items())}
+
+def nar_week_nav(base, venue):
+    """地方競馬の番組表・レース詳細の上の、週（月〜日）の移動・開催日・競馬場のボタン用（race_week_nav の地方版）"""
+    week_start = nar_week_start(base)
+    week_days = [week_start + timedelta(days=i) for i in range(7)]
+    try:
+        program = get_nar_program_for_dates(week_days)
+    except Exception as e:
+        print(f"地方のレースの読み込みエラー: {e}")
+        program = {}
+    race_days = sorted(program)
+    if base in program:
+        selected = base
+    else:
+        selected = next((d for d in race_days if d >= base), race_days[-1] if race_days else None)
+    venues = list(program.get(selected, {}).keys()) if selected else []
+    if venue not in venues:
+        venue = venues[0] if venues else ''
+    return {'program': program, 'selected': selected, 'venue': venue, 'available_venues': venues,
+            'date_for_input': (selected or base).isoformat(),
+            'display_dates': [{'value': d.isoformat(), 'label': format_month_day(d),
+                               'venues': list(program[d].keys())} for d in race_days],
+            'week_label': f"{format_month_day(week_days[0], False)}〜{format_month_day(week_days[-1], False)}",
+            'week_start': week_start.isoformat(), 'week_end': week_days[-1].isoformat(),
+            'prev_week': (week_start - timedelta(days=7)).isoformat(),
+            'next_week': (week_start + timedelta(days=7)).isoformat()}
+
+@app.route('/nar_races')
+def nar_race_list():
+    """地方競馬の番組表：週（月〜日）ごとに、開催日・競馬場を選んで、登録済みのその日のレースを表示する"""
+    nav = nar_week_nav(parse_full_date(request.args.get('date') or '') or datetime.now().date(),
+                       request.args.get('venue', ''))
+    selected, venue = nav['selected'], nav['venue']
+    day_races = nav['program'].get(selected, {}).get(venue, {}) if selected else {}
+    return render_template('race_list.html', date=selected.isoformat() if selected else '',
+                           day_races=day_races, search_text=venue, nar=True, list_url='/nar_races',
+                           max_num=max(day_races, default=12), **nav)
+
+@app.route('/overseas_races')
+def overseas_race_list():
+    """海外競馬：年ごとに、登録済みの海外のレース（海外レースシート・年_レース結果のレースIDが「O〜」の行）を
+    国で切り替えて表示する"""
+    prefetch_horse_sheets(["Horses", OVERSEAS_SHEET])
+    this_year = datetime.now().year
+    year = request.args.get('year', default=this_year, type=int)
+    country = request.args.get('country', '').strip()
+    races = {}
+    for m in overseas_meta():
+        d = parse_full_date(m['年月日'] or m['レースID'][1:9])
+        if d and d.year == year:
+            races[m['レースID']] = {'id': m['レースID'], 'date': d, 'country': m['国'], 'venue': m['競馬場'],
+                                   'name': m['レース名'] or m['略称'], 'grade': m['グレード'], 'course': '', 'horses': []}
+    years = set()
+    for m in overseas_meta():
+        d = parse_full_date(m['年月日'] or m['レースID'][1:9])
+        if d:
+            years.add(d.year)
+    book = get_result_book(year)
+    if book:
+        cond = ["A starts with 'O'"]
+        keep = lambda r: is_overseas_id(r[0])
+        try:
+            for r in query_sheet_rows(book, RACE_SHEET, RACE_SHEET_COLUMNS, cond, keep):
+                r = [str(v).strip() for v in list(r) + [''] * len(RACE_SHEET_COLUMNS)]
+                if not is_overseas_id(r[0]):
+                    continue
+                c = lambda name: r[RACE_SHEET_COLUMNS.index(name)]
+                d = parse_full_date(c('年月日') or r[0][1:9])
+                if not d or d.year != year:
+                    continue
+                race = races.setdefault(r[0], {'id': r[0], 'date': d, 'venue': '', 'name': c('レース名'),
+                                               'grade': c('グレード'), 'horses': [],
+                                               'country': (re.search(r'(?<!調教)国:(\S+)', c('記号')) or [None, ''])[1]})
+                race['course'] = course_label(c('コース'), c('コース詳細'), c('距離'), c('区分') == '障害') \
+                    if c('距離') else ''
+                race['surface'] = c('コース')
+            registered = {h[H_NAME].strip() for h in get_all_horses() if len(h) > H_NAME and h[H_NAME].strip()}
+            for r in query_sheet_rows(book, RUNNER_SHEET, RUNNER_SHEET_COLUMNS, cond, keep):
+                x = runner_row_to_result(r)
+                if not x or not x['overseas'] or not x['is_result'] or x['date'].year != year:
+                    continue
+                race = races.setdefault(x['race_id'], {'id': x['race_id'], 'date': x['date'], 'venue': '',
+                                                       'country': x['country'], 'name': x['name'],
+                                                       'grade': x['grade'], 'course': '', 'horses': []})
+                if not race.get('country'):
+                    race['country'] = x['country']
+                race['horses'].append({'name': x['horse_name'], 'place': x['place'],
+                                       'registered': x['horse_name'] in registered})
+        except Exception as e:
+            print(f"海外のレースの読み込みエラー: {e}")
+    for race in races.values():
+        race['country'] = RR.country_name(race['country']) or race['country']
+        place = lambda h: int(h['place']) if str(h['place']).isdigit() else 99
+        race['horses'].sort(key=place)
+    years.add(year)
+    countries = sorted({r['country'] for r in races.values() if r['country']})
+    if country not in countries:
+        country = ''
+    shown = sorted((r for r in races.values() if not country or r['country'] == country),
+                   key=lambda r: (r['date'], r['name']))
+    for r in shown:
+        r['title_html'] = race_title_html(r['name'], r['grade'], f"/race_detail?id={quote(r['id'])}")
+    return render_template('overseas_race_list.html', year=year, years=sorted(years), country=country,
+                           countries=countries, races=shown)
+
 def horse_class_of(h, today=None):
     """Horsesシートに記録したクラス。記録が無ければ、3歳以下の馬は「新馬」とみなす"""
     text = current_horse_class(h, today)
@@ -9097,6 +9254,7 @@ def read_race_result(race_date, venue, num):
         race = {'name': RR.halfwidth_alnum(c('レース名')) if c('レースID').startswith('N') else c('レース名'),
                 'grade': c('グレード'), 'kai': c('回'), 'nichi': c('日'),
                 'num': f"{int(num)}レース", 'race_num': int(num), 'jump': jump,
+                'nar': c('レースID').startswith('N'),
                 'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
                                                   c('記号'), c('重量')) if x),
                 'course': course_label(c('コース'), detail, dist, jump),
@@ -9212,19 +9370,28 @@ def race_detail():
 
     # 番組表と同じ、週の移動・開催日・競馬場・レース番号のボタン。番組の無い日（番組を取り込んでいない過去のレースなど）は
     # 指定された日・競馬場のまま表示する
-    nav = race_week_nav(race_date, venue)
+    # 地方のレース（地方競馬の番組表から開いた、または地方だけの競馬場）は、地方の週（月〜日）の登録済みのレースのボタン
+    nar = bool(request.args.get('nar')) or (venue in RR.NAR_VENUES and venue not in RR.VENUES.values())
+    nav = nar_week_nav(race_date, venue) if nar else race_week_nav(race_date, venue)
     if nav['selected'] and (race_date in nav['program'] or not request.args.get('venue')
                             or request.args.get('nav')):
         race_date, venue = nav['selected'], nav['venue']
     day_program = nav['program'].get(race_date, {}).get(venue, {})
     nav['race_nums'] = sorted(day_program) or list(range(1, 13))
 
-    program_race = day_program.get(num)
+    # 地方のボタン用の一覧はレースシートから作った簡単なものなので、レースの情報はレース結果から読む
+    program_race = None if nar else day_program.get(num)
     try:
         result_race, runners = read_race_result(race_date, venue, num)
     except Exception as e:
         print(f"レース結果の読み込みエラー: {e}")
         result_race, runners = None, []
+    if not nar and result_race and result_race.get('nar') and race_date not in nav['program']:
+        # 出走履歴などから開いた地方のレース：地方の週のボタンにする
+        nar = True
+        nav = nar_week_nav(race_date, venue)
+        day_program = nav['program'].get(race_date, {}).get(venue, {})
+        nav['race_nums'] = sorted(day_program) or list(range(1, 13))
     race = program_race or result_race
     if not race and runners:
         # 番組も結果も無いレース（特別登録などの記録だけがある）は、記録からレースの見出しを作る
@@ -9328,6 +9495,7 @@ def race_detail():
     heading = f"{race['kai']}回{venue}{race['nichi']}日" if race and race.get('kai') else venue
     nav.pop('venue', None)
     return render_template('race_detail.html', date=race_date.isoformat(), venue=venue, num=num, race=race,
+                           nar=nar, nar_q='&nar=1' if nar else '', list_url='/nar_races' if nar else '/races',
                            program_race=program_race, result_race=result_race, tabs=tabs, default_tab=default_tab,
                            heading=heading,
                            # 特別戦（重賞を含む）は騎手の減量が無い（メイクデビュー〇〇は新馬戦のため減量がある）
