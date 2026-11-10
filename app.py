@@ -3074,6 +3074,17 @@ def body_diff_text(diff):
 
 app.jinja_env.filters['body_diff'] = body_diff_text
 
+def man_text(value, sign=False):
+    """本賞金・収得賞金（万円）の表示：3桁ごとにカンマ、小数は2桁まで（末尾の0は省く）。sign=True なら先頭に「+」"""
+    try:
+        v = float(str(value).replace(',', ''))
+    except (TypeError, ValueError):
+        return str(value or '')
+    text = f"{v:,.2f}".rstrip('0').rstrip('.')
+    return ('+' if sign and v > 0 else '') + text
+
+app.jinja_env.filters['man'] = man_text
+
 app.jinja_env.filters['stable_html'] = stable_html
 app.jinja_env.filters['area_marks'] = area_marks_in_text
 app.jinja_env.globals['stable_html'] = stable_html
@@ -4489,7 +4500,7 @@ def fill_overseas_prizes(name, horse_id, birth_year, info):
                 rule = overseas_rule(r.get('country', ''), r.get('trained', ''), want or None)
                 update_overseas_runner_cells(r['race_id'], r['date'], r['horse_name'], {'記号': rule})
                 if want:
-                    messages.append(f"{name}：{r['name']}の収得賞金を{want:,}万円として記録")
+                    messages.append(f"{name}：{r['name']}の収得賞金を{man_text(want)}万円として記録")
     return messages
 
 def import_overseas_result(html, url=''):

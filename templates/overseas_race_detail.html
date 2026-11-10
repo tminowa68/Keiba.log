@@ -16,7 +16,7 @@
         </div>
         {% if race.prizes %}
         <div class="race-info-prize">
-            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ "{:,}".format(p) }}{% endfor %}
+            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ p|man }}{% endfor %}
         </div>
         {% endif %}
         {% if race.url %}<div class="race-info-sub"><a href="{{ race.url }}" target="_blank" rel="noopener">JRAの海外競馬発売のページ</a></div>{% endif %}
@@ -57,7 +57,7 @@
                 <td class="{{ rank_class.get(r['pop']|string, '') }}">{{ r['pop'] }}</td>
                 <td class="num nowrap bl">{{ r.body_weight }}</td>
                 <td class="nowrap">{{ r.trainer }}{% if r.trained %}（{{ r.trained }}）{% endif %}</td>
-                <td class="num bl">{{ "{:,}".format(r.prize) if r.prize else '' }}</td>
+                <td class="num bl">{{ r.prize|man if r.prize else '' }}</td>
             </tr>
             {% else %}
             <tr><td colspan="13">出走馬の記録がありません。</td></tr>

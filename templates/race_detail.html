@@ -63,7 +63,7 @@
         </div>
         {% if race.prizes %}
         <div class="race-info-prize">
-            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ "{:,}".format(p) }}{% endfor %}
+            <strong>本賞金（万円）</strong>{% for p in race.prizes %}　{{ loop.index }}着：{{ p|man }}{% endfor %}
         </div>
         {% endif %}
     </section>
@@ -108,7 +108,7 @@
                     <td class="nowrap">{{ h.prev_title }}</td>
                     <td class="num nowrap {{ rank_class.get(h.prev_place|string, '') }}">{{ (h.prev_place ~ '着') if (h.prev_place|string).isdigit() else h.prev_place }}</td>
                     <td class="num nowrap bl">{{ h.interval }}</td>
-                    <td class="num bl">{{ "{:,}".format(h.shutoku) if h.shutoku else '0' if h.prev_when else '' }}</td>
+                    <td class="num bl">{{ h.shutoku|man if h.shutoku else '0' if h.prev_when else '' }}</td>
         {%- endmacro %}
         {% macro sort_attrs(h, num, name, age, weight) -%}
         data-num="{{ num }}" data-name="{{ name }}" data-age="{{ age }}" data-weight="{{ weight }}" data-prevdate="{{ h.prev_date }}" data-prevplace="{{ h.prev_place if (h.prev_place|string).isdigit() else '' }}" data-shutoku="{{ h.shutoku if h.prev_when else '' }}"

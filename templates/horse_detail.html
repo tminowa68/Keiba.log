@@ -367,8 +367,8 @@
             <div>クラス：<span class="status-highlight">{{ sm['class'] }}</span></div>
             <div>現クラス：{{ sm.class_starts or 0 }}戦（{{ (sm.class_record or [0, 0, 0, 0])|join('-') }}）</div>
             <div>出走：{{ sm.starts }}戦（{{ sm.record|join('-') }}）</div>
-            <div>本賞金：{{ "{:,}".format(sm.total_prize) }}万円</div>
-            <div>収得賞金：{{ "{:,}".format(sm.shutoku) }}万円</div>
+            <div>本賞金：{{ sm.total_prize|man }}万円</div>
+            <div>収得賞金：{{ sm.shutoku|man }}万円</div>
         </div>
     {% endmacro %}
     <div class="race-summary-container">
@@ -408,7 +408,7 @@
         </div>
     </div>
     {% if race_summary_data.flat.kokyu %}
-    <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ "{:,}".format(race_summary_data.flat.kokyu.before) }}万円 → {{ "{:,}".format(race_summary_data.flat.kokyu.after) }}万円）</p>
+    <p class="race-summary-note">降級：{{ race_summary_data.flat.kokyu.date|jpdate }}（4歳夏季競馬の開始時）に平地収得賞金を1/2（{{ race_summary_data.flat.kokyu.before|man }}万円 → {{ race_summary_data.flat.kokyu.after|man }}万円）</p>
     {% endif %}
     <p class="race-summary-note">JRA・地方のレース結果を取り込んだレースから計算しています（取り込みは「データ更新」の「レース結果 インポート」から）。</p>
     {% set jra_url = horse[13] if horse|length > 13 and horse[13] and 'jra.go.jp' in horse[13] else '' %}
@@ -504,8 +504,8 @@
                     <td>{{ r.last }}</td>
                     <td class="num nowrap bl">{{ r.body_weight }}</td>
                     <td class="num nowrap">{{ r.body_diff|body_diff }}</td>
-                    <td class="num bl">{{ "+{:,}".format(r.prize) if r.prize else '' }}</td>
-                    <td class="num">{{ "+{:,}".format(r.shutoku) if r.shutoku else '' }}</td>
+                    <td class="num bl">{{ r.prize|man(True) if r.prize else '' }}</td>
+                    <td class="num">{{ r.shutoku|man(True) if r.shutoku else '' }}</td>
                 </tr>
                 {% endif %}
                 {% else %}
