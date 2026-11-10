@@ -884,7 +884,7 @@ def parse_nar_race_page(html_or_soup, url=''):
     race = {
         'nar': True, 'race_id': nar_race_id(race_date, num, baba), 'url': nar_race_url(race_date, num, baba),
         'baba_code': baba, 'date': race_date, 'kai': '', 'nichi': '', 'venue': venue, 'num': num,
-        'name': name, 'grade': grade, 'jump': surface == '障',
+        'name': halfwidth_alnum(name), 'grade': grade, 'jump': surface == '障',
         'category': cm.group(1) if cm else '', 'class': race_class,
         # 牝馬限定：条件の欄の「牝」、またはレース名の見出しの「牝馬」（「マリーンカップJpnIII３歳牝馬オープン」）
         'rule': ' '.join(x for x in ('牝' if re.search(r'(^|\s)牝(馬)?(\s|$)', first)
@@ -1009,6 +1009,15 @@ _NAR_CLASS_SUFFIX_RE = re.compile(r'(?:' + _NAR_CLASS_TOKEN + r'(?:[ァ-ヶ]|\s*
 _NAR_CLASS_TOKEN_RE = re.compile(_NAR_CLASS_TOKEN)
 
 
+# 全角の英数字（Ａ〜Ｚ・ａ〜ｚ・０〜９）を半角にする（地方のレース名）
+_HALFWIDTH_ALNUM = str.maketrans({chr(c): chr(c - 0xFEE0) for c in
+                                  list(range(0xFF10, 0xFF1A)) + list(range(0xFF21, 0xFF3B)) + list(range(0xFF41, 0xFF5B))})
+
+
+def halfwidth_alnum(text):
+    return str(text or '').translate(_HALFWIDTH_ALNUM)
+
+
 def split_nar_race_name(name):
     """地方のレース名を、名前と末尾のクラス・組に分ける：(名前, [クラス・組])。クラス・組は半角にし空白を除く。
     「北海道きたやさい賞Ｃ３－３Ｃ４－１」→ ('北海道きたやさい賞', ['C3-3', 'C4-1'])、
@@ -1055,19 +1064,19 @@ def nar_title_and_rank(name, grade_label='', race_class='', class_mark=''):
     gm = _NAR_INTL_GRADE_RE.search(shown)
     if gm and gm.start() > 0:
         # 国際格付けの重賞（「東京大賞典ＧＩ３上選定馬重賞」）：グレードから後ろ（条件・選定馬・重賞）は表示しない
-        return shown[:gm.start()].strip(), nar_intl_grade(shown)
+        return halfwidth_alnum(shown[:gm.start()].strip()), nar_intl_grade(shown)
     base, tokens = split_nar_race_name(shown)
     # 格の「オープン」は「OP」と表示する（「3歳オープン」→「3歳OP」）
     tokens = [t.replace('オープン', 'OP') for t in tokens]
     class_mark = (class_mark or '').replace('オープン', 'OP')
     if not base:
         # クラス・組だけの名前は、先頭の年齢条件を除く（「３歳Ｃ１」→「Ｃ１」。「３歳１３０万円以下」は除かない）
-        return re.sub(r'^[0-9０-９]歳(?:以上|上)?[\s　]*(?=[A-CＡ-Ｃ])', '', shown), grade_label
+        return halfwidth_alnum(re.sub(r'^[0-9０-９]歳(?:以上|上)?[\s　]*(?=[A-CＡ-Ｃ])', '', shown)), grade_label
     if tokens:
-        return base, grade_label or '・'.join(tokens)
+        return halfwidth_alnum(base), grade_label or '・'.join(tokens)
     # 格組の「以下」「以上」は「下」「上」と短くする（「A-2以下」→「A-2下」）
     class_mark = re.sub(r'(?<!歳)以(下|上)$', r'\1', class_mark or '')
-    return base, grade_label or ('' if nar_name_has_class(name, race_class) else class_mark)
+    return halfwidth_alnum(base), grade_label or ('' if nar_name_has_class(name, race_class) else class_mark)
 
 
 def nar_display_name(name):
