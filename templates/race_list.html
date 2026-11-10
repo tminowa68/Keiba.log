@@ -1,14 +1,16 @@
 {% extends "layout.html" %}
-{% block title %}レース情報 - keiba.log{% endblock %}
+{% block title %}{{ '地方競馬' if nar else '中央競馬' }} - keiba.log{% endblock %}
 {% block content %}
+{% set list_url = list_url|default('/races') %}
+{% set nar_q = '&nar=1' if nar else '' %}
 <section>
 <div style="margin-bottom: 20px;">
     {% set venue_q = ('&venue=' ~ (venue|urlencode)) if venue else '' %}
     <div style="margin-bottom: 12px;">
-        <a href="/races?date={{ prev_week }}{{ venue_q }}">← 前の週</a>
-        <a href="/races" style="margin-left: 10px;">今週</a>
-        <a href="/races?date={{ next_week }}{{ venue_q }}" style="margin-left: 10px;">次の週 →</a>
-        <form method="GET" action="/races" style="display: inline-block; margin-left: 15px;">
+        <a href="{{ list_url }}?date={{ prev_week }}{{ venue_q }}">← 前の週</a>
+        <a href="{{ list_url }}" style="margin-left: 10px;">今週</a>
+        <a href="{{ list_url }}?date={{ next_week }}{{ venue_q }}" style="margin-left: 10px;">次の週 →</a>
+        <form method="GET" action="{{ list_url }}" style="display: inline-block; margin-left: 15px;">
             <input type="date" name="date" value="{{ date_for_input }}" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
             {% if venue %}<input type="hidden" name="venue" value="{{ venue }}">{% endif %}
             <button type="submit" class="update-btn" style="padding: 5px 10px; margin-left: 5px;">表示</button>
@@ -18,7 +20,7 @@
     <div style="margin-bottom: 12px;">
         <span class="race-week-label">{{ week_label }}</span>
         {% for d in display_dates %}
-            <a class="date" href="/races?date={{ d.value }}{{ venue_q }}"
+            <a class="date" href="{{ list_url }}?date={{ d.value }}{{ venue_q }}"
                 style="{% if date == d.value %} background-color: #007bff; color: white; {% else %} background-color: white; color: #007bff; {% endif %}">
                 {{ d.label }}
             </a>
@@ -27,8 +29,8 @@
 
     {% if not display_dates %}
     <div class="race-empty-week">
-        <p>この週の番組はありません。</p>
-        {% if session.get('login') %}
+        <p>{{ 'この週に登録済みの地方のレースはありません。' if nar else 'この週の番組はありません。' }}</p>
+        {% if session.get('login') and not nar %}
         <p>
             <button type="button" id="program-fetch-btn" class="update-btn" style="padding: 6px 14px;">JRAからこの週の番組を取得</button>
             <span id="program-fetch-status" style="margin-left: 8px;"></span>
@@ -38,7 +40,7 @@
     {% else %}
     <div>
         {% for v in available_venues %}
-            <a href="/races?date={{ date }}&venue={{ v|urlencode }}"
+            <a href="{{ list_url }}?date={{ date }}&venue={{ v|urlencode }}"
                style="display: inline-block; padding: 6px 16px; margin-right: 8px; text-decoration: none; border: 1px solid #28a745; border-radius: 4px; font-weight: bold;
                {% if venue == v %}background-color: #28a745; color: white;{% else %}background-color: white; color: #28a745;{% endif %}">
                 {{ v }}
@@ -67,10 +69,13 @@
                     <tr>
                         <td class="col-time">{{ race.time }}</td>
                         <td class="col-num">
-                            <a href="/race_detail?date={{ date }}&venue={{ venue|urlencode }}&num={{ i }}">{{ i }}R</a>
+                            <a href="/race_detail?date={{ date }}&venue={{ venue|urlencode }}&num={{ i }}{{ nar_q }}">{{ i }}R</a>
                         </td>
                         <td class="col-details">
-                            {% if race.name %}
+                            {% if nar %}
+                                <span class="race-name">{{ race.title_html }}</span>
+                                <div class="race-condition">{{ race.condition }}</div>
+                            {% elif race.name %}
                                 <span class="race-name">{{ race.name|short_race_name }}</span>
                                 {% if race.grade %}<span class="grade-badge grade-{{ race.grade|lower }}">{{ race.grade }}</span>{% endif %}{{ race_marks(race.marks, race.weight_rule, race.name) }}
                                 <div class="race-condition">{{ race.condition }}</div>
@@ -87,13 +92,14 @@
     </div>
     {% endmacro %}
     {{ race_table('前半（1〜6レース）', 1, 6) }}
-    {{ race_table('後半（7〜12レース）', 7, 12) }}
+    {% set last = [max_num|default(12), 12]|max %}
+    {{ race_table('後半（7〜' ~ last ~ 'レース）', 7, last) }}
     </div>
     {% endif %}
 </div>
 </section>
 
-{% if not display_dates and session.get('login') %}
+{% if not display_dates and session.get('login') and not nar %}
 <script src="{{ url_for('static', filename='race_import.js') }}"></script>
 <script>
 document.getElementById('program-fetch-btn').addEventListener('click', async function() {
