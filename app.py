@@ -5308,6 +5308,38 @@ def api_race_results_update_classes():
         return jsonify({'error': str(e)}), 400
     return jsonify({'total': total, 'next': offset + limit, 'updated': updated})
 
+@app.route('/api/horse/recalc', methods=['POST'])
+@login_required
+def api_horse_recalc():
+    """競走馬の出走レースのページの「再計算」：その馬だけ、クラス・最新レース・収得賞金・主な実績・総本賞金を
+    取り込んだレース結果から計算し直す（Horses・Sire・Damシートのその馬の行）"""
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name') or '').strip()
+    horse_id = RR.horse_id_from_url(str(data.get('url') or ''))
+    if not name and not horse_id:
+        return jsonify({'error': '馬が指定されていません。'}), 400
+
+    def _match(row, url_col=H_JRA_URL):
+        hid = RR.horse_id_from_url(row[url_col] if len(row) > url_col else '')
+        if horse_id and hid:
+            return hid == horse_id
+        return bool(name) and (display_name_of_row(row) == name or row_matches_name(row, name))
+    total = updated = 0
+    try:
+        t, u = update_horse_class_columns(_match)
+        total, updated = total + t, updated + u
+        for title in ('Sire', 'Dam'):
+            try:
+                t, u = update_parent_class_columns(title, match=_match)
+                total, updated = total + t, updated + u
+            except gspread.WorksheetNotFound:
+                pass
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    if not total:
+        return jsonify({'error': '再計算する馬が見つかりませんでした。'}), 404
+    return jsonify({'total': total, 'updated': updated})
+
 # ==============================================================================
 # JRAの競走馬検索と、未登録の馬の自動登録
 # ==============================================================================

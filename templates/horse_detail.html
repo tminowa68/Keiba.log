@@ -412,9 +412,14 @@
     {% endif %}
     <p class="race-summary-note">JRA・地方のレース結果を取り込んだレースから計算しています（取り込みは「データ登録」の「レース結果 インポート」から）。</p>
     {% set jra_url = horse[13] if horse|length > 13 and horse[13] and 'jra.go.jp' in horse[13] else '' %}
-    {% if jra_url %}
+    {% if jra_url or session.get('login') %}
     <div class="race-import-box">
-        <button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}" data-name="{{ horse[0] }}">出走レースを取り込む（JRA・地方）</button>
+        {% if jra_url %}<button type="button" id="race-import-btn" class="btn-entry-toggle" data-url="{{ jra_url }}" data-name="{{ horse[0] }}">出走レースを取り込む（JRA・地方）</button>{% endif %}
+        {% if session.get('login') %}
+        {# この馬だけ、データ登録の「クラス・最新レースの再計算」と同じ計算をする #}
+        <button type="button" id="horse-recalc-btn" class="btn-entry-toggle" data-url="{{ jra_url }}" data-name="{{ horse[0] }}">再計算</button>
+        <span id="horse-recalc-status" class="race-import-status"></span>
+        {% endif %}
     </div>
     {# 取り込む前の確認：まだ取り込んでいないレースのカード、その下にオプション・メッセージ・取り込み開始のボタン #}
     <div id="race-import-preview" class="race-import-preview" style="display: none;">
@@ -756,6 +761,32 @@ function selectCorrectParent(parentName, damName, birthYear) {
 function closeCandidateModal() {
     document.getElementById('candidateModal').style.display = 'none';
 }
+
+// --- 再計算：この馬のクラス・最新レース・収得賞金・主な実績・総本賞金を、取り込んだレース結果から計算し直す ---
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('horse-recalc-btn');
+    if (!btn) return;
+    const status = document.getElementById('horse-recalc-status');
+    btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        status.style.color = '';
+        status.textContent = '再計算しています...';
+        try {
+            const res = await fetch('/api/horse/recalc', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ name: btn.dataset.name, url: btn.dataset.url }) });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+            status.textContent = data.updated ? '再計算しました。' : '再計算しました（変更はありませんでした）。';
+            if (data.updated) setTimeout(() => location.reload(), 800);
+            else btn.disabled = false;
+        } catch (e) {
+            status.style.color = '#c62828';
+            status.textContent = '再計算できませんでした：' + e.message;
+            btn.disabled = false;
+        }
+    });
+});
 
 // --- 出走レース：JRAの競走馬情報のページの「出走レース」から、まだ取り込んでいないレースを取り込む ---
 // ボタンを押すと、まず取り込んでいないレースをカードで並べ、
