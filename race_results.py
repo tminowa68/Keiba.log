@@ -776,6 +776,10 @@ def nar_intl_grade(text):
     return f"G{roman}" if roman in ('1', '2', '3') else ''
 
 
+# 騎手の減量の記号（☆・△・▲・◇・★。地方競馬情報サイトでは騎手名の前に付く）
+NAR_JOCKEY_MARK_RE = re.compile(r'^\s*([☆△▲◇★]+)\s*')
+
+
 def nar_text(el):
     """地方競馬情報サイトの文字（全角スペースも詰める）"""
     return re.sub(r'[\s　]+', ' ', el.get_text(' ') if el else '').strip()
@@ -909,9 +913,22 @@ def parse_nar_race_page(html_or_soup, url=''):
         jockey_td, trainer_td = tds.get('h'), tds.get('i')
         jockey_a = jockey_td.find('a') if jockey_td else None
         trainer_a = trainer_td.find('a') if trainer_td else None
-        jspan = jockey_td.find('span') if jockey_td else None
+        # 騎手の所属は括弧で囲んだ span（「（大井）」）
+        jspan = next((sp for sp in jockey_td.find_all('span') if re.search(r'[（(]', nar_text(sp))), None) \
+            if jockey_td else None
         jockey_aff = nar_text(jspan).strip('（）() ') if jspan else ''
         jockey_short = nar_text(jockey_td).replace(nar_text(jspan), '').strip() if jockey_td else ''
+        # 騎手の減量の記号（「▲山崎裕」のように騎手名の前、または斤量の前）。騎手名は後でフルネームに
+        # 置き換えるため、記号は減量の列に分けておく
+        mm = NAR_JOCKEY_MARK_RE.match(jockey_short)
+        jockey_mark = mm.group(1) if mm else ''
+        if mm:
+            jockey_short = jockey_short[mm.end():].strip()
+        weight_text = nar_text(tds.get('g'))
+        wm2 = NAR_JOCKEY_MARK_RE.match(weight_text)
+        if wm2:
+            jockey_mark = jockey_mark or wm2.group(1)
+            weight_text = weight_text[wm2.end():].strip()
         hw = tds.get('j')
         hw_span = hw.find('span') if hw else None
         place_num = int(place) if place.isdigit() else None
@@ -922,7 +939,7 @@ def parse_nar_race_page(html_or_soup, url=''):
             'affiliation': nar_text(tds.get('e')),
             'sex': ('せん' if am and am.group(1) in ('せん', 'セン', '騸') else am.group(1)) if am else '',
             'age': int(am.group(2)) if am else '',
-            'weight': nar_text(tds.get('g')), 'mark': '',
+            'weight': weight_text, 'mark': jockey_mark,
             'jockey': jockey_short, 'jockey_affiliation': jockey_aff,
             'jockey_url': urljoin(NAR_BASE, jockey_a.get('href', '')) if jockey_a else '',
             'time': nar_text(tds.get('k')), 'margin': nar_text(tds.get('l')), 'last': nar_text(tds.get('m')),
