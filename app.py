@@ -2537,6 +2537,8 @@ def runner_row_to_result(r):
         prize = 0
     nar = c('レースID').startswith('N')
     overseas = is_overseas_id(c('レースID'))
+    # 地方のクラス（兵庫県競馬のJRA交流は「交流」ではなく未勝利・1勝クラス）
+    race_class = nar_class_for(c('場'), c('クラス'), c('年齢条件')) if nar else c('クラス')
     am = re.search(r'所属:(\S+)', c('記号'))
     affiliation = am.group(1) if am else ('' if nar else 'JRA')
     # 海外のレースは、記号の列に国・調教国・収得賞金（「国:アメリカ 調教国:JPN 収得:3350」）を記録している
@@ -2550,14 +2552,14 @@ def runner_row_to_result(r):
         'venue': c('場'), 'num': c('R'), 'name': c('レース名'),
         # 地方の国際格付けの重賞（「東京大賞典ＧＩ」）は、グレードの列が空でもレース名からグレードを読む
         'grade': c('グレード') or (RR.nar_intl_grade(c('レース名')) if nar else ''),
-        'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': c('クラス'), 'rule': rule,
+        'jump': c('区分') == '障害', 'category': c('年齢条件'), 'class': race_class, 'rule': rule,
         'distance': c('距離'), 'surface': c('コース'), 'going': c('馬場'), 'runners': c('頭数'),
         'place': c('着順'), 'waku': c('枠'), 'horse_num': c('馬番'), 'jockey': c('騎手'), 'weight': c('斤量'),
         'mark': c('減量'), 'time': c('タイム'), 'margin': c('着差'), 'corners': c('通過順'), 'last': c('上り'),
         'body_weight': c('馬体重'), 'body_diff': c('増減'), 'pop': c('人気'),
         'prize': prize, 'nar': nar, 'affiliation': affiliation,
         # JRA所属馬が地方の交流競走（重賞以外）で1着の場合の、地方のクラスに当たるJRAのクラス（収得賞金の計算用）
-        'nar_jra_class': nar_koryu_jra_class(c('場'), c('クラス'), c('レース名')) if nar and affiliation == 'JRA'
+        'nar_jra_class': nar_koryu_jra_class(c('場'), race_class, c('レース名')) if nar and affiliation == 'JRA'
         and c('着順') == '1' and not c('グレード') else '',
         'horse_name': c('馬名'), 'horse_id': c('馬ID'), 'trainer': c('調教師'), 'sex': c('性別'), 'age': c('年齢'),
         # レース結果の行：着順がある行（以前の記録で登録が空欄の行も）。結果を取り込んだレースの、出走しなかった馬の
@@ -4751,10 +4753,31 @@ def nar_koryu_classes():
             rows.append((_nfkc(r[0]), _nfkc(r[1]), r[2].strip()))
     return rows
 
+HYOGO_VENUES = ('園田', '姫路')
+
+def hyogo_koryu_class(venue, nar_class, category):
+    """兵庫県競馬（園田・姫路）のJRA交流競走は格組が「交流」となっているため、年齢条件からクラスを決める：
+    2歳・3歳の世代限定なら「未勝利」、3歳以上・4歳以上なら「1勝クラス」。当てはまらなければ空文字"""
+    if _nfkc(venue) not in HYOGO_VENUES or not re.fullmatch(r'(?:JRA|中央)?交流', _nfkc(nar_class)):
+        return ''
+    cat = _nfkc(category)
+    if re.search(r'\d歳(?:以上|上)', cat):
+        return '1勝クラス'
+    if re.search(r'[23]歳', cat):
+        return '未勝利'
+    return ''
+
+def nar_class_for(venue, nar_class, category):
+    """地方のレースのクラスの表示・計算用の値（兵庫県競馬のJRA交流は未勝利・1勝クラスにする）"""
+    return hyogo_koryu_class(venue, nar_class, category) or nar_class
+
 def nar_koryu_jra_class(venue, nar_class, race_name=''):
     """地方のクラスに当たるJRAのクラス（交流競走クラスのシートから。分からなければ空文字）。
     地方のクラスの欄は格組の前方一致で探し、当てはまる行が無ければ（格組が記載されていないレースなど）、
-    地方のクラスの欄にレース名（またはその一部）を書いた行をレース名で探す"""
+    地方のクラスの欄にレース名（またはその一部）を書いた行をレース名で探す。
+    兵庫県競馬のJRA交流（クラスを未勝利・1勝クラスにしたもの）は、そのクラスがJRAのクラス"""
+    if _nfkc(venue) in HYOGO_VENUES and nar_class in ('未勝利', '1勝クラス'):
+        return nar_class
     cls, name, here = _nfkc(nar_class), _nfkc(race_name), _nfkc(venue)
     rows = [(v, c, jra) for v, c, jra in nar_koryu_classes() if not v or v == here]
     for match in ((lambda c: cls and cls.startswith(c)), (lambda c: name and c in name)):
@@ -9005,7 +9028,8 @@ def get_nar_program_for_dates(dates):
                 continue
             c = lambda name: r[RACE_SHEET_COLUMNS.index(name)]
             races.setdefault((c('年月日'), c('場'), c('R')), {
-                'name': c('レース名'), 'grade': c('グレード'), 'category': c('年齢条件'), 'class': c('クラス'),
+                'name': c('レース名'), 'grade': c('グレード'), 'category': c('年齢条件'),
+                'class': nar_class_for(c('場'), c('クラス'), c('年齢条件')),
                 'marks': c('記号'), 'weight_rule': c('重量'), 'distance': c('距離'), 'surface': c('コース'),
                 'detail': c('コース詳細'), 'jump': c('区分') == '障害', 'time': c('発走時刻')})
         rkeep = lambda r, i=RUNNER_COL['年月日']: len(r) > i and r[i] in days
@@ -9308,11 +9332,12 @@ def read_race_result(race_date, venue, num):
         detail = c('コース詳細')
         going = '　'.join(f"{k}：{v}" for k, v in (('芝', c('芝')), ('ダート', c('ダート'))) if v)
         # 地方のレース名の英数字は半角にする
+        cls = nar_class_for(venue, c('クラス'), c('年齢条件')) if c('レースID').startswith('N') else c('クラス')
         race = {'name': RR.halfwidth_alnum(c('レース名')) if c('レースID').startswith('N') else c('レース名'),
                 'grade': c('グレード'), 'kai': c('回'), 'nichi': c('日'),
                 'num': f"{int(num)}レース", 'race_num': int(num), 'jump': jump,
                 'nar': c('レースID').startswith('N'),
-                'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), c('クラス'),
+                'condition': ' '.join(x for x in ((('障害' if jump else '') + c('年齢条件')), cls,
                                                   c('記号'), c('重量')) if x),
                 'course': course_label(c('コース'), detail, dist, jump),
                 'time': c('発走時刻'), 'weather': c('天候'), 'going': going, 'runners': c('頭数'),
@@ -9320,8 +9345,8 @@ def read_race_result(race_date, venue, num):
                 # 地方のレースは、グレードの無いレースにもクラスのマークを付ける
                 'grade_text': nar_grade_label(c('グレード'), c('レース名')) if c('レースID').startswith('N') else c('グレード'),
                 'prizes': prize_list([c(f"{i}着本賞金") for i in range(1, 6)]),
-                'nar_class': nar_class_mark(c('クラス')) if c('レースID').startswith('N') and not c('グレード')
-                and not RR.nar_name_has_class(c('レース名'), c('クラス')) else ''}
+                'nar_class': nar_class_mark(cls) if c('レースID').startswith('N') and not c('グレード')
+                and not RR.nar_name_has_class(c('レース名'), cls) else ''}
     runners = [x for x in (runner_row_to_result(r) for r in runner_rows) if x]
 
     def _order(x):
