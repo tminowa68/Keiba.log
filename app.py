@@ -242,17 +242,29 @@ def name_column_for(name):
     """馬名を探す列：和名ならA列（0）、英字ならB列（1）。Horses・Sire・Damシート共通"""
     return 1 if is_english_name(name) else 0
 
+# 馬名の照合：小書きのカナ（ァィゥェォャュョッヮ）は大きいカナと同じとみなす（昔の馬は「メジロフイーシヤー」のように
+# 大きいカナで登録されていて、表記が「メジロフィーシャー」と違うことがあるため）
+_SMALL_KANA = str.maketrans('ァィゥェォャュョッヮヵヶぁぃぅぇぉゃゅょっゎ', 'アイウエオヤユヨツワカケあいうえおやゆよつわ')
+
+def horse_name_key(name):
+    """馬名の照合用の値（空白を除き、英字は小文字、小書きのカナは大きいカナにする）"""
+    return re.sub(r'[\s　]', '', str(name or '')).lower().translate(_SMALL_KANA)
+
 def row_matches_name(row, name):
-    """シートの行（リスト）が馬名に一致するか（和名はA列、英字はB列で照合する）"""
+    """シートの行（リスト）が馬名に一致するか（和名はA列、英字はB列で照合する。小書きのカナは大きいカナと同じとみなす）"""
     name = str(name or '').strip()
     col = name_column_for(name)
-    return bool(name) and len(row) > col and str(row[col] or '').strip() == name
+    if not name or len(row) <= col:
+        return False
+    cell = str(row[col] or '').strip()
+    return cell == name or (bool(cell) and horse_name_key(cell) == horse_name_key(name))
 
 def record_matches_name(record, name):
     """get_all_records の1件が馬名に一致するか（和名は「馬名」、英字は「英馬名」で照合する）"""
     name = str(name or '').strip()
     key = '英馬名' if is_english_name(name) else '馬名'
-    return bool(name) and str(record.get(key, '') or '').strip() == name
+    cell = str(record.get(key, '') or '').strip()
+    return bool(name) and (cell == name or (bool(cell) and horse_name_key(cell) == horse_name_key(name)))
 
 def display_name_of_row(row):
     """表示用の馬名：A列（和名）が空欄ならB列（英馬名）"""
@@ -5491,8 +5503,8 @@ def _search_jra_horses(name):
         raise
 
 def _same_name(a, b):
-    norm = lambda t: re.sub(r'[\s　]', '', str(t or '')).lower()
-    return bool(norm(a)) and norm(a) == norm(b)
+    """同じ馬名か（空白・英字の大文字小文字・小書きのカナと大きいカナの違いは同じとみなす）"""
+    return bool(horse_name_key(a)) and horse_name_key(a) == horse_name_key(b)
 
 def jra_info_conflicts(info, known):
     """競走馬情報（fetch_jra_horse_info）と、分かっている情報（known）が食い違うか"""
