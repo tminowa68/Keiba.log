@@ -6,6 +6,8 @@
 //  ・英字の馬名：後ろの II・III など（equibaseで同名馬を区別するもの）は取り除いて比較する
 const ROMAN_NUMERAL_DIGITS = { 'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5', 'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8',
                                'Ⅸ': '9', 'Ⅹ': '10', 'Ⅺ': '11', 'Ⅻ': '12' };
+const SMALL_KANA_TO_LARGE = Object.fromEntries([...'ァィゥェォャュョッヮヵヶぁぃぅぇぉゃゅょっゎ'].map(
+    (c, i) => [c, 'アイウエオヤユヨツワカケあいうえおやゆよつわ'[i]]));
 function normalizeHorseNameForCheck(name) {
     let text = (name || '').toString();
     if (isEnglishHorseName(text)) {
@@ -14,8 +16,10 @@ function normalizeHorseNameForCheck(name) {
     } else {
         text = text.replace(/[\u2160-\u216B]/g, c => ROMAN_NUMERAL_DIGITS[c] || c);
     }
+    // 小書きのカナは大きいカナと同じとみなす（昔の馬は「メジロフイーシヤー」のように大きいカナで登録されている）
     return text.normalize('NFKC')
-        .replace(/[\s・.\-'’`()（）\[\]［］「」□○◇]/g, '').toLowerCase();
+        .replace(/[\s・.\-'’`()（）\[\]［］「」□○◇]/g, '').toLowerCase()
+        .replace(/[ァィゥェォャュョッヮヵヶぁぃぅぇぉゃゅょっゎ]/g, c => SMALL_KANA_TO_LARGE[c] || c);
 }
 
 // 英字の馬名か（和名と英馬名は表記が違うため、同じ表記どうしでだけ比較する）

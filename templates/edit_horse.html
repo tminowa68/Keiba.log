@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}プロフィール編集 - keiba.log{% endblock %}
 {% block content %}
-<script src="{{ url_for('static', filename='name_check.js') }}"></script>
+<script src="{{ url_for('static', filename='name_check.js') }}?v=20261115"></script>
 <section style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
     {% with messages = get_flashed_messages() %}
         {% if messages %}
