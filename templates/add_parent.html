@@ -252,10 +252,23 @@ function findBirthplaceMatch(raw, birthPeriod) {
     const available = (name) => !birthPeriod || isMunicipalityAvailable(name, birthPeriod);
     // 生年月日の時点で無くなっていた市町村は、合併・改称後の市町村（successor）をたどって読み替える
     //   例：2015年生まれの「三石町」→ 新ひだか町、1960年生まれの「荻伏村」→ 浦河町
+    //   生年月日の時点でまだ無かった市町村は、合併・改称前の市町村をさかのぼって読み替える
+    //   例：1954年5月生まれの「早来」→ 安平村（1954年10月に早来村に改称）
     const resolve = (name) => {
+        const start = name;
         for (let i = 0; name && i < 10; i++) {
             if (available(name)) return name;
             name = (municipalityValidity[name] || {}).successor;
+        }
+        let queue = [start];
+        const seen = new Set(queue);
+        for (let i = 0; queue.length && i < 10; i++) {
+            const prev = Object.keys(municipalityValidity).filter(n =>
+                !seen.has(n) && queue.includes(municipalityValidity[n].successor));
+            const found = prev.find(n => available(n));
+            if (found) return found;
+            prev.forEach(n => seen.add(n));
+            queue = prev;
         }
         return null;
     };
