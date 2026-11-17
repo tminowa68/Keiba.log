@@ -3245,6 +3245,29 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     for r in race_results:
         items.append(((r['date'], 1, int(r['num']) if str(r['num']).isdigit() else 0),
                       dict(r, kind='race', interval_weeks=intervals.get(id(r), ''))))
+    # JRAへ転入した日（Changesシートの再転入。JRAの競走馬情報の「JRAへ転入」）と競走馬登録日の行を入れる
+    # （同じ日の中では一番上）。転入の記録が無く、競走馬登録日より前に地方所属で出走している馬は、
+    # 競走馬登録日を転入の日として扱う（転入の日を競走馬登録日として記録した馬）
+    entries = {}
+    for c in changes_history:
+        if str(c.get('項目', '')).strip() == '再転入':
+            d = parse_full_date(str(c.get('年月日', '')))
+            if d:
+                entries[d] = 'JRAへ転入'
+    if registration_date and registration_date not in entries:
+        transferred = not entries and any(r.get('nar') and r.get('affiliation') != 'JRA'
+                                          and r['date'] <= registration_date for r in race_results)
+        entries[registration_date] = 'JRAへ転入' if transferred else '競走馬登録'
+    # JRAに在籍していた日か（その日より前で最後の、JRAへ転入・競走馬登録とJRA登録の抹消のうち、転入・登録の方が後）
+    jra_events = sorted([(d, True) for d in entries] + [(d, False) for d in cancel_dates])
+
+    def _in_jra(d):
+        last = None
+        for ed, joined in jra_events:
+            if ed < d:
+                last = joined
+        return bool(last)
+
     # 同じ日の記録は上から JRA・地方抹消、去勢、転厩、馬主変更の順（新しい順に並べるため、上に出すものほど大きい値）
     order = {'去勢': 3, '転厩': 2, '馬主変更': 1}
     for c in changes_history:
@@ -3260,6 +3283,9 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
             last_nar = max((r for r in race_results if r.get('nar') and r['date'] <= d), key=lambda r: r['date'],
                            default=None)
             if last_nar and last_nar.get('affiliation') == 'JRA':
+                continue
+            # JRAに在籍している期間（JRAへ転入した後、JRA登録を抹消する前）の地方抹消は表示しない
+            if _in_jra(d):
                 continue
             items.append(((d, 2, 1), {'kind': 'cancel', 'date': d, 'tentative': tentative, 'date_label': '',
                                       'text': '地方競馬登録を抹消'}))
@@ -3308,19 +3334,6 @@ def build_race_history(race_results, changes_history, birth_year=None, pasture_h
     # 抹消シートに馬名があれば「JRA登録を抹消」の行を入れる（同じ日のレースより後）
     for d in cancel_dates:
         items.append(((d, 2, 2), {'kind': 'cancel', 'date': d, 'date_label': '', 'text': 'JRA登録を抹消'}))
-    # JRAへ転入した日（Changesシートの再転入。JRAの競走馬情報の「JRAへ転入」）と競走馬登録日の行を入れる
-    # （同じ日の中では一番上）。転入の記録が無く、競走馬登録日より前に地方所属で出走している馬は、
-    # 競走馬登録日を転入の日として扱う（転入の日を競走馬登録日として記録した馬）
-    entries = {}
-    for c in changes_history:
-        if str(c.get('項目', '')).strip() == '再転入':
-            d = parse_full_date(str(c.get('年月日', '')))
-            if d:
-                entries[d] = 'JRAへ転入'
-    if registration_date and registration_date not in entries:
-        transferred = not entries and any(r.get('nar') and r.get('affiliation') != 'JRA'
-                                          and r['date'] <= registration_date for r in race_results)
-        entries[registration_date] = 'JRAへ転入' if transferred else '競走馬登録'
     for d, text in entries.items():
         items.append(((d, 3, 0), {'kind': 'entry', 'date': d, 'date_label': '', 'text': text}))
     items.sort(key=lambda x: x[0], reverse=True)
