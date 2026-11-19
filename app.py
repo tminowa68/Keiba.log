@@ -3423,6 +3423,10 @@ def race_name_rules():
 def strip_race_name_prefix(name):
     """レース名に空白があれば、その前（「農林水産省賞典」「サンケイスポーツ賞」などの冠）を取り除く"""
     parts = re.split(r'[\s　]+', str(name or '').strip())
+    # 末尾の括弧書き（「顕彰者選定記念 レジェンドジョッキーカップ （蛯名正義元騎手）」の「（蛯名正義元騎手）」）は
+    # レース名ではないので、その前の部分をレース名にする
+    while len(parts) > 1 and re.fullmatch(r'[（(].*[）)]', parts[-1]):
+        parts.pop()
     return parts[-1] if parts else ''
 
 def short_race_name(name, strip_prefix=True):
