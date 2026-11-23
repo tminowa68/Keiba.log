@@ -22,14 +22,17 @@ MarkupSafe           ==3.0.3
 oauthlib             ==3.3.1
 openpyxl             ==3.1.5
 pip                  ==26.1.1
+psycopg[binary]      ==3.2.12
 pyasn1               ==0.6.3
 pyasn1_modules       ==0.4.2
 pycparser            ==3.0
 pyparsing            ==3.3.2
 pypdf                ==6.17.0
+python-dotenv        ==1.1.1
 requests             ==2.33.1
 requests-oauthlib    ==2.0.0
 soupsieve            ==2.9.2
+SQLAlchemy           ==2.0.44
 typing_extensions    ==4.16.0
 urllib3              ==2.6.3
 Werkzeug             ==3.1.8

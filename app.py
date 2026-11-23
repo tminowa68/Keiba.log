@@ -15,6 +15,13 @@ import race_results as RR
 import gspread
 from google.oauth2.service_account import Credentials
 
+# .env ファイルがあれば、そこに書いた設定（DATABASE_URL など）を環境変数として読み込む
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here' # セッション用の秘密鍵
 app.permanent_session_lifetime = timedelta(days=30)
@@ -120,6 +127,10 @@ class CachedClient:
         return book
 
     def open(self, title, *args, **kwargs):
+        if SHEET_DB is not None and title in SHEET_DB_BOOKS:
+            # データベースに移したファイルは、データベースから読み書きする（共有の設定などは本物のファイルで行う）
+            return SHEET_DB.book(title, fallback=lambda: self._cached(
+                ('title', title), lambda: self._client.open(title, *args, **kwargs)))
         return self._cached(('title', title), lambda: self._client.open(title, *args, **kwargs))
 
     def open_by_key(self, key):
@@ -133,6 +144,24 @@ try:
     gc = CachedClient(gspread.authorize(CREDS, http_client=PatientHTTPClient))
 except TypeError:
     gc = CachedClient(gspread.authorize(CREDS))
+
+# --- データベース（環境変数 DATABASE_URL を設定すると、Horse_Data をスプレッドシートではなくデータベースで読み書きする） ---
+# 例：Neon の接続文字列 postgresql://ユーザー:パスワード@ホスト/neondb?sslmode=require、ローカルのファイル sqlite:///horse_data.db
+# データベースへのデータのコピーは tools/migrate_horse_data_to_db.py で行う
+SHEET_DB = None
+SHEET_DB_BOOKS = set()
+_database_url = os.environ.get('DATABASE_URL', '').strip()
+if _database_url:
+    import sheet_db
+    # 接続できない場合は起動しない（移した後のデータはデータベースにあるため、古いスプレッドシートに書き込まないようにする）
+    _store = sheet_db.SheetStore(_database_url)
+    if _store.has_book(horse_data):
+        SHEET_DB = _store
+        SHEET_DB_BOOKS = {horse_data}
+        print(f"{horse_data}はデータベースから読み書きします")
+    else:
+        print(f"データベースに{horse_data}のデータがありません。tools/migrate_horse_data_to_db.py でコピーするまでは、"
+              f"スプレッドシートから読み書きします")
 
 # --- データベース初期化 ---
 def add_new_user(username, password):

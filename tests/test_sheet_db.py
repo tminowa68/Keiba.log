@@ -1,0 +1,165 @@
+"""sheet_db（データベース上のシート）が、gspread（Google Sheets）と同じように動くかのテスト。
+
+  python -m unittest tests.test_sheet_db
+PostgreSQL でも試す場合は、環境変数 SHEET_DB_TEST_URL に接続文字列を設定する（中のデータは消える）。
+"""
+import os
+import sys
+import tempfile
+import unittest
+
+import gspread
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sheet_db  # noqa: E402
+
+
+class SheetDbTests:
+    url = None
+
+    def setUp(self):
+        self.store = sheet_db.SheetStore(self.url)
+        with self.store.engine.begin() as conn:
+            conn.execute(self.store.rows.delete())
+            conn.execute(self.store.tabs.delete())
+        self.store.forget_tabs()
+        self.book = self.store.book('Horse_Data')
+        self.ws = self.book.add_worksheet(title='Horses', rows=100, cols=3)
+        self.ws.append_row(['馬名', '英馬名', '性別'])
+
+    def tearDown(self):
+        self.store.engine.dispose()
+
+    def test_empty_sheet(self):
+        ws = self.book.add_worksheet(title='空', rows=10, cols=2)
+        self.assertEqual(ws.get_all_values(), [[]])
+        self.assertEqual(ws.row_values(1), [])
+        self.assertEqual(ws.col_values(1), [])
+        self.assertEqual(ws.get_all_records(), [])
+
+    def test_worksheet_not_found(self):
+        with self.assertRaises(gspread.WorksheetNotFound):
+            self.book.worksheet('無いシート')
+        self.assertEqual([w.title for w in self.book.worksheets()], ['Horses'])
+        self.assertEqual(self.book.sheet1.title, 'Horses')
+
+    def test_append_and_read_padded(self):
+        self.ws.append_rows([['アイ', '', '牡'], ['', 'Bee'], [], ['ウマ']])
+        self.assertEqual(self.ws.get_all_values(), [
+            ['馬名', '英馬名', '性別'], ['アイ', '', '牡'], ['', 'Bee', ''], ['', '', ''], ['ウマ', '', '']])
+        # 空の行の次ではなく、最後の行の次に追加される
+        self.ws.append_row(['エ'])
+        self.assertEqual(self.ws.get_all_values()[-1], ['エ', '', ''])
+
+    def test_number_values_become_text(self):
+        self.ws.append_row([1, 2.0, 2.5])
+        self.ws.append_row([True, None, '007'])
+        self.assertEqual(self.ws.get_all_values()[1:], [['1', '2', '2.5'], ['TRUE', '', '007']])
+
+    def test_update_forms(self):
+        self.ws.append_rows([['a', 'b', 'c'], ['d', 'e', 'f']])
+        self.ws.update(range_name='B2', values=[['X']])
+        self.ws.update('C3', [['Y']])            # 古い書き方（範囲, 値）
+        self.ws.update([['Z1', 'Z2']], 'A3:B3')  # 新しい書き方（値, 範囲）
+        self.assertEqual(self.ws.get_all_values()[1:], [['a', 'X', 'c'], ['Z1', 'Z2', 'Y']])
+        # 範囲より値が少ない場合、残りのセルはそのまま
+        self.ws.update(range_name='A2:C2', values=[['only']])
+        self.assertEqual(self.ws.row_values(2), ['only', 'X', 'c'])
+        # 空の文字列はセルを空にし、行の末尾は詰める
+        self.ws.update(range_name='B2:C2', values=[['', '']])
+        self.assertEqual(self.ws.row_values(2), ['only'])
+
+    def test_update_beyond_end_and_whole_sheet(self):
+        self.ws.update(range_name='E6', values=[['far']])
+        values = self.ws.get_all_values()
+        self.assertEqual(len(values), 6)
+        self.assertEqual(values[5], ['', '', '', '', 'far'])
+        self.assertGreaterEqual(self.ws.col_count, 5)
+        self.ws.clear()
+        self.assertEqual(self.ws.get_all_values(), [[]])
+        self.ws.update(range_name='A1', values=[['h1', 'h2'], ['v1', 'v2']])
+        self.assertEqual(self.ws.get_all_values(), [['h1', 'h2'], ['v1', 'v2']])
+
+    def test_batch_update_and_cells(self):
+        self.ws.append_rows([['a', 'b'], ['c', 'd']])
+        self.ws.batch_update([{'range': 'A2', 'values': [['A']]}, {'range': 'B3:C3', 'values': [['B', 'C']]}])
+        self.ws.update_cell(2, 3, 'U')
+        self.ws.update_acell('A3', 'V')
+        self.assertEqual(self.ws.get_all_values()[1:], [['A', 'b', 'U'], ['V', 'B', 'C']])
+
+    def test_batch_clear_and_delete_rows(self):
+        self.ws.append_rows([['1', 'x'], ['2', 'y'], ['3', 'z'], ['4', 'w']])
+        self.ws.batch_clear(['A4:C5'])
+        self.assertEqual(self.ws.get_all_values()[1:], [['1', 'x', ''], ['2', 'y', '']])
+        self.ws.append_rows([['3'], ['4'], ['5']])
+        self.ws.delete_rows(3)
+        self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', '1', '3', '4', '5'])
+        self.ws.delete_rows(3, 4)
+        self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', '1', '5'])
+
+    def test_row_col_values_and_records(self):
+        self.ws.append_rows([['アイ', '', '牡'], ['', 'Bee', '3']])
+        self.assertEqual(self.ws.row_values(2), ['アイ', '', '牡'])
+        self.assertEqual(self.ws.col_values(1), ['馬名', 'アイ'])
+        self.assertEqual(self.ws.col_values(2), ['英馬名', '', 'Bee'])
+        self.assertEqual(self.ws.get_all_records(), [
+            {'馬名': 'アイ', '英馬名': '', '性別': '牡'}, {'馬名': '', '英馬名': 'Bee', '性別': 3}])
+
+    def test_sheet_operations(self):
+        self.ws.append_row(['アイ'])
+        copy = self.book.duplicate_sheet(self.ws.id, new_sheet_name='Horses_移行前')
+        self.assertEqual(copy.get_all_values(), self.ws.get_all_values())
+        self.ws.update_title('Horses_old')
+        self.assertEqual(self.book.worksheet('Horses_old').get_all_values()[1], ['アイ', '', ''])
+        with self.assertRaises(gspread.WorksheetNotFound):
+            self.book.worksheet('Horses')
+        with self.assertRaises(ValueError):
+            self.book.add_worksheet(title='Horses_移行前')
+        self.book.del_worksheet(copy)
+        self.assertEqual([w.title for w in self.book.worksheets()], ['Horses_old'])
+        ws = self.book.worksheet('Horses_old')
+        before = ws.col_count
+        ws.add_cols(2)
+        self.assertEqual(self.book.worksheet('Horses_old').col_count, before + 2)
+
+    def test_values_batch_get(self):
+        other = self.book.add_worksheet(title="O'Neil", rows=10, cols=2)
+        other.append_rows([['x'], [], ['y', 'z']])
+        res = self.book.values_batch_get(["'Horses'", "'O''Neil'"])
+        vrs = res['valueRanges']
+        self.assertEqual(vrs[0]['values'], [['馬名', '英馬名', '性別']])
+        self.assertEqual(gspread.utils.fill_gaps(vrs[1]['values']), [['x', ''], ['', ''], ['y', 'z']])
+
+    def test_sheet_added_by_another_connection(self):
+        self.book.worksheets()   # シートの一覧を覚えさせる
+        other_store = sheet_db.SheetStore(self.url)
+        other_store.book('Horse_Data').add_worksheet(title='美浦').append_row(['厩舎名'])
+        other_store.engine.dispose()
+        self.assertEqual(self.book.worksheet('美浦').get_all_values(), [['厩舎名']])
+
+    def test_books_are_separate(self):
+        other = self.store.book('別のファイル')
+        self.assertEqual(other.worksheets(), [])
+        other.add_worksheet(title='Horses')
+        self.assertEqual(self.book.worksheet('Horses').get_all_values()[0][0], '馬名')
+        self.assertEqual(other.worksheet('Horses').get_all_values(), [[]])
+
+
+class SqliteTests(SheetDbTests, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.url = 'sqlite:///' + os.path.join(cls._tmp.name, 'test.db')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+
+@unittest.skipUnless(os.environ.get('SHEET_DB_TEST_URL'), 'SHEET_DB_TEST_URL が設定されていません')
+class PostgresTests(SheetDbTests, unittest.TestCase):
+    url = os.environ.get('SHEET_DB_TEST_URL')
+
+
+if __name__ == '__main__':
+    unittest.main()
