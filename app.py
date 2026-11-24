@@ -1649,10 +1649,11 @@ def halfwidth_alpha(text):
     return (text or '').translate(_HALFWIDTH_ALPHA)
 
 def normalize_nar_company_name(text):
-    """馬主名・生産牧場名の表記を揃える：（）→()、株式会社→(株)、有限会社→(有)、
+    """馬主名・生産牧場名の表記を揃える：（）→()、株式会社→(株)、有限会社→(有)、合同会社→(同)など、
     (の前と)の後のスペースは除去し、他の全角スペースは半角スペースにする。アルファベットは半角にする"""
     text = halfwidth_alpha(text).replace('（', '(').replace('）', ')')
-    text = text.replace('株式会社', '(株)').replace('有限会社', '(有)')
+    for long_form, short_form in COMPANY_TYPE_ABBREVIATIONS[:5]:
+        text = text.replace(long_form, short_form)
     text = re.sub(r'[\s\u3000]+\(', '(', text)
     text = re.sub(r'\)[\s\u3000]+', ')', text)
     text = text.replace('\u3000', ' ')
@@ -3165,18 +3166,29 @@ def normalize_person_name(name):
 # 比較用にそろえた名前でこの文字数以上が一致し、短い方が長い方の先頭と同じなら同じ馬主とみなす
 NAR_OWNER_PREFIX_MIN = 15
 
+# 会社の種類の表記（「合同会社」と「(同)」など）。馬主名の比較では略した形にそろえる
+COMPANY_TYPE_ABBREVIATIONS = (('株式会社', '(株)'), ('有限会社', '(有)'), ('合同会社', '(同)'), ('合資会社', '(資)'),
+                              ('合名会社', '(名)'), ('一般社団法人', '(一社)'), ('一般財団法人', '(一財)'))
+
+def owner_compare_key(name):
+    """馬主名の比較用：異体字・全角半角・空白をそろえ、会社の種類の表記を略した形にする"""
+    name = normalize_person_name(name)
+    for long_form, short_form in COMPANY_TYPE_ABBREVIATIONS:
+        name = name.replace(long_form, short_form)
+    return name
+
 def same_owner_name(a, b):
-    """馬主名が同じか：異体字・全角半角・空白の違いを除いて同じか、地方競馬情報サイトで途中までしか表示されない
-    長い名前（短い方が長い方の先頭と同じ）"""
-    a, b = normalize_person_name(a), normalize_person_name(b)
+    """馬主名が同じか：異体字・全角半角・空白・会社の種類の表記（「合同会社」と「(同)」など）の違いを除いて同じか、
+    地方競馬情報サイトで途中までしか表示されない長い名前（短い方が長い方の先頭と同じ）"""
+    a, b = owner_compare_key(a), owner_compare_key(b)
     if not a or not b:
         return a == b
     short, long_ = sorted((a, b), key=len)
     return a == b or (len(short) >= NAR_OWNER_PREFIX_MIN and long_.startswith(short))
 
 def is_same_owner_change(kind, old, new):
-    """表記の違いだけの馬主変更（「高瀬 真尚」→「髙瀬 真尚」など異体字・全角半角・空白の違いや、地方競馬情報サイトで
-    20文字までしか表示されない名前）か。Changesシートの記録は残し、変更履歴・出走履歴・週間レポートには表示しない"""
+    """表記の違いだけの馬主変更（「高瀬 真尚」→「髙瀬 真尚」など異体字・全角半角・空白の違い、
+    「合同会社」と「(同)」など会社の種類の表記の違いや、地方競馬情報サイトで20文字までしか表示されない名前）か。Changesシートの記録は残し、変更履歴・出走履歴・週間レポートには表示しない"""
     return str(kind or '').strip() == '馬主変更' and bool(str(old or '').strip()) and same_owner_name(old, new)
 
 def _trainer_key(name):
@@ -5167,7 +5179,7 @@ def nar_horse_races(horse_url, entry_dates=()):
                 nar_owner = ''
                 print(f"地方競馬情報サイトの馬主を取得できませんでした: {e}")
             owner = str(row[H_OWNER] if len(row) > H_OWNER else '').strip()
-            key = lambda t: re.sub(r'[\s　]', '', t)
+            key = owner_compare_key
             same = [i for i, c in enumerate(change_rows) if c[C_NAME].strip() == name
                     and c[C_TYPE].strip() == '馬主変更' and key(c[C_OLD]) == key(nar_owner) and key(c[C_NEW]) == key(owner)]
             when_label = ('競走馬登録日' if entry == reg else 'JRAに転入した日') if entry else '地方抹消の日'
@@ -6556,7 +6568,7 @@ def import_horses():
                 changed = False
                 if same:
                     # 生年月日・父・母から同じ馬と判定できた場合：馬主・拠点・厩舎が変わっていれば書き換えてChangesに記録する
-                    if h['owner'] and not _blank(row[H_OWNER]) and row[H_OWNER].strip() != h['owner']:
+                    if h['owner'] and not _blank(row[H_OWNER]) and not same_owner_name(row[H_OWNER], h['owner']):
                         changes_rows.append(changes_row(change_date, name, '馬主変更', row[H_OWNER], h['owner']))
                         change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{h['owner']}")
                         row[H_OWNER] = h['owner']
@@ -6975,7 +6987,7 @@ def import_trainer_page(html_text):
 
             # 馬主変更（馬主名が空欄の場合は下の空欄補完で埋める）
             new_owner = info.get('owner') if info else None
-            if new_owner and not _blank(row[H_OWNER]) and row[H_OWNER] != new_owner:
+            if new_owner and not _blank(row[H_OWNER]) and not same_owner_name(row[H_OWNER], new_owner):
                 changes_rows.append(changes_row(today_str, name, '馬主変更', row[H_OWNER], new_owner))
                 change_msgs.append(f"{name}：馬主変更 {row[H_OWNER]}→{new_owner}")
                 row[H_OWNER] = new_owner
