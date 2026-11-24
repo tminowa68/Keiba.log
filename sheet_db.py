@@ -9,6 +9,9 @@ Google Sheets の API と比べて 1 回の読み書きが速く、1 分あた�
   sheet_rows：シートの 1 行ずつの内容（セルの値を JSON の配列で保存。空の行は保存しない）
 
 値はスプレッドシートの画面に表示される文字列と同じ形で保存する（数値も文字列にする）。
+
+SPREADSHEET_ONLY_SHEETS のシート（手で編集する変換表など）は、データベースには置かず、
+今までどおり本物のスプレッドシートで読み書きする（スプレッドシートを編集すれば、そのままアプリに反映される）。
 """
 import json
 import time
@@ -18,6 +21,67 @@ import gspread
 from gspread.utils import a1_range_to_grid_range, a1_to_rowcol, fill_gaps, numericise_all, to_records
 from sqlalchemy import (Column, Integer, MetaData, String, Table, Text, UniqueConstraint, and_, create_engine,
                         delete, func, insert, select, update)
+
+
+# データベースに置かず、スプレッドシートのまま読み書きするシート（手で編集するもの）
+SPREADSHEET_ONLY_SHEETS = frozenset({'レース名変換表', '地域変換表', '交流競走クラス', '為替レート'})
+
+
+def _sheet_name_of_range(rng):
+    """'シート名'!A1:B2・'シート名'・シート名 の形の範囲からシート名を取り出す"""
+    name = rng.rsplit('!', 1)[0] if '!' in rng else rng
+    if len(name) >= 2 and name[0] == "'" and name[-1] == "'":
+        name = name[1:-1].replace("''", "'")
+    return name
+
+
+# スプレッドシートのままのシートの内容を覚えておく秒数（スプレッドシートを編集すると、この時間内にアプリに反映される）
+SPREADSHEET_ONLY_CACHE_TTL = 60
+_SHEET_WRITE_METHODS = frozenset({
+    'update', 'batch_update', 'update_cell', 'update_acell', 'update_cells', 'append_row', 'append_rows',
+    'clear', 'batch_clear', 'delete_rows', 'insert_row', 'insert_rows', 'insert_cols', 'delete_columns',
+    'update_title', 'add_cols', 'add_rows', 'resize', 'sort'})
+
+
+class _SpreadsheetOnlyWorksheet:
+    """スプレッドシートのままのシート。本物のシートは使うときに開き（名前だけなら Google に問い合わせない）、
+    読み込んだ内容はしばらく覚えておく（書き込んだときは忘れる）"""
+
+    def __init__(self, book, title, ws=None):
+        self.title = title
+        self._book = book
+        self._ws = ws
+
+    def _real_ws(self):
+        if self._ws is None:
+            self._ws = self._book._real().worksheet(self.title)
+        return self._ws
+
+    def get_all_values(self, *args, **kwargs):
+        if args or kwargs:
+            return self._real_ws().get_all_values(*args, **kwargs)
+        cached = self._book._store.cached_real_values(self._book.title, self.title)
+        if cached is not None:
+            return cached
+        values = self._real_ws().get_all_values()
+        self._book._store.remember_real_values(self._book.title, self.title, values)
+        return [list(r) for r in values]
+
+    def get_values(self, *args, **kwargs):
+        return self.get_all_values(*args, **kwargs)
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        attr = getattr(self._real_ws(), name)
+        if name in _SHEET_WRITE_METHODS and callable(attr):
+            def write(*args, **kwargs):
+                try:
+                    return attr(*args, **kwargs)
+                finally:
+                    self._book._store.forget_real_values(self._book.title, self.title)
+            return write
+        return attr
 
 
 def normalize_url(url):
@@ -92,7 +156,25 @@ class SheetStore:
         )
         self.meta.create_all(self.engine)
         self._tab_cache = {}
+        self._real_values = {}   # (ファイル名, シート名) → (読み込んだ時刻, スプレッドシートのままのシートの内容)
         self._lock = threading.Lock()
+
+    # --- スプレッドシートのままのシートの内容 ---
+    def cached_real_values(self, book, title):
+        with self._lock:
+            cached = self._real_values.get((book, title))
+        if cached and time.time() - cached[0] < SPREADSHEET_ONLY_CACHE_TTL:
+            return [list(r) for r in cached[1]]
+        return None
+
+    def remember_real_values(self, book, title, values):
+        with self._lock:
+            self._real_values[(book, title)] = (time.time(), [list(r) for r in values])
+
+    def forget_real_values(self, book, title=None):
+        with self._lock:
+            for key in [k for k in self._real_values if k[0] == book and (title is None or k[1] == title)]:
+                self._real_values.pop(key, None)
 
     # --- シートの一覧 ---
     def tab_list(self, book):
@@ -162,20 +244,28 @@ class SheetStore:
 class DbSpreadsheet:
     """gspread の Spreadsheet の代わり（データベース上のシートのまとまり）"""
 
-    def __init__(self, store, name, fallback=None):
+    def __init__(self, store, name, fallback=None, spreadsheet_only=SPREADSHEET_ONLY_SHEETS):
         self._store = store
         self.title = name
         self.id = f'db:{name}'
-        self._fallback = fallback   # 共有の設定など、データベースでは扱わない処理に使う本物のスプレッドシートを開く関数
+        # 共有の設定や、スプレッドシートのままのシートに使う、本物のスプレッドシートを開く関数
+        self._fallback = fallback
         self._fallback_book = None
+        self._spreadsheet_only = frozenset(spreadsheet_only) if fallback is not None else frozenset()
+
+    def _real(self):
+        if self._fallback_book is None:
+            self._fallback_book = self._fallback()
+        return self._fallback_book
+
+    def _is_spreadsheet_only(self, title):
+        return title in self._spreadsheet_only
 
     def __getattr__(self, name):
         # list_permissions など、シートの内容以外の機能は本物のスプレッドシートで行う
         if name.startswith('_') or self.__dict__.get('_fallback') is None:
             raise AttributeError(name)
-        if self._fallback_book is None:
-            self._fallback_book = self._fallback()
-        return getattr(self._fallback_book, name)
+        return getattr(self._real(), name)
 
     def _forget(self):
         self._store.forget_tabs(self.title)
@@ -195,13 +285,17 @@ class DbSpreadsheet:
         return None
 
     def worksheet(self, title):
+        if self._is_spreadsheet_only(title):
+            return _SpreadsheetOnlyWorksheet(self, title, self._real().worksheet(title))
         tab = self._find_tab(lambda t: t[1] == title)
         if tab is None:
             raise gspread.WorksheetNotFound(title)
         return self._ws(tab)
 
     def worksheets(self, *args, **kwargs):
-        return [self._ws(t) for t in self._store.tab_list(self.title)]
+        # データベースのシートと、スプレッドシートのままのシート（名前だけ。中身は使うときに読み込む）
+        return ([self._ws(t) for t in self._store.tab_list(self.title) if not self._is_spreadsheet_only(t[1])]
+                + [_SpreadsheetOnlyWorksheet(self, t) for t in sorted(self._spreadsheet_only)])
 
     def get_worksheet_by_id(self, sheet_id):
         tab = self._find_tab(lambda t: t[0] == int(sheet_id))
@@ -217,6 +311,10 @@ class DbSpreadsheet:
         return self._ws(tabs[0])
 
     def add_worksheet(self, title, rows=1000, cols=26, index=None):
+        if self._is_spreadsheet_only(title):
+            ws = self._real().add_worksheet(title=title, rows=rows, cols=cols)
+            self._store.forget_real_values(self.title, title)
+            return _SpreadsheetOnlyWorksheet(self, title, ws)
         with self._store.engine.begin() as conn:
             sheet_id = self._store.create_tab(conn, self.title, title, cols)
         self._forget()
@@ -237,6 +335,8 @@ class DbSpreadsheet:
         return self.worksheet(new_name)
 
     def del_worksheet(self, worksheet):
+        if not isinstance(worksheet, DbWorksheet):
+            return self._real().del_worksheet(getattr(worksheet, '_ws', None) or worksheet)
         st = self._store
         with st.engine.begin() as conn:
             conn.execute(delete(st.rows).where(st.rows.c.sheet_id == worksheet.id))
@@ -245,11 +345,34 @@ class DbSpreadsheet:
 
     def values_batch_get(self, ranges, params=None):
         """複数のシートの内容をまとめて読み込む（範囲はシート名だけの形 'シート名' に対応）"""
+        # スプレッドシートのままのシートは、本物のスプレッドシートからまとめて読み込む
+        # （シート名だけの範囲は、覚えている内容があればそれを使う）
+        real = {}
+        real_ranges = []
+        for r in ranges:
+            name = _sheet_name_of_range(r)
+            if not self._is_spreadsheet_only(name):
+                continue
+            cached = self._store.cached_real_values(self.title, name) if '!' not in r else None
+            if cached is not None:
+                vr = {'range': r, 'majorDimension': 'ROWS'}
+                if cached and cached != [[]]:
+                    vr['values'] = cached
+                real[r] = vr
+            else:
+                real_ranges.append(r)
+        if real_ranges:
+            res = self._real().values_batch_get(real_ranges)
+            for r, vr in zip(real_ranges, res.get('valueRanges', [])):
+                real[r] = vr
+                if '!' not in r:
+                    self._store.remember_real_values(self.title, _sheet_name_of_range(r),
+                                                     fill_gaps(vr.get('values', []) or [[]]))
         wanted = []
         for rng in ranges:
-            name = rng.rsplit('!', 1)[0] if '!' in rng else rng
-            if len(name) >= 2 and name[0] == "'" and name[-1] == "'":
-                name = name[1:-1].replace("''", "'")
+            if rng in real:
+                continue
+            name = _sheet_name_of_range(rng)
             tab = self._find_tab(lambda t, name=name: t[1] == name)
             if tab is None:
                 raise gspread.WorksheetNotFound(name)
@@ -257,17 +380,19 @@ class DbSpreadsheet:
         st = self._store
         ids = [t[0] for _, t in wanted]
         by_sheet = {i: {} for i in ids}
-        with st.engine.connect() as conn:
-            for r in conn.execute(select(st.rows.c.sheet_id, st.rows.c.row_no, st.rows.c.cells)
-                                  .where(st.rows.c.sheet_id.in_(ids))):
-                by_sheet[r.sheet_id][r.row_no] = json.loads(r.cells)
-        value_ranges = []
+        if ids:
+            with st.engine.connect() as conn:
+                for r in conn.execute(select(st.rows.c.sheet_id, st.rows.c.row_no, st.rows.c.cells)
+                                      .where(st.rows.c.sheet_id.in_(ids))):
+                    by_sheet[r.sheet_id][r.row_no] = json.loads(r.cells)
+        db_ranges = {}
         for rng, tab in wanted:
             vr = {'range': rng, 'majorDimension': 'ROWS'}
             rows = by_sheet[tab[0]]
             if rows:
                 vr['values'] = [rows.get(i, []) for i in range(1, max(rows) + 1)]
-            value_ranges.append(vr)
+            db_ranges[rng] = vr
+        value_ranges = [real[r] if r in real else db_ranges[r] for r in ranges]
         return {'spreadsheetId': self.id, 'valueRanges': value_ranges}
 
 
