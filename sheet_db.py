@@ -23,6 +23,8 @@ from sqlalchemy import (Column, Integer, MetaData, String, Table, Text, UniqueCo
                         delete, func, insert, select, update)
 
 
+IN_CHUNK = 5000   # SQL の IN に一度に渡す値の数（PostgreSQL は 1 回の SQL に渡せる値が 65535 個まで）
+
 # データベースに置かず、スプレッドシートのまま読み書きするシート（手で編集するもの）
 SPREADSHEET_ONLY_SHEETS = frozenset({'レース名変換表', '地域変換表', '交流競走クラス', '為替レート'})
 
@@ -413,11 +415,18 @@ class DbWorksheet:
     def _load(self, conn, row_nos=None):
         st = self._store
         q = select(st.rows.c.row_no, st.rows.c.cells).where(st.rows.c.sheet_id == self.id)
-        if row_nos is not None:
-            if not row_nos:
-                return {}
-            q = q.where(st.rows.c.row_no.in_(sorted(row_nos)))
-        return {r.row_no: json.loads(r.cells) for r in conn.execute(q)}
+        if row_nos is None:
+            return {r.row_no: json.loads(r.cells) for r in conn.execute(q)}
+        row_nos = sorted(row_nos)
+        if not row_nos:
+            return {}
+        out = {}
+        # 行番号を多く指定する場合は、まとめて範囲で読み込む（SQLに渡せる値の数に上限があるため）
+        if len(row_nos) > IN_CHUNK:
+            q = q.where(and_(st.rows.c.row_no >= row_nos[0], st.rows.c.row_no <= row_nos[-1]))
+            wanted = set(row_nos)
+            return {r.row_no: json.loads(r.cells) for r in conn.execute(q) if r.row_no in wanted}
+        return {r.row_no: json.loads(r.cells) for r in conn.execute(q.where(st.rows.c.row_no.in_(row_nos)))}
 
     def _all_rows(self):
         with self._store.engine.connect() as conn:
@@ -484,8 +493,10 @@ class DbWorksheet:
             if cells:
                 new_rows.append({'sheet_id': self.id, 'row_no': row_no,
                                  'cells': json.dumps(cells, ensure_ascii=False)})
-        conn.execute(delete(st.rows).where(and_(st.rows.c.sheet_id == self.id,
-                                                st.rows.c.row_no.in_(sorted(cell_writes)))))
+        touched = sorted(cell_writes)
+        for k in range(0, len(touched), IN_CHUNK):
+            conn.execute(delete(st.rows).where(and_(st.rows.c.sheet_id == self.id,
+                                                    st.rows.c.row_no.in_(touched[k:k + IN_CHUNK]))))
         if new_rows:
             conn.execute(insert(st.rows), new_rows)
         widest = max((max(w) + 1 for w in cell_writes.values()), default=0)
