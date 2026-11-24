@@ -6,6 +6,9 @@
   python tools/migrate_horse_data_to_db.py --export-csv 出力先のフォルダ
                                                            … データベースの内容をシートごとの CSV ファイルに書き出す
 
+レース名変換表など、手で編集するシート（sheet_db.SPREADSHEET_ONLY_SHEETS）はコピーしない
+（アプリは今までどおりスプレッドシートから読み書きする）。
+
 コピーした後は、アプリを起動し直すと Horse_Data をデータベースから読み書きするようになる。
 それ以降にアプリで変更した内容はスプレッドシートには反映されないため、コピーし直す（--force）と、
 データベースでの変更は消える点に注意する。
@@ -61,7 +64,7 @@ def read_spreadsheet(book_name):
     """スプレッドシートの全シートの内容を読み込む → [(シート名, 列数, 行の一覧)]"""
     gc = open_client()
     sh = with_retry(gc.open, book_name)
-    worksheets = with_retry(sh.worksheets)
+    worksheets = [ws for ws in with_retry(sh.worksheets) if ws.title not in sheet_db.SPREADSHEET_ONLY_SHEETS]
     out = []
     for i in range(0, len(worksheets), BATCH):
         chunk = worksheets[i:i + BATCH]
@@ -85,7 +88,7 @@ def copy_to_db(store, book_name, force):
     if store.has_book(book_name) and not force:
         print(f"データベースには既に{book_name}のデータがあります。コピーし直す場合は --force を付けて実行してください。")
         return 1
-    print(f"{book_name}を読み込みます")
+    print(f"{book_name}を読み込みます（{'・'.join(sorted(sheet_db.SPREADSHEET_ONLY_SHEETS))}はスプレッドシートのままにするため、コピーしません）")
     sheets = read_spreadsheet(book_name)
     print("データベースに書き込みます")
     with store.engine.begin() as conn:

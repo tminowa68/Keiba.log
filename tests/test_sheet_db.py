@@ -145,7 +145,92 @@ class SheetDbTests:
         self.assertEqual(other.worksheet('Horses').get_all_values(), [[]])
 
 
-class SqliteTests(SheetDbTests, unittest.TestCase):
+class FakeRealBook:
+    """本物のスプレッドシートの代わり（スプレッドシートのままのシートのテスト用）"""
+    def __init__(self):
+        self.sheets = {'レース名変換表': [['変換前', '変換後'], ['ステークス', 'Ｓ']]}
+        self.calls = []
+
+    def worksheet(self, title):
+        self.calls.append(('worksheet', title))
+        if title not in self.sheets:
+            raise gspread.WorksheetNotFound(title)
+        book = self
+
+        class WS:
+            def __init__(self):
+                self.title = title
+
+            def get_all_values(self):
+                return book.sheets[title]
+        return WS()
+
+    def add_worksheet(self, title, rows=1000, cols=26):
+        self.calls.append(('add_worksheet', title))
+        self.sheets[title] = []
+        return self.worksheet(title)
+
+    def values_batch_get(self, ranges):
+        self.calls.append(('values_batch_get', tuple(ranges)))
+        return {'valueRanges': [{'range': r, 'values': self.sheets[sheet_db._sheet_name_of_range(r)]} for r in ranges]}
+
+    def list_permissions(self):
+        return ['perm']
+
+
+class SpreadsheetOnlyMixin:
+    def _book_with_real(self):
+        real = FakeRealBook()
+        return self.store.book('Horse_Data', fallback=lambda: real), real
+
+    def test_spreadsheet_only_sheets_use_real_book(self):
+        book, real = self._book_with_real()
+        # データベースに古いコピーがあっても、スプレッドシートの方を読む
+        self.book.add_worksheet(title='レース名変換表').append_row(['古い'])
+        self.assertEqual(book.worksheet('レース名変換表').get_all_values()[1], ['ステークス', 'Ｓ'])
+        self.assertEqual(book.worksheet('Horses').get_all_values()[0][0], '馬名')
+        book.add_worksheet(title='交流競走クラス')
+        self.assertIn(('add_worksheet', '交流競走クラス'), real.calls)
+        self.assertNotIn('交流競走クラス', [w.title for w in self.book.worksheets() if isinstance(w, sheet_db.DbWorksheet)])
+        self.assertEqual(book.list_permissions(), ['perm'])
+
+    def test_worksheets_lists_without_calling_google(self):
+        book, real = self._book_with_real()
+        titles = [w.title for w in book.worksheets()]
+        self.assertIn('Horses', titles)
+        self.assertIn('レース名変換表', titles)
+        self.assertEqual(titles.count('レース名変換表'), 1)
+        self.assertEqual(real.calls, [])
+
+    def test_values_batch_get_mixes_db_and_real(self):
+        book, real = self._book_with_real()
+        res = book.values_batch_get(["'Horses'", "'レース名変換表'"])['valueRanges']
+        self.assertEqual(res[0]['values'][0][0], '馬名')
+        self.assertEqual(res[1]['values'][1], ['ステークス', 'Ｓ'])
+        self.assertEqual(real.calls, [('values_batch_get', ("'レース名変換表'",))])
+
+    def test_spreadsheet_only_values_are_cached(self):
+        book, real = self._book_with_real()
+        book.values_batch_get(["'レース名変換表'"])
+        real.calls.clear()
+        # 覚えている間は Google に問い合わせない（worksheet() で開くだけはする）
+        res = book.values_batch_get(["'Horses'", "'レース名変換表'"])['valueRanges']
+        self.assertEqual(res[1]['values'][1], ['ステークス', 'Ｓ'])
+        self.assertEqual(book.worksheet('レース名変換表').get_all_values()[1], ['ステークス', 'Ｓ'])
+        self.assertEqual(real.calls, [('worksheet', 'レース名変換表')])
+        # 時間が過ぎたら読み込み直す
+        real.sheets['レース名変換表'].append(['カップ', 'Ｃ'])
+        self.store._real_values = {k: (0, v[1]) for k, v in self.store._real_values.items()}
+        self.assertEqual(book.worksheet('レース名変換表').get_all_values()[-1], ['カップ', 'Ｃ'])
+
+    def test_without_fallback_everything_is_in_db(self):
+        # 移行ツールなど、本物のスプレッドシートを渡さない場合は、データベースだけを使う
+        self.book.add_worksheet(title='レース名変換表').append_row(['x'])
+        self.assertEqual(self.book.worksheet('レース名変換表').get_all_values(), [['x']])
+
+
+
+class SqliteTests(SheetDbTests, SpreadsheetOnlyMixin, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
@@ -157,7 +242,7 @@ class SqliteTests(SheetDbTests, unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get('SHEET_DB_TEST_URL'), 'SHEET_DB_TEST_URL が設定されていません')
-class PostgresTests(SheetDbTests, unittest.TestCase):
+class PostgresTests(SheetDbTests, SpreadsheetOnlyMixin, unittest.TestCase):
     url = os.environ.get('SHEET_DB_TEST_URL')
 
 
