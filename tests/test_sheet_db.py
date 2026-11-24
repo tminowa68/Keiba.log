@@ -97,6 +97,16 @@ class SheetDbTests:
         self.ws.delete_rows(3, 4)
         self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', '1', '5'])
 
+    def test_rewrite_many_rows(self):
+        # 行の多いシートの書き直し（Horses・Changes は数万行ある）
+        rows = [[f'馬{i}', '', '牡'] for i in range(70000)]
+        self.ws.update(range_name='A2', values=rows)
+        self.ws.update(range_name='A2', values=rows[::-1])
+        values = self.ws.get_all_values()
+        self.assertEqual(len(values), 70001)
+        self.assertEqual(values[1][0], '馬69999')
+        self.assertEqual(values[-1][0], '馬0')
+
     def test_row_col_values_and_records(self):
         self.ws.append_rows([['アイ', '', '牡'], ['', 'Bee', '3']])
         self.assertEqual(self.ws.row_values(2), ['アイ', '', '牡'])

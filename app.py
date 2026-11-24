@@ -3561,9 +3561,108 @@ def record_race_changes(sh, horse_changes, stables, reg_dates=None):
         with_sheets_retry(ws.append_rows, new_rows)
     if updates or new_rows:
         remember_sheet_values("Changes")
+    # 地方のレースも含めて記録し直した結果、つながらなくなった古い転厩の記録を削除する
+    removed = set()
+    try:
+        removed = {(r[C_NAME], r[C_DATE], r[C_OLD], r[C_NEW])
+                   for r in remove_redundant_transfers(sh, set(horse_changes))}
+    except Exception as e:
+        print(f"つながらない転厩の記録の削除に失敗しました: {e}")
     return {name: [(parse_full_date(r[C_DATE]), r[C_TYPE], r[C_OLD], r[C_NEW]) for _, r in rows
-                   if parse_full_date(r[C_DATE])]
+                   if parse_full_date(r[C_DATE]) and (name, r[C_DATE], r[C_OLD], r[C_NEW]) not in removed]
             for name, rows in existing.items()}
+
+# --- つながらない転厩の記録の削除 ---
+# 地方のレースを取り込む前は、JRAのレースだけから転厩を記録していたため、間に地方の厩舎を挟んだ馬に
+# 「美浦・根本 → 栗東・森田」のような記録が残っている（実際は 根本 → 笠松・伊藤 → 森田）。
+# そのような、ほかの転厩の記録をつなぐと同じになる記録を削除する
+REMOVED_TRANSFER_SHEET = "削除した転厩"   # 削除した記録の控え
+
+def redundant_transfer_rows(rows):
+    """1頭の転厩の記録 [(行番号, 行)] のうち、削除するものの行番号の集合。
+    古い順にたどり、転厩元が直前の転厩先（その時の厩舎）と違う記録のうち、それより前（同じ日を含む）の
+    ほかの記録をつなぐと、同じ転厩元から同じ転厩先になるものを削除する（つなげない記録は残す）"""
+    transfers = []
+    for i, r in rows:
+        r = list(r) + [''] * len(CHANGES_COLUMNS)
+        d = parse_full_date(r[C_DATE])
+        old, new = _trainer_key(r[C_OLD]), _trainer_key(r[C_NEW])
+        if r[C_TYPE] == '転厩' and d and old and new and old != new:
+            transfers.append((d, i, old, new))
+    transfers.sort(key=lambda t: (t[0], t[1]))
+
+    def connected(skip, start, goal, until):
+        """skip 以外の until 以前の記録を2件以上つないで start から goal に行けるか"""
+        edges = [t for t in transfers if t[1] != skip and t[0] <= until]
+        frontier = [(start, 0)]
+        seen = {start}
+        while frontier:
+            node, depth = frontier.pop()
+            for _, _, o, n in edges:
+                if o != node:
+                    continue
+                if n == goal and depth + 1 >= 2:
+                    return True
+                if n not in seen:
+                    seen.add(n)
+                    frontier.append((n, depth + 1))
+        return False
+
+    remove = set()
+    current = None
+    for d, i, old, new in transfers:
+        if current is not None and old != current and connected(i, old, new, d):
+            remove.add(i)
+            continue
+        current = new
+    return remove
+
+def delete_sheet_rows(ws, title, row_numbers):
+    """シートの行（行番号）を削除する。少なければ1行ずつ、多ければ残す行でシートを書き直す"""
+    row_numbers = sorted(set(row_numbers), reverse=True)
+    if not row_numbers:
+        return
+    if len(row_numbers) <= 20:
+        for i in row_numbers:
+            with_sheets_retry(ws.delete_rows, i)
+    else:
+        data = with_sheets_retry(ws.get_all_values)
+        drop = set(row_numbers)
+        kept = [r for n, r in enumerate(data, start=1) if n not in drop]
+        width = max(len(r) for r in data)
+        kept = [list(r) + [''] * (width - len(r)) for r in kept]
+        with_sheets_retry(ws.update, range_name='A1', values=kept)
+        if len(data) > len(kept):
+            with_sheets_retry(ws.batch_clear, [f"A{len(kept) + 1}:{col_letter(width - 1)}{len(data)}"])
+    remember_sheet_values(title)
+
+def remove_redundant_transfers(sh, names=None):
+    """Changesシートのつながらない転厩の記録を削除する（names：対象の馬名。None なら全頭）。
+    削除した記録は「削除した転厩」シートに控えを残す。削除した行の一覧を返す"""
+    ws = sh.worksheet("Changes")
+    data = with_sheets_retry(ws.get_all_values)
+    by_horse = {}
+    for i, r in enumerate(data[1:], start=2):
+        r = list(r) + [''] * len(CHANGES_COLUMNS)
+        name = r[C_NAME].strip()
+        if r[C_TYPE] == '転厩' and name and (names is None or name in names):
+            by_horse.setdefault(name, []).append((i, r))
+    remove = set()
+    for rows in by_horse.values():
+        remove |= redundant_transfer_rows(rows)
+    if not remove:
+        return []
+    removed = [list(data[i - 1]) for i in sorted(remove)]
+    try:
+        ws_log = get_or_create_worksheet(sh, REMOVED_TRANSFER_SHEET, ["削除した日"] + CHANGES_COLUMNS)
+        today = datetime.now().strftime('%Y%m%d')
+        with_sheets_retry(ws_log.append_rows, [[today] + r[:len(CHANGES_COLUMNS)] for r in removed])
+    except Exception as e:
+        print(f"削除した転厩の控えを残せませんでした: {e}")
+    delete_sheet_rows(ws, "Changes", remove)
+    for r in removed:
+        print(f"つながらない転厩の記録を削除しました: {r[C_NAME]} {r[C_DATE]} {r[C_OLD]} → {r[C_NEW]}")
+    return removed
 
 def latest_horse_state(results, change_rows, stables):
     """最新の性別・拠点・厩舎を、最新のレース（の調教師・性別）と転厩・去勢の記録の新しい方から求める。
@@ -8013,6 +8112,22 @@ def migrate_entry_sheet():
     getattr(sh, '_forget', lambda: None)()
     _entry_sheet_migrated = True
 
+_transfer_cleanup_done = False
+
+def cleanup_redundant_transfers_once():
+    """全頭のつながらない転厩の記録を一度だけ削除する（済んだことはMetaシートに記録する）"""
+    global _transfer_cleanup_done
+    if _transfer_cleanup_done or not _changes_columns_ready:
+        return   # Changesシートの列の追加（「仮」の列）が済んでから行う
+    if get_meta_values().get('transfer_chain_cleaned'):
+        _transfer_cleanup_done = True
+        return
+    removed = remove_redundant_transfers(gc.open(horse_data))
+    print(f"つながらない転厩の記録を{len(removed)}件削除しました（「{REMOVED_TRANSFER_SHEET}」シートに控えがあります）")
+    ws_meta = _get_meta_sheet()
+    ws_meta.append_row(['transfer_chain_cleaned', datetime.now().strftime('%Y%m%d%H%M')])
+    _transfer_cleanup_done = True
+
 _migration_tried = {}   # 列の追加に失敗した時刻（失敗した場合は、しばらくやり直さない）
 MIGRATION_RETRY_SECONDS = 600
 
@@ -8022,7 +8137,8 @@ def require_changes_columns():
         return
     for key, ready, migrate in (('Changes', _changes_columns_ready, migrate_changes_sheet),
                                 ('放牧入厩', _pasture_columns_ready, migrate_pasture_sheet),
-                                ('Entry', _entry_sheet_migrated, migrate_entry_sheet)):
+                                ('Entry', _entry_sheet_migrated, migrate_entry_sheet),
+                                ('転厩の整理', _transfer_cleanup_done, cleanup_redundant_transfers_once)):
         if ready or time.time() - _migration_tried.get(key, 0) < MIGRATION_RETRY_SECONDS:
             continue
         _migration_tried[key] = time.time()
