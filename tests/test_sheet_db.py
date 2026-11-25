@@ -18,7 +18,7 @@ class SheetDbTests:
     url = None
 
     def setUp(self):
-        self.store = sheet_db.SheetStore(self.url)
+        self.store = sheet_db.SheetStore(self.url, cache_dir='')
         with self.store.engine.begin() as conn:
             conn.execute(self.store.rows.delete())
             conn.execute(self.store.tabs.delete())
@@ -142,10 +142,94 @@ class SheetDbTests:
 
     def test_sheet_added_by_another_connection(self):
         self.book.worksheets()   # シートの一覧を覚えさせる
-        other_store = sheet_db.SheetStore(self.url)
+        other_store = sheet_db.SheetStore(self.url, cache_dir='')
         other_store.book('Horse_Data').add_worksheet(title='美浦').append_row(['厩舎名'])
         other_store.engine.dispose()
         self.assertEqual(self.book.worksheet('美浦').get_all_values(), [['厩舎名']])
+
+    def _count_loads(self, store):
+        calls = []
+        original = store.load_rows
+
+        def counting(conn, ids):
+            calls.append(list(ids))
+            return original(conn, ids)
+        store.load_rows = counting
+        return calls
+
+    def test_reads_use_cache_until_changed(self):
+        self.ws.append_rows([['アイ', '', '牡'], ['ウマ', '', '牝']])
+        calls = self._count_loads(self.store)
+        first = self.ws.get_all_values()
+        # 書き込みの後も、覚えている内容を書き換えるので読み込み直さない
+        self.ws.update(range_name='C2', values=[['せん']])
+        self.ws.append_row(['エ'])
+        self.ws.batch_update([{'range': 'B3', 'values': [['Uma']]}])
+        self.ws.delete_rows(2)
+        values = self.ws.get_all_values()
+        self.book.values_batch_get(["'Horses'"])
+        self.assertEqual(self.ws.row_values(2), ['ウマ', 'Uma', '牝'])
+        self.assertEqual(calls, [[self.ws.id]])   # 最初の 1 回だけ
+        self.assertEqual(values, [['馬名', '英馬名', '性別'], ['ウマ', 'Uma', '牝'], ['エ', '', '']])
+        # 返した値を書き換えても、覚えている内容は変わらない
+        values[1][0] = '書き換え'
+        first[0][0] = '書き換え'
+        self.assertEqual(self.ws.get_all_values()[1][0], 'ウマ')
+        # データベースの内容と一致している
+        self.store.forget_rows()
+        self.assertEqual(self.ws.get_all_values(), [['馬名', '英馬名', '性別'], ['ウマ', 'Uma', '牝'], ['エ', '', '']])
+
+    def test_cache_notices_writes_from_another_process(self):
+        self.ws.append_row(['アイ'])
+        self.assertEqual(len(self.ws.get_all_values()), 2)
+        other = sheet_db.SheetStore(self.url, cache_dir='')
+        other.book('Horse_Data').worksheet('Horses').append_row(['ウマ'])
+        other.engine.dispose()
+        self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', 'アイ', 'ウマ'])
+        self.ws.append_row(['エ'])
+        self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', 'アイ', 'ウマ', 'エ'])
+
+    def test_clear_and_batch_clear_keep_cache_correct(self):
+        self.ws.append_rows([['1'], ['2'], ['3']])
+        self.ws.get_all_values()
+        self.ws.batch_clear(['A3:C4'])
+        self.assertEqual([r[0] for r in self.ws.get_all_values()], ['馬名', '1'])
+        self.ws.clear()
+        self.assertEqual(self.ws.get_all_values(), [[]])
+        self.ws.update(range_name='A1', values=[['x']])
+        self.store.forget_rows()
+        self.assertEqual(self.ws.get_all_values(), [['x']])
+
+    def test_adds_version_column_to_old_table(self):
+        with self.store.engine.begin() as conn:
+            if self.url.startswith('sqlite'):
+                return   # SQLite は列の削除に手間がかかるため、PostgreSQL だけで確かめる
+            conn.execute(sheet_db.text('ALTER TABLE sheet_tabs DROP COLUMN version'))
+        store = sheet_db.SheetStore(self.url, cache_dir='')
+        self.assertEqual(store.book('Horse_Data').worksheet('Horses').get_all_values()[0][0], '馬名')
+        store.engine.dispose()
+
+    def test_cache_file_used_after_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = sheet_db.SheetStore(self.url, cache_dir=d)
+            ws = store.book('Horse_Data').worksheet('Horses')
+            ws.append_row(['アイ'])
+            ws.get_all_values()          # 読み込んでファイルに保存する
+            ws.append_row(['ウマ'])      # 書き込み（ファイルは終了時に保存し直す）
+            store.save_cache_files()
+            store.engine.dispose()
+            # 起動し直したとき：データベースから全行を読まず、ファイルから読む
+            store2 = sheet_db.SheetStore(self.url, cache_dir=d)
+            calls = self._count_loads(store2)
+            self.assertEqual([r[0] for r in store2.book('Horse_Data').worksheet('Horses').get_all_values()],
+                             ['馬名', 'アイ', 'ウマ'])
+            self.assertEqual(calls, [])
+            # ほかで書き込まれていたら（版が違えば）データベースから読み直す
+            self.ws.append_row(['エ'])
+            store2.forget_rows()
+            self.assertEqual(store2.book('Horse_Data').worksheet('Horses').get_all_values()[-1][0], 'エ')
+            self.assertEqual(len(calls), 1)
+            store2.engine.dispose()
 
     def test_books_are_separate(self):
         other = self.store.book('別のファイル')

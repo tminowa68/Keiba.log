@@ -5,3 +5,4 @@ __pycache__/
 horse_data.db
 credentials.json
 .vscode/
+.sheet_cache/

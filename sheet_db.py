@@ -10,17 +10,26 @@ Google Sheets の API と比べて 1 回の読み書きが速く、1 分あた�
 
 値はスプレッドシートの画面に表示される文字列と同じ形で保存する（数値も文字列にする）。
 
+読み込んだシートの内容はアプリの中に覚えておき、シートの版（sheet_tabs.version。書き込むたびに増やす）が
+変わっていなければ、データベースからは読み込み直さない（Neon の無料プランは転送量が月 5GB までのため、
+数万行のシートを毎回読み込むとすぐに上限になる）。
+覚えた内容はフォルダ（環境変数 SHEET_CACHE_DIR。既定は .sheet_cache）にも保存し、アプリを起動し直したときも、
+版が同じシートはそのファイルから読む。
+
 SPREADSHEET_ONLY_SHEETS のシート（手で編集する変換表など）は、データベースには置かず、
 今までどおり本物のスプレッドシートで読み書きする（スプレッドシートを編集すれば、そのままアプリに反映される）。
 """
+import atexit
+import hashlib
 import json
+import os
 import time
 import threading
 
 import gspread
 from gspread.utils import a1_range_to_grid_range, a1_to_rowcol, fill_gaps, numericise_all, to_records
 from sqlalchemy import (Column, Integer, MetaData, String, Table, Text, UniqueConstraint, and_, create_engine,
-                        delete, func, insert, select, update)
+                        delete, func, inspect, insert, select, text, update)
 
 
 IN_CHUNK = 5000   # SQL の IN に一度に渡す値の数（PostgreSQL は 1 回の SQL に渡せる値が 65535 個まで）
@@ -133,7 +142,7 @@ class SheetStore:
     """データベースへの接続と、シート（タブ）の一覧の管理"""
     TAB_CACHE_TTL = 60   # シートの一覧を覚えておく秒数（シートの追加・名前の変更をしたときはすぐに忘れる）
 
-    def __init__(self, url):
+    def __init__(self, url, cache_dir=None):
         url = normalize_url(url)
         kwargs = {}
         if not url.startswith('sqlite'):
@@ -148,6 +157,8 @@ class SheetStore:
             Column('title', String(200), nullable=False),
             Column('position', Integer, nullable=False, default=0),
             Column('cols', Integer, nullable=False, default=26),
+            # シートの版：書き込むたびに増やす（覚えている内容が最新かを、この値だけを読んで確かめる）
+            Column('version', Integer, nullable=False, default=0, server_default='0'),
             UniqueConstraint('book', 'title', name='uq_sheet_tabs_book_title'),
         )
         self.rows = Table(
@@ -157,9 +168,134 @@ class SheetStore:
             Column('cells', Text, nullable=False),
         )
         self.meta.create_all(self.engine)
+        self._add_missing_columns()
+        self._is_sqlite = url.startswith('sqlite')
+        self._rows_cache = {}    # シートID → (版, {行番号: セルの値の一覧})
+        # 覚えた内容を保存するフォルダ（接続先ごとに分ける）。None なら保存しない
+        if cache_dir is None:
+            cache_dir = os.environ.get('SHEET_CACHE_DIR', '.sheet_cache')
+        self._cache_dir = (os.path.join(cache_dir, hashlib.sha256(url.encode()).hexdigest()[:16])
+                           if cache_dir else None)
+        self._saved_versions = {}   # シートID → ファイルに保存した版
+        if self._cache_dir:
+            atexit.register(self.save_cache_files)
         self._tab_cache = {}
         self._real_values = {}   # (ファイル名, シート名) → (読み込んだ時刻, スプレッドシートのままのシートの内容)
         self._lock = threading.Lock()
+
+    def _add_missing_columns(self):
+        """以前に作ったテーブルに、後から足した列（version）が無ければ足す"""
+        cols = {c['name'] for c in inspect(self.engine).get_columns('sheet_tabs')}
+        if 'version' not in cols:
+            with self.engine.begin() as conn:
+                conn.execute(text('ALTER TABLE sheet_tabs ADD COLUMN version INTEGER NOT NULL DEFAULT 0'))
+
+    # --- 読み込んだシートの内容（版が変わっていなければ、データベースから読み込み直さない） ---
+    def versions(self, conn, sheet_ids, lock=False):
+        """{シートID: 版}。lock=True なら書き込みが終わるまで、ほかの書き込みを待たせる"""
+        q = select(self.tabs.c.sheet_id, self.tabs.c.version).where(self.tabs.c.sheet_id.in_(list(sheet_ids)))
+        if lock and not self._is_sqlite:
+            q = q.with_for_update()
+        return {r.sheet_id: r.version for r in conn.execute(q)}
+
+    def cached_rows(self, sheet_id, version):
+        """覚えている内容（版が同じ場合だけ。中身は書き換えないこと）"""
+        with self._lock:
+            cached = self._rows_cache.get(sheet_id)
+        if cached and cached[0] == version:
+            return cached[1]
+        return None
+
+    def remember_rows(self, sheet_id, version, rows):
+        with self._lock:
+            self._rows_cache[sheet_id] = (version, rows)
+
+    def forget_rows(self, sheet_id=None):
+        with self._lock:
+            if sheet_id is None:
+                self._rows_cache.clear()
+            else:
+                self._rows_cache.pop(sheet_id, None)
+
+    # --- 覚えた内容のファイル ---
+    def _cache_path(self, sheet_id):
+        return os.path.join(self._cache_dir, f'{int(sheet_id)}.json')
+
+    def _read_cache_file(self, sheet_id, version):
+        """ファイルに保存した内容（版が同じ場合だけ）"""
+        if not self._cache_dir:
+            return None
+        try:
+            with open(self._cache_path(sheet_id), encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get('version') != version:
+                return None
+            self._saved_versions[sheet_id] = version
+            return {int(n): cells for n, cells in data['rows'].items()}
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _write_cache_file(self, sheet_id, version, rows):
+        if not self._cache_dir:
+            return
+        try:
+            os.makedirs(self._cache_dir, exist_ok=True)
+            path = self._cache_path(sheet_id)
+            tmp = f'{path}.{os.getpid()}.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump({'version': version, 'rows': rows}, f, ensure_ascii=False, separators=(',', ':'))
+            os.replace(tmp, path)
+            self._saved_versions[sheet_id] = version
+        except OSError as e:
+            print(f"シートの内容をファイルに保存できませんでした: {e}")
+
+    def save_cache_files(self):
+        """書き込みで変わった、覚えている内容をファイルに保存し直す（アプリの終了時など）"""
+        with self._lock:
+            items = list(self._rows_cache.items())
+        for sheet_id, (version, rows) in items:
+            if self._saved_versions.get(sheet_id) != version:
+                self._write_cache_file(sheet_id, version, rows)
+
+    def load_rows(self, conn, sheet_ids):
+        """シートの全行を読み込む → {シートID: {行番号: セルの値の一覧}}"""
+        out = {i: {} for i in sheet_ids}
+        if out:
+            for r in conn.execute(select(self.rows.c.sheet_id, self.rows.c.row_no, self.rows.c.cells)
+                                  .where(self.rows.c.sheet_id.in_(list(out)))):
+                out[r.sheet_id][r.row_no] = json.loads(r.cells)
+        return out
+
+    def rows_of(self, sheet_ids):
+        """シートの全行 {シートID: {行番号: セルの値の一覧}}。覚えている内容が最新ならそれを使う（中身は書き換えないこと）"""
+        sheet_ids = list(dict.fromkeys(sheet_ids))
+        if not sheet_ids:
+            return {}
+        with self.engine.connect() as conn:
+            versions = self.versions(conn, sheet_ids)
+            out, missing = {}, []
+            for i in sheet_ids:
+                cached = self.cached_rows(i, versions.get(i))
+                if cached is not None:
+                    out[i] = cached
+                else:
+                    missing.append(i)
+            # ファイルに保存した内容が最新なら、それを使う
+            for i in list(missing):
+                if i in versions:
+                    saved = self._read_cache_file(i, versions[i])
+                    if saved is not None:
+                        out[i] = saved
+                        self.remember_rows(i, versions[i], saved)
+                        missing.remove(i)
+            if missing:
+                loaded = self.load_rows(conn, missing)
+                for i in missing:
+                    out[i] = loaded[i]
+                    if i in versions:
+                        self.remember_rows(i, versions[i], loaded[i])
+                        self._write_cache_file(i, versions[i], loaded[i])
+        return out
 
     # --- スプレッドシートのままのシートの内容 ---
     def cached_real_values(self, book, title):
@@ -219,7 +355,9 @@ class SheetStore:
                                      .where(self.tabs.c.book == book)).scalar() or 0) + 1
         sheet_id = self._next_sheet_id(conn)
         conn.execute(insert(self.tabs).values(sheet_id=sheet_id, book=book, title=title,
-                                              position=position, cols=int(cols or 26)))
+                                              position=position, cols=int(cols or 26),
+                                              version=int(time.time()) % 1000000000))
+        self.forget_rows(sheet_id)
         return sheet_id
 
     def delete_book(self, conn, book):
@@ -227,6 +365,8 @@ class SheetStore:
         if ids:
             conn.execute(delete(self.rows).where(self.rows.c.sheet_id.in_(ids)))
             conn.execute(delete(self.tabs).where(self.tabs.c.book == book))
+            for i in ids:
+                self.forget_rows(i)
 
     def insert_rows(self, conn, sheet_id, values, start_row=1):
         """行の一覧をまとめて書き込む（空の行は保存しない）"""
@@ -326,13 +466,13 @@ class DbSpreadsheet:
         src = self.get_worksheet_by_id(source_sheet_id)
         new_name = new_sheet_name or f'{src.title} のコピー'
         st = self._store
+        rows = st.rows_of([src.id])[src.id]   # 覚えている内容があればそれを使う
         with st.engine.begin() as conn:
             sheet_id = st.create_tab(conn, self.title, new_name, src._cols)
-            rows = conn.execute(select(st.rows.c.row_no, st.rows.c.cells)
-                                .where(st.rows.c.sheet_id == src.id)).all()
             if rows:
-                conn.execute(insert(st.rows), [{'sheet_id': sheet_id, 'row_no': r.row_no, 'cells': r.cells}
-                                               for r in rows])
+                conn.execute(insert(st.rows), [{'sheet_id': sheet_id, 'row_no': n,
+                                                'cells': json.dumps(cells, ensure_ascii=False)}
+                                               for n, cells in rows.items()])
         self._forget()
         return self.worksheet(new_name)
 
@@ -343,6 +483,7 @@ class DbSpreadsheet:
         with st.engine.begin() as conn:
             conn.execute(delete(st.rows).where(st.rows.c.sheet_id == worksheet.id))
             conn.execute(delete(st.tabs).where(st.tabs.c.sheet_id == worksheet.id))
+        st.forget_rows(worksheet.id)
         self._forget()
 
     def values_batch_get(self, ranges, params=None):
@@ -379,20 +520,13 @@ class DbSpreadsheet:
             if tab is None:
                 raise gspread.WorksheetNotFound(name)
             wanted.append((rng, tab))
-        st = self._store
-        ids = [t[0] for _, t in wanted]
-        by_sheet = {i: {} for i in ids}
-        if ids:
-            with st.engine.connect() as conn:
-                for r in conn.execute(select(st.rows.c.sheet_id, st.rows.c.row_no, st.rows.c.cells)
-                                      .where(st.rows.c.sheet_id.in_(ids))):
-                    by_sheet[r.sheet_id][r.row_no] = json.loads(r.cells)
+        by_sheet = self._store.rows_of([t[0] for _, t in wanted])
         db_ranges = {}
         for rng, tab in wanted:
             vr = {'range': rng, 'majorDimension': 'ROWS'}
             rows = by_sheet[tab[0]]
             if rows:
-                vr['values'] = [rows.get(i, []) for i in range(1, max(rows) + 1)]
+                vr['values'] = [list(rows.get(i, [])) for i in range(1, max(rows) + 1)]
             db_ranges[rng] = vr
         value_ranges = [real[r] if r in real else db_ranges[r] for r in ranges]
         return {'spreadsheetId': self.id, 'valueRanges': value_ranges}
@@ -429,14 +563,14 @@ class DbWorksheet:
         return {r.row_no: json.loads(r.cells) for r in conn.execute(q.where(st.rows.c.row_no.in_(row_nos)))}
 
     def _all_rows(self):
-        with self._store.engine.connect() as conn:
-            return self._load(conn)
+        """全行（覚えている内容が最新ならそれを使う。中身は書き換えないこと）"""
+        return self._store.rows_of([self.id])[self.id]
 
     def get_all_values(self, *args, **kwargs):
         rows = self._all_rows()
         if not rows:
             return [[]]
-        return fill_gaps([rows.get(i, []) for i in range(1, max(rows) + 1)])
+        return fill_gaps([list(rows.get(i, [])) for i in range(1, max(rows) + 1)])
 
     def get_values(self, *args, **kwargs):
         if args or kwargs.get('range_name'):
@@ -453,7 +587,11 @@ class DbWorksheet:
         return to_records(keys, rows)
 
     def row_values(self, row, *args, **kwargs):
-        with self._store.engine.connect() as conn:
+        st = self._store
+        with st.engine.connect() as conn:
+            cached = st.cached_rows(self.id, st.versions(conn, [self.id]).get(self.id))
+            if cached is not None:
+                return list(cached.get(int(row), []))
             return list(self._load(conn, [int(row)]).get(int(row), []))
 
     def col_values(self, col, *args, **kwargs):
@@ -475,12 +613,28 @@ class DbWorksheet:
         return max(last, 1000)
 
     # --- 書き込み ---
-    def _apply(self, conn, cell_writes):
-        """cell_writes：{行番号: {列番号(0始まり): 文字列}} を書き込む（行を読み直して変更し、保存し直す）"""
-        if not cell_writes:
-            return
+    def _write(self, func):
+        """書き込みの処理 func(conn, base) を行い、シートの版を増やす。base は覚えている全行（最新でなければ None）。
+        func は、base を元に書き込み後の全行を作れた場合はそれを返す（覚えている内容をそれに置き換える）"""
         st = self._store
-        current = self._load(conn, cell_writes.keys())
+        with st.engine.begin() as conn:
+            version = st.versions(conn, [self.id], lock=True).get(self.id, 0)
+            base = st.cached_rows(self.id, version)
+            after = func(conn, base)
+            conn.execute(update(st.tabs).where(st.tabs.c.sheet_id == self.id).values(version=version + 1))
+        if after is not None:
+            st.remember_rows(self.id, version + 1, after)
+        else:
+            st.forget_rows(self.id)
+
+    def _apply(self, conn, cell_writes, base=None):
+        """cell_writes：{行番号: {列番号(0始まり): 文字列}} を書き込む（行を読み直して変更し、保存し直す）。
+        base（覚えている全行）があれば、行はそこから読み、書き込み後の全行を返す（無ければ None を返す）"""
+        if not cell_writes:
+            return dict(base) if base is not None else None
+        st = self._store
+        current = base if base is not None else self._load(conn, cell_writes.keys())
+        after = dict(base) if base is not None else None
         new_rows = []
         for row_no, writes in cell_writes.items():
             cells = list(current.get(row_no, []))
@@ -493,6 +647,11 @@ class DbWorksheet:
             if cells:
                 new_rows.append({'sheet_id': self.id, 'row_no': row_no,
                                  'cells': json.dumps(cells, ensure_ascii=False)})
+            if after is not None:
+                if cells:
+                    after[row_no] = cells
+                else:
+                    after.pop(row_no, None)
         touched = sorted(cell_writes)
         for k in range(0, len(touched), IN_CHUNK):
             conn.execute(delete(st.rows).where(and_(st.rows.c.sheet_id == self.id,
@@ -504,6 +663,7 @@ class DbWorksheet:
             conn.execute(update(st.tabs).where(st.tabs.c.sheet_id == self.id).values(cols=widest))
             self._cols = widest
             self._store.forget_tabs(self.spreadsheet.title)
+        return after
 
     @staticmethod
     def _collect(cell_writes, range_name, values):
@@ -520,16 +680,14 @@ class DbWorksheet:
             values, range_name = range_name, values
         writes = {}
         self._collect(writes, range_name, values)
-        with self._store.engine.begin() as conn:
-            self._apply(conn, writes)
+        self._write(lambda conn, base: self._apply(conn, writes, base))
         return {'updatedRange': range_name}
 
     def batch_update(self, data, *args, **kwargs):
         writes = {}
         for item in data:
             self._collect(writes, item['range'], item['values'])
-        with self._store.engine.begin() as conn:
-            self._apply(conn, writes)
+        self._write(lambda conn, base: self._apply(conn, writes, base))
         return {}
 
     def update_cell(self, row, col, value):
@@ -537,8 +695,7 @@ class DbWorksheet:
         text = cell_text(value)
         if text is not None:
             writes[int(row)] = {int(col) - 1: text}
-        with self._store.engine.begin() as conn:
-            self._apply(conn, writes)
+        self._write(lambda conn, base: self._apply(conn, writes, base))
         return {}
 
     def update_acell(self, label, value):
@@ -551,27 +708,35 @@ class DbWorksheet:
     def append_rows(self, values, *args, **kwargs):
         """最後の行（空でない行）の次から書き込む"""
         st = self._store
-        with st.engine.begin() as conn:
-            last = conn.execute(select(func.max(st.rows.c.row_no))
-                                .where(st.rows.c.sheet_id == self.id)).scalar() or 0
+
+        def append(conn, base):
+            if base is not None:
+                last = max(base) if base else 0
+            else:
+                last = conn.execute(select(func.max(st.rows.c.row_no))
+                                    .where(st.rows.c.sheet_id == self.id)).scalar() or 0
             writes = {}
             for i, row in enumerate(values):
                 for j, v in enumerate(row):
                     text = cell_text(v)
                     if text is not None:
                         writes.setdefault(last + 1 + i, {})[j] = text
-            self._apply(conn, writes)
+            return self._apply(conn, writes, base)
+        self._write(append)
         return {}
 
     def clear(self):
         st = self._store
-        with st.engine.begin() as conn:
+
+        def clear_all(conn, base):
             conn.execute(delete(st.rows).where(st.rows.c.sheet_id == self.id))
+            return {}
+        self._write(clear_all)
         return {}
 
     def batch_clear(self, ranges):
-        with self._store.engine.begin() as conn:
-            rows = self._load(conn)
+        def clear_ranges(conn, base):
+            rows = base if base is not None else self._load(conn)
             writes = {}
             for rng in ranges:
                 r0, r1, c0, c1 = _grid_range(rng)
@@ -581,7 +746,9 @@ class DbWorksheet:
                     end = len(cells) if c1 is None else min(c1, len(cells))
                     for c in range(c0, end):
                         writes.setdefault(row_no, {})[c] = ''
-            self._apply(conn, writes)
+            # 全行を読み込んだので、書き込み後の全行も覚えておける
+            return self._apply(conn, writes, rows)
+        self._write(clear_ranges)
         return {}
 
     def delete_rows(self, start_index, end_index=None):
@@ -590,13 +757,18 @@ class DbWorksheet:
         count = end - start + 1
         st = self._store
         mine = st.rows.c.sheet_id == self.id
-        with st.engine.begin() as conn:
+
+        def delete_and_shift(conn, base):
             conn.execute(delete(st.rows).where(and_(mine, st.rows.c.row_no >= start, st.rows.c.row_no <= end)))
             # 主キーが重ならないよう、いったん負の番号にしてから詰める
             conn.execute(update(st.rows).where(and_(mine, st.rows.c.row_no > end))
                          .values(row_no=-st.rows.c.row_no))
             conn.execute(update(st.rows).where(and_(mine, st.rows.c.row_no < 0))
                          .values(row_no=-st.rows.c.row_no - count))
+            if base is None:
+                return None
+            return {(n if n < start else n - count): cells for n, cells in base.items() if not start <= n <= end}
+        self._write(delete_and_shift)
         return {}
 
     def add_cols(self, cols):
